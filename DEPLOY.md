@@ -4,6 +4,22 @@ This guide covers deploying VTT on an always-on Ubuntu 24 machine (laptop, mini 
 
 ---
 
+## Quick start (scripts)
+
+The two scripts in `deploy/` automate the common path:
+
+```bash
+git clone git@github.com:PYannik/the-tavern.git && cd the-tavern
+./deploy/setup-ubuntu.sh        # one-time: Node 22, pnpm, cloudflared, build
+ADMIN_PASSWORD='choose-a-password' ./deploy/start.sh
+```
+
+`start.sh` launches a Cloudflare **quick tunnel** (new random URL each start — printed in a banner), then the server with `PUBLIC_ORIGIN` wired so invite links point at the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before the first start to migrate a world. Ctrl-C stops both.
+
+For a **permanent URL** and autostart on boot, follow the named-tunnel + systemd sections below instead of `start.sh`.
+
+---
+
 ## 1. Install Node 22
 
 Use the NodeSource repository for a system-wide install:
