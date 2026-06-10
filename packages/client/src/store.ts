@@ -70,6 +70,8 @@ interface TableSlice {
   viewingDocument: AssetManifest | null;
   /** note editor open over the canvas area; noteId null = new note */
   noteEditor: { noteId: string | null } | null;
+  /** transient roll-result popups shown over the canvas */
+  rollToasts: RollLogEntry[];
   myNotes: Note[];
   lastErrorMessage: string | null;
 
@@ -79,6 +81,7 @@ interface TableSlice {
   setPresence: (entries: PresenceEntry[]) => void;
   setCurrentImage: (image: AssetRef | null) => void;
   addRollEntry: (entry: RollLogEntry) => void;
+  dismissRollToast: (id: string) => void;
   setAssets: (assets: AssetManifest[]) => void;
   setDocuments: (documents: AssetManifest[]) => void;
   setViewingDocument: (doc: AssetManifest | null) => void;
@@ -105,6 +108,7 @@ const tableDefaults = {
   documents: [],
   viewingDocument: null,
   noteEditor: null,
+  rollToasts: [],
   myNotes: [],
   lastErrorMessage: null,
 };
@@ -171,7 +175,12 @@ export const useStore = create<StoreState>()((set) => ({
   addRollEntry: (entry) =>
     set((s) => ({
       rollLog: [entry, ...s.rollLog].slice(0, ROLL_LOG_MAX),
+      // Every received roll also pops a transient toast (max 3 stacked).
+      rollToasts: [...s.rollToasts, entry].slice(-3),
     })),
+
+  dismissRollToast: (id) =>
+    set((s) => ({ rollToasts: s.rollToasts.filter((t) => t.id !== id) })),
 
   setAssets: (assets) => set({ assets }),
   setDocuments: (documents) =>

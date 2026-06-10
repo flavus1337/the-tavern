@@ -32,3 +32,14 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

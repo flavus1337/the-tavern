@@ -4,6 +4,7 @@ import { TableConnection } from '../ws/connection';
 import { CanvasViewer } from './CanvasViewer';
 import { DocumentViewer } from './DocumentViewer';
 import { NoteEditor } from './NoteEditor';
+import { RollToasts } from './RollToasts';
 import { DiceRoller } from './DiceRoller';
 import { RollLog } from './RollLog';
 import { DocumentsPanel } from './DocumentsPanel';
@@ -133,6 +134,7 @@ export function TableLayout() {
           <CanvasViewer />
           {viewingDocument && <DocumentViewer doc={viewingDocument} />}
           {noteEditor && <NoteEditor key={noteEditor.noteId ?? 'new'} noteId={noteEditor.noteId} />}
+          <RollToasts />
         </div>
 
         {/* Sidebar: bottom panel on mobile, right column on md+ */}
@@ -153,7 +155,7 @@ export function TableLayout() {
 
             <TabsContent value="dice" className="flex flex-col overflow-y-auto">
               <DiceRoller />
-              <div className="border-t border-zinc-800 flex-1 min-h-0 overflow-hidden flex flex-col">
+              <div className="border-t border-zinc-800 flex-1 min-h-44 overflow-hidden flex flex-col">
                 <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider px-3 pt-2 pb-1">
                   Roll Log
                 </p>
