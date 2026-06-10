@@ -65,7 +65,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
   const displayW = localW ?? item.w;
   const displayH = displayW * naturalAspect;
 
-  const handlePx = Math.round(20 / scale);
+  const handlePx = Math.round(24 / scale);
 
   function onItemPointerDown(e: PointerEvent<HTMLDivElement>) {
     if (!isDm) return;
@@ -145,7 +145,8 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
         height: displayH,
         zIndex: isDragging ? 9999 : item.z,
         borderRadius: 10,
-        overflow: 'hidden',
+        // No overflow:hidden — the ✕ / resize handles sit on the corners like
+        // stickers and must not be clipped. The img clips its own corners.
         border: '1px solid rgba(0,0,0,0.5)',
         boxShadow: shadowLifted,
         cursor: isDm ? (isDragging ? 'grabbing' : 'grab') : undefined,
@@ -164,7 +165,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
         src={item.url}
         alt={item.title}
         draggable={false}
-        style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none', display: 'block' }}
+        style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none', display: 'block', borderRadius: 10 }}
       />
 
       {/* Bottom-left label chip */}
