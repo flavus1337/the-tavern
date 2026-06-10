@@ -210,9 +210,8 @@ export function TableLayout() {
 
         {/* Sidebar */}
         <aside
-          className="w-full h-2/5 border-t md:h-auto md:border-t-0 md:border-l"
+          className="w-full h-2/5 border-t md:w-[340px] md:h-auto md:border-t-0 md:border-l"
           style={{
-            width: undefined,
             borderColor: 'var(--border)',
             background: 'var(--surface)',
             display: 'flex',
@@ -221,12 +220,7 @@ export function TableLayout() {
             flexShrink: 0,
           }}
         >
-          <style>{`
-            @media (min-width: 768px) {
-              .sidebar-md { width: 340px !important; }
-            }
-          `}</style>
-          <div className="sidebar-md flex flex-col h-full">
+          <div className="flex flex-col h-full">
             <Tabs
               value={sidebarTab}
               onValueChange={(v) => setSidebarTab(v as typeof sidebarTab)}
