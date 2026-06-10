@@ -24,7 +24,10 @@ router.post('/register', async (req: Request, res: Response) => {
   // Validate invite first.
   const preview = previewInvite(inviteToken);
   if (!preview.valid) {
-    const status = preview.reason === 'expired' || preview.reason === 'exhausted' ? 410 : 400;
+    const status =
+      preview.reason === 'expired' || preview.reason === 'exhausted' || preview.reason === 'revoked'
+        ? 410
+        : 400;
     res.status(status).json({ error: `Invite ${preview.reason}`, code: preview.reason.toUpperCase() });
     return;
   }

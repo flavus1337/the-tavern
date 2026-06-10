@@ -3,6 +3,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { resolveSessionFromCookieHeader } from '../auth/sessions.js';
 import { findUserById } from '../auth/users.js';
+import { getCampaign } from '../campaign/registry.js';
 import { log } from '../log.js';
 import type { Role, ServerMessage, PresenceEntry } from '@vtt/shared';
 
@@ -90,11 +91,10 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
       sessions.delete(sessId);
 
       if (campaignId) {
-        const { getCampaign } = require('../campaign/registry.js') as typeof import('../campaign/registry.js');
         const entry = getCampaign(campaignId);
         if (entry) {
           entry.room.delete(sessId);
-          broadcastPresence(campaignId);
+          broadcastPresenceWithDisconnected(campaignId, wsSession.userId, wsSession.username, wsSession.role);
         }
       }
     });
@@ -155,6 +155,44 @@ export function broadcastPresence(campaignId: string): void {
         connected: true,
       });
     }
+  }
+
+  const entries = [...presenceMap.values()];
+  broadcast(campaignId, { type: 'presence', entries });
+}
+
+/**
+ * Broadcast presence after a disconnect: includes the disconnecting user with
+ * connected=false unless another socket for that user is still open.
+ */
+export function broadcastPresenceWithDisconnected(
+  campaignId: string,
+  disconnectedUserId: string,
+  disconnectedUsername: string,
+  disconnectedRole: Role | null,
+): void {
+  const roomSessions = getSessionsInRoom(campaignId);
+
+  const presenceMap = new Map<string, PresenceEntry>();
+  for (const sess of roomSessions) {
+    if (!presenceMap.has(sess.userId) && sess.role) {
+      presenceMap.set(sess.userId, {
+        userId: sess.userId,
+        username: sess.username,
+        role: sess.role,
+        connected: true,
+      });
+    }
+  }
+
+  // Add the disconnected user if no remaining socket covers them and they had a role.
+  if (!presenceMap.has(disconnectedUserId) && disconnectedRole) {
+    presenceMap.set(disconnectedUserId, {
+      userId: disconnectedUserId,
+      username: disconnectedUsername,
+      role: disconnectedRole,
+      connected: false,
+    });
   }
 
   const entries = [...presenceMap.values()];

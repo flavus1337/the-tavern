@@ -41,7 +41,10 @@ export function createApp(): express.Application {
     const token = param(req.params['token']);
     const result = redeemInvite(token, req.user!.id);
     if (!result.ok) {
-      const status = result.reason === 'expired' || result.reason === 'exhausted' ? 410 : 400;
+      const status =
+        result.reason === 'expired' || result.reason === 'exhausted' || result.reason === 'revoked'
+          ? 410
+          : 400;
       res.status(status).json({ error: `Invite ${result.reason}`, code: result.reason.toUpperCase() });
       return;
     }
