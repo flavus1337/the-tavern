@@ -1,6 +1,7 @@
 node_modules
 dist
-data/
+/data/
+packages/server/data/
 campaigns/*/.runtime/
 .DS_Store
 *.log
