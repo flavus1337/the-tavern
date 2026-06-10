@@ -81,7 +81,7 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
         await handleDeleteNote(session, msg);
         break;
       case 'mediaControl':
-        handleMediaControl(session, msg);
+        await handleMediaControl(session, msg);
         break;
       case 'ping':
         send(session.ws, { type: 'pong', sentAt: msg.sentAt });
@@ -460,10 +460,10 @@ async function handleSaveNote(
   }
 }
 
-function handleMediaControl(
+async function handleMediaControl(
   session: WsSession,
   msg: { type: 'mediaControl'; assetId: string; action: 'play' | 'pause' | 'stop'; time: number },
-): void {
+): Promise<void> {
   const campaignId = session.campaignId!;
   const entry = getCampaign(campaignId);
   if (!entry) return;
@@ -481,6 +481,23 @@ function handleMediaControl(
   }
 
   const time = Number.isFinite(msg.time) ? Math.max(0, msg.time) : 0;
+
+  // Playing for the table IS sharing: listeners need file access and the doc
+  // in their list, so grant table visibility on first play.
+  if (msg.action === 'play' && !entry.runtime.state.sharedDocumentIds.includes(manifest.id)) {
+    entry.runtime.state = {
+      ...entry.runtime.state,
+      sharedDocumentIds: [...entry.runtime.state.sharedDocumentIds, manifest.id],
+    };
+    await persistState(entry.runtime);
+    broadcastDocuments(campaignId, entry);
+  }
+
+  // Record transient playback state so late joiners sync from the snapshot.
+  entry.media = msg.action === 'stop'
+    ? null
+    : { assetId: msg.assetId, action: msg.action, time, atMs: Date.now() };
+
   broadcast(
     campaignId,
     { type: 'mediaControl', assetId: msg.assetId, action: msg.action, time, by: session.username },

@@ -79,6 +79,14 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     assets,
     documents,
     myNotes,
+    media: entry.media
+      ? {
+          assetId: entry.media.assetId,
+          action: entry.media.action,
+          time: entry.media.time,
+          elapsedMs: Date.now() - entry.media.atMs,
+        }
+      : null,
   };
 }
 

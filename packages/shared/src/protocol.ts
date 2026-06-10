@@ -199,6 +199,8 @@ export interface ServerSnapshotPayload {
   /** kind==='document' assets — ALL members see these. */
   documents: AssetManifest[];
   myNotes: Note[];
+  /** active table playback, if any — late joiners sync from this */
+  media: { assetId: string; action: 'play' | 'pause'; time: number; elapsedMs: number } | null;
 }
 
 export interface ServerPresencePayload {

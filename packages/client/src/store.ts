@@ -221,6 +221,12 @@ export const useStore = create<StoreState>()((set) => ({
 
   applySnapshot: (snap) =>
     set({
+      mediaSync: snap.media
+        ? { [snap.media.assetId]: { action: snap.media.action, time: snap.media.time, atMs: Date.now() - snap.media.elapsedMs } }
+        : {},
+      audioDock: snap.media
+        ? { assetId: snap.media.assetId, minimized: false }
+        : null,
       campaignName: snap.campaign.name,
       board: snap.board,
       uploadsLocked: snap.uploadsLocked,

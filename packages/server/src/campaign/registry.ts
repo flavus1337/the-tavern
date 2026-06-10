@@ -12,6 +12,8 @@ export interface CampaignEntry {
   runtime: CampaignRuntime;
   /** WS room: set of session IDs (managed by hub). */
   room: Set<string>;
+  /** transient table-playback state (not persisted) — feeds late-join snapshots */
+  media?: { assetId: string; action: 'play' | 'pause'; time: number; atMs: number } | null;
 }
 
 const registry = new Map<string, CampaignEntry>();

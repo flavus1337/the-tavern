@@ -1015,6 +1015,25 @@ async function main(): Promise<void> {
       } catch {
         fail('F7h: owner mediaControl broadcast to members', 'timeout');
       }
+
+      // F7i: playing auto-shares the track — admin (non-owner) can now fetch it
+      const adminAudioGet = await admin(`/api/campaigns/${campaignId}/files/assets/${audioAsset.file}`);
+      assert(adminAudioGet.status === 200, 'F7i: play auto-shares — dm GET audio → 200');
+
+      // F7j: late joiners get the playback state in the snapshot
+      const { ws: lateWs, messages: lateMsgs } = await openWs(wsUrl, player2Jar);
+      send(lateWs, { type: 'join', protocolVersion: 3, campaignId });
+      try {
+        const snap = await waitForMessage(lateMsgs, (m) => m['type'] === 'snapshot', 3000);
+        const media = snap['media'] as { assetId?: string; action?: string; elapsedMs?: number } | null;
+        assert(
+          media?.assetId === audioAsset.id && media.action === 'play' && typeof media.elapsedMs === 'number',
+          'F7j: snapshot carries active playback for late joiners',
+        );
+      } catch {
+        fail('F7j: snapshot carries active playback', 'timeout');
+      }
+      lateWs.close();
     }
 
     // F8: player2 (non-owner) deletes player1's pdf → 403
