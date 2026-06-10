@@ -52,6 +52,9 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
 
   function onTitleBarPointerDown(e: PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;
+    // Presses on the title bar's buttons/links must stay clicks — capturing
+    // the pointer here would swallow them and start a drag instead.
+    if ((e.target as HTMLElement).closest('button, a')) return;
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
     dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
   }
