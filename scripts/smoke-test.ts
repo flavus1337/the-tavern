@@ -1162,6 +1162,33 @@ async function main(): Promise<void> {
       fail('G11: 2d20kh+3 roll', 'timeout');
     }
 
+    // G15–G16: disadvantage roll (keep lowest) — 2d20kl
+    const disReqId = 'dis-roll-1';
+    send(p1Ws, { type: 'roll', requestId: disReqId, expression: '2d20kl', visibility: 'public' });
+    try {
+      const disMsg = await waitForMessage(
+        p1Messages,
+        (m) => m['type'] === 'rollResult' && m['requestId'] === disReqId,
+        3000,
+      );
+      const entry = disMsg['entry'] as {
+        total?: number;
+        parts?: Array<{ kind: string; rolls?: number[]; dropped?: number[] }>;
+      };
+      const dicePart = entry.parts?.find((p) => p.kind === 'dice');
+      const rolls = dicePart?.rolls ?? [];
+      const dropped = dicePart?.dropped ?? [];
+      const droppedIdx = dropped[0] ?? -1;
+      const keptIdx = droppedIdx === 0 ? 1 : 0;
+      assert(rolls.length === 2 && dropped.length === 1, 'G15: 2d20kl rolls two dice, drops one');
+      assert(
+        (rolls[keptIdx] ?? 0) <= (rolls[droppedIdx] ?? 0) && entry.total === rolls[keptIdx],
+        `G16: total = lower die (got ${entry.total}, rolls ${rolls.join(',')})`,
+      );
+    } catch {
+      fail('G15: 2d20kl roll', 'timeout');
+    }
+
     // =========================================================================
     // H. Isolation
     // =========================================================================

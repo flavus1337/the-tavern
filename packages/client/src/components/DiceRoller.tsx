@@ -14,6 +14,7 @@ export function DiceRoller() {
   const [label, setLabel] = useState('');
   const [visibility, setVisibility] = useState<RollVisibility>('public');
   const [advantage, setAdvantage] = useState(false);
+  const [disadvantage, setDisadvantage] = useState(false);
   const [expressionError, setExpressionError] = useState<string | null>(null);
 
   const isDm = self?.role === 'dm';
@@ -36,7 +37,7 @@ export function DiceRoller() {
   }
 
   function handleQuickRoll(die: DieSides) {
-    sendRoll(advantage ? `2d${die}kh` : `d${die}`);
+    sendRoll(advantage ? `2d${die}kh` : disadvantage ? `2d${die}kl` : `d${die}`);
   }
 
   function handleExpressionChange(val: string) {
@@ -68,74 +69,114 @@ export function DiceRoller() {
           Quick Roll
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-          {QUICK_DICE.map((die) => (
-            <button
-              key={die}
-              type="button"
-              disabled={disabled}
-              onClick={() => handleQuickRoll(die)}
-              style={{
-                aspectRatio: '1',
-                border: `1px solid ${advantage && !disabled ? '#e8b76566' : 'var(--border)'}`,
-                borderRadius: 10,
-                background: '#ffffff04',
-                color: disabled ? 'var(--faint)' : advantage ? 'var(--gold)' : 'var(--mid)',
-                fontFamily: 'var(--mono)',
-                fontSize: 13,
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: disabled ? 'not-allowed' : 'pointer',
-                transition: 'all 0.12s',
-                outline: 'none',
-              }}
-              onMouseEnter={(e) => {
-                if (disabled) return;
-                const el = e.currentTarget;
-                el.style.borderColor = advantage ? 'var(--gold)' : 'var(--ember)';
-                el.style.color = advantage ? 'var(--gold)' : 'var(--ember)';
-                el.style.background = advantage ? '#e8b76510' : '#e08a4b0d';
-                el.style.transform = 'translateY(-1px)';
-              }}
-              onMouseLeave={(e) => {
-                if (disabled) return;
-                const el = e.currentTarget;
-                el.style.borderColor = advantage ? '#e8b76566' : 'var(--border)';
-                el.style.color = advantage ? 'var(--gold)' : 'var(--mid)';
-                el.style.background = '#ffffff04';
-                el.style.transform = '';
-              }}
-              onMouseDown={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.transform = 'scale(0.96)'; }}
-              onMouseUp={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.transform = ''; }}
-              aria-label={advantage ? `Roll d${die} with advantage (roll twice, keep highest)` : `Roll d${die}`}
-            >
-              {`d${die}`}
-            </button>
-          ))}
+          {QUICK_DICE.map((die) => {
+            // Mode tint: gold for advantage, garnet for disadvantage.
+            const modeColor = advantage ? 'var(--gold)' : disadvantage ? '#e08a8a' : null;
+            const modeBorder = advantage ? '#e8b76566' : disadvantage ? '#b6485a66' : null;
+            const modeHoverBg = advantage ? '#e8b76510' : disadvantage ? '#b6485a12' : '#e08a4b0d';
+            return (
+              <button
+                key={die}
+                type="button"
+                disabled={disabled}
+                onClick={() => handleQuickRoll(die)}
+                style={{
+                  aspectRatio: '1',
+                  border: `1px solid ${modeBorder && !disabled ? modeBorder : 'var(--border)'}`,
+                  borderRadius: 10,
+                  background: '#ffffff04',
+                  color: disabled ? 'var(--faint)' : modeColor ?? 'var(--mid)',
+                  fontFamily: 'var(--mono)',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.12s',
+                  outline: 'none',
+                }}
+                onMouseEnter={(e) => {
+                  if (disabled) return;
+                  const el = e.currentTarget;
+                  el.style.borderColor = modeColor ?? 'var(--ember)';
+                  el.style.color = modeColor ?? 'var(--ember)';
+                  el.style.background = modeHoverBg;
+                  el.style.transform = 'translateY(-1px)';
+                }}
+                onMouseLeave={(e) => {
+                  if (disabled) return;
+                  const el = e.currentTarget;
+                  el.style.borderColor = modeBorder ?? 'var(--border)';
+                  el.style.color = modeColor ?? 'var(--mid)';
+                  el.style.background = '#ffffff04';
+                  el.style.transform = '';
+                }}
+                onMouseDown={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.transform = 'scale(0.96)'; }}
+                onMouseUp={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.transform = ''; }}
+                aria-label={
+                  advantage
+                    ? `Roll d${die} with advantage (roll twice, keep highest)`
+                    : disadvantage
+                    ? `Roll d${die} with disadvantage (roll twice, keep lowest)`
+                    : `Roll d${die}`
+                }
+              >
+                {`d${die}`}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Advantage toggle — applies to the quick-roll buttons */}
-        <label
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            marginTop: 10, fontSize: 13, cursor: 'pointer', userSelect: 'none',
-            color: advantage ? 'var(--gold)' : 'var(--mid)',
-            transition: 'color 0.15s',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={advantage}
-            onChange={(e) => setAdvantage(e.target.checked)}
-            disabled={disabled}
-            style={{ accentColor: 'var(--gold)', width: 14, height: 14, cursor: 'pointer' }}
-          />
-          Advantage
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>
-            roll twice, keep highest
-          </span>
-        </label>
+        {/* Advantage / Disadvantage toggles — mutually exclusive, apply to quick rolls */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 16, rowGap: 4, marginTop: 10 }}>
+          <label
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 13, cursor: 'pointer', userSelect: 'none',
+              color: advantage ? 'var(--gold)' : 'var(--mid)',
+              transition: 'color 0.15s',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={advantage}
+              onChange={(e) => {
+                setAdvantage(e.target.checked);
+                if (e.target.checked) setDisadvantage(false);
+              }}
+              disabled={disabled}
+              style={{ accentColor: 'var(--gold)', width: 14, height: 14, cursor: 'pointer' }}
+            />
+            Advantage
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>
+              keep highest
+            </span>
+          </label>
+          <label
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 13, cursor: 'pointer', userSelect: 'none',
+              color: disadvantage ? '#e08a8a' : 'var(--mid)',
+              transition: 'color 0.15s',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={disadvantage}
+              onChange={(e) => {
+                setDisadvantage(e.target.checked);
+                if (e.target.checked) setAdvantage(false);
+              }}
+              disabled={disabled}
+              style={{ accentColor: 'var(--garnet)', width: 14, height: 14, cursor: 'pointer' }}
+            />
+            Disadvantage
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>
+              keep lowest
+            </span>
+          </label>
+        </div>
       </div>
 
       {/* Expression roller */}
