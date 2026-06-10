@@ -112,9 +112,10 @@ export function DialogContent({ className, children, title }: DialogContentProps
       <div
         ref={contentRef}
         className={cn(
-          'relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800',
-          'rounded-xl shadow-2xl p-6',
-          className,
+          'relative z-10 w-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl',
+          // className replaces the default sizing/padding so callers can build
+          // large layouts (e.g. the PDF viewer) without utility conflicts.
+          className ?? 'max-w-md p-6',
         )}
       >
         {children}

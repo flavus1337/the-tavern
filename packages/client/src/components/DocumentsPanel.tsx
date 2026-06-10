@@ -4,6 +4,7 @@ import { api, apiUpload, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
+import { Dialog, DialogContent } from './ui/dialog';
 import { useState } from 'react';
 
 const MAX_PDF_SIZE = 25 * 1024 * 1024; // 25MB
@@ -15,6 +16,7 @@ export function DocumentsPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<AssetManifest | null>(null);
 
   const isDm = self?.role === 'dm';
 
@@ -96,12 +98,74 @@ export function DocumentsPanel() {
                 campaignId={campaignId ?? ''}
                 canDelete={isDm || doc.ownerUsername === self?.username}
                 onDelete={() => { void handleDelete(doc.id); }}
+                onView={() => setViewing(doc)}
               />
             ))
           )}
         </div>
       </ScrollArea>
+
+      {/* In-app PDF viewer */}
+      <PdfViewerDialog
+        doc={viewing}
+        campaignId={campaignId ?? ''}
+        onClose={() => setViewing(null)}
+      />
     </div>
+  );
+}
+
+interface PdfViewerDialogProps {
+  doc: AssetManifest | null;
+  campaignId: string;
+  onClose: () => void;
+}
+
+function PdfViewerDialog({ doc, campaignId, onClose }: PdfViewerDialogProps) {
+  const url = doc ? `/api/campaigns/${campaignId}/files/assets/${doc.file}` : '';
+  return (
+    <Dialog open={doc !== null} onClose={onClose}>
+      <DialogContent
+        title={doc?.title ?? 'Document'}
+        className="max-w-5xl h-[85vh] p-0 flex flex-col overflow-hidden"
+      >
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800 shrink-0">
+          <p className="text-sm font-medium text-zinc-200 truncate">{doc?.title}</p>
+          <div className="flex items-center gap-1 shrink-0">
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 text-zinc-400 hover:text-zinc-200 rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
+              aria-label="Open in new tab"
+              title="Open in new tab"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </a>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 text-zinc-400 hover:text-zinc-200 rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
+              aria-label="Close viewer"
+              title="Close"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        {doc && (
+          <iframe
+            src={url}
+            title={doc.title}
+            className="flex-1 w-full bg-zinc-950"
+          />
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -110,22 +174,31 @@ interface DocumentItemProps {
   campaignId: string;
   canDelete: boolean;
   onDelete: () => void;
+  onView: () => void;
 }
 
-function DocumentItem({ doc, campaignId, canDelete, onDelete }: DocumentItemProps) {
+function DocumentItem({ doc, campaignId, canDelete, onDelete, onView }: DocumentItemProps) {
   return (
     <div className="flex items-center gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
-      <div className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center shrink-0">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4 text-zinc-400">
-          <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-zinc-200 truncate">{doc.title}</p>
-        {doc.ownerUsername && (
-          <p className="text-xs text-zinc-500">by {doc.ownerUsername}</p>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={onView}
+        className="flex items-center gap-2 flex-1 min-w-0 text-left rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
+        aria-label={`View ${doc.title}`}
+        title="View document"
+      >
+        <div className="w-8 h-8 rounded bg-zinc-800 flex items-center justify-center shrink-0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4 text-zinc-400">
+            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-zinc-200 truncate hover:text-white transition-colors">{doc.title}</p>
+          {doc.ownerUsername && (
+            <p className="text-xs text-zinc-500">by {doc.ownerUsername}</p>
+          )}
+        </div>
+      </button>
       <div className="flex items-center gap-1 shrink-0">
         <a
           href={`/api/campaigns/${campaignId}/files/assets/${doc.file}`}
