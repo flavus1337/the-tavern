@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/spectral": "^5.2.8",
     "@vtt/shared": "workspace:*",
     "pdfjs-dist": "^6.0.227",
     "react": "^18.3.1",

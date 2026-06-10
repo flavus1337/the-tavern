@@ -41,9 +41,9 @@ export function renderMarkdown(text: string): ReactNode {
       flushList();
       const level = (heading[1] ?? '#').length;
       const content = renderInline(heading[2] ?? '');
-      if (level === 1) blocks.push(<h1 key={key++} className="text-xl font-bold text-zinc-100 mt-3 first:mt-0">{content}</h1>);
-      else if (level === 2) blocks.push(<h2 key={key++} className="text-lg font-semibold text-zinc-100 mt-3 first:mt-0">{content}</h2>);
-      else blocks.push(<h3 key={key++} className="text-base font-semibold text-zinc-200 mt-2 first:mt-0">{content}</h3>);
+      if (level === 1) blocks.push(<h1 key={key++} className="text-xl font-bold text-[var(--hi)] mt-3 first:mt-0">{content}</h1>);
+      else if (level === 2) blocks.push(<h2 key={key++} className="text-lg font-semibold text-[var(--hi)] mt-3 first:mt-0">{content}</h2>);
+      else blocks.push(<h3 key={key++} className="text-base font-semibold text-[var(--hi)] mt-2 first:mt-0">{content}</h3>);
     } else if (line.trim() === '') {
       flushList();
     } else {
@@ -53,7 +53,7 @@ export function renderMarkdown(text: string): ReactNode {
   }
   flushList();
 
-  return <div className="space-y-1.5 text-sm text-zinc-300">{blocks}</div>;
+  return <div className="space-y-1.5 text-sm text-[var(--mid)]">{blocks}</div>;
 }
 
 /** Inline: **bold**, *italic*, `code`. */
@@ -68,9 +68,9 @@ function renderInline(text: string): ReactNode[] {
     if (m.index > last) out.push(text.slice(last, m.index));
     const tok = m[0];
     if (tok.startsWith('`')) {
-      out.push(<code key={key++} className="bg-zinc-800 text-zinc-200 rounded px-1 py-0.5 text-[0.85em]">{tok.slice(1, -1)}</code>);
+      out.push(<code key={key++} className="bg-[var(--raised)] text-[var(--hi)] rounded px-1 py-0.5 text-[0.85em]">{tok.slice(1, -1)}</code>);
     } else if (tok.startsWith('**')) {
-      out.push(<strong key={key++} className="font-semibold text-zinc-100">{tok.slice(2, -2)}</strong>);
+      out.push(<strong key={key++} className="font-semibold text-[var(--hi)]">{tok.slice(2, -2)}</strong>);
     } else {
       out.push(<em key={key++}>{tok.slice(1, -1)}</em>);
     }

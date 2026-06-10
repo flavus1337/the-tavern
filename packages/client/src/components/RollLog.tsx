@@ -1,6 +1,7 @@
+import { useEffect, useRef } from 'react';
 import type { RollLogEntry, RollPart } from '@vtt/shared';
 import { ScrollArea } from './ui/scroll-area';
-import { Badge } from './ui/badge';
+import { useStore } from '../store';
 
 interface RollLogProps {
   entries: RollLogEntry[];
@@ -9,7 +10,7 @@ interface RollLogProps {
 export function RollLog({ entries }: RollLogProps) {
   if (entries.length === 0) {
     return (
-      <div className="flex items-center justify-center py-8 text-zinc-600 text-sm">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 16px', color: 'var(--faint)', fontSize: 13, textAlign: 'center' }}>
         No rolls yet
       </div>
     );
@@ -17,7 +18,7 @@ export function RollLog({ entries }: RollLogProps) {
 
   return (
     <ScrollArea className="h-full">
-      <div className="p-3 space-y-2">
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {entries.map((entry) => (
           <RollEntry key={entry.id} entry={entry} />
         ))}
@@ -26,89 +27,289 @@ export function RollLog({ entries }: RollLogProps) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Detect nat-20 / nat-1 from a roll entry, respecting keep-highest
+// ---------------------------------------------------------------------------
+
+function getKeptD20Value(entry: RollLogEntry): number | null {
+  const d20Parts = entry.parts.filter((p): p is RollPart & { kind: 'dice' } =>
+    p.kind === 'dice' && p.sides === 20,
+  );
+  if (d20Parts.length !== 1) return null;
+  const part = d20Parts[0];
+  if (!part) return null;
+
+  if (part.dropped && part.dropped.length > 0) {
+    // Advantage roll: find the non-dropped index
+    const keptIdx = part.rolls.findIndex((_, i) => !part.dropped!.includes(i));
+    return keptIdx >= 0 ? (part.rolls[keptIdx] ?? null) : null;
+  }
+  // Normal single d20
+  if (part.rolls.length === 1) return part.rolls[0] ?? null;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Nat-20 board moment: gold ring sweep
+// ---------------------------------------------------------------------------
+
+function Nat20BoardMoment() {
+  return (
+    <div
+      className="crit-ring"
+      style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        width: 0,
+        height: 0,
+        borderRadius: '50%',
+        border: '2px solid var(--gold)',
+        transform: 'translate(-50%, -50%)',
+        animation: 'ring-sweep 700ms ease-out forwards',
+        pointerEvents: 'none',
+        zIndex: 100,
+      }}
+      aria-hidden="true"
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Individual roll entry
+// ---------------------------------------------------------------------------
+
 function RollEntry({ entry }: { entry: RollLogEntry }) {
-  // Check for nat 20 / nat 1 on a single d20 roll
-  const singleD20 = entry.parts.length === 1 && entry.parts[0]?.kind === 'dice' && entry.parts[0].sides === 20 && entry.parts[0].count === 1;
-  const singleRoll = singleD20 && entry.parts[0]?.kind === 'dice' ? entry.parts[0].rolls[0] : null;
-  const isNat20 = singleRoll === 20;
-  const isNat1 = singleRoll === 1;
+  const keptD20 = getKeptD20Value(entry);
+  const isNat20 = keptD20 === 20;
+  const isNat1 = keptD20 === 1;
+  const isPrivate = entry.visibility === 'dm';
+  const showBoardMoment = useRef(false);
+
+  // Fire board moment once on first render for nat 20
+  const hasFiredRef = useRef(false);
+  const addBoardMoment = useStore((s) => s.addBoardMoment ?? (() => {}));
+  useEffect(() => {
+    if (isNat20 && !hasFiredRef.current) {
+      hasFiredRef.current = true;
+      addBoardMoment(entry.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  void showBoardMoment;
+
+  const borderColor = isNat20
+    ? '#e8b76555'
+    : isNat1
+    ? '#b6485a44'
+    : isPrivate
+    ? 'var(--border)'
+    : 'var(--border)';
+
+  const borderStyle = isPrivate ? 'dashed' : 'solid';
 
   return (
     <div
-      className={`
-        p-2.5 rounded-lg border text-sm
-        ${isNat20 ? 'bg-green-950/40 border-green-800' : ''}
-        ${isNat1 ? 'bg-red-950/40 border-red-900' : ''}
-        ${!isNat20 && !isNat1 ? 'bg-zinc-900 border-zinc-800' : ''}
-      `}
+      className={`log-entry-animate ${isNat1 ? 'log-entry-shake' : ''}`}
+      style={{
+        background: 'var(--surface2)',
+        border: `1px ${borderStyle} ${borderColor}`,
+        borderRadius: 11,
+        padding: '13px 14px',
+        position: 'relative',
+        animation: isNat1
+          ? 'log-in 0.26s ease-out, shake 0.4s ease-out 0.05s'
+          : 'log-in 0.26s ease-out',
+      }}
     >
-      {/* Header row */}
-      <div className="flex items-center justify-between gap-2 mb-1.5">
-        <div className="flex items-center gap-1.5">
-          <span className="font-medium text-zinc-200 text-xs">{entry.username}</span>
-          {entry.label && <span className="text-zinc-500 text-xs">· {entry.label}</span>}
-        </div>
-        <div className="flex items-center gap-1">
-          {entry.visibility === 'dm' && (
-            <Badge variant="dm" className="text-xs">Private</Badge>
+      {/* Gold / garnet left rule */}
+      {(isNat20 || isNat1) && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 0, top: 10, bottom: 10,
+            width: 3,
+            borderRadius: 3,
+            background: isNat20 ? 'var(--gold)' : 'var(--garnet)',
+            boxShadow: isNat20 ? '0 0 10px #e8b76577' : undefined,
+          }}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Row 1: who + timestamp */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 7 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--mid)', fontWeight: 700 }}>
+            {entry.username}
+          </span>
+          {isPrivate && (
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--faint)', border: '1px solid var(--border)', padding: '1px 5px', borderRadius: 4 }}>
+              private
+            </span>
           )}
-          <span className="text-zinc-600 text-xs">{relativeTime(entry.ts)}</span>
         </div>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>
+          {relativeTime(entry.ts)}
+        </span>
       </div>
 
-      {/* Expression */}
-      <div className="text-xs text-zinc-500 mb-1.5 font-mono">{entry.expression}</div>
+      {/* Row 2: expression + label */}
+      <div style={{ fontFamily: 'var(--mono)', fontSize: 11.5, color: 'var(--low)', marginBottom: 9 }}>
+        {entry.expression}
+        {entry.label && <span> · {entry.label}</span>}
+      </div>
 
-      {/* Dice chips */}
-      <div className="flex flex-wrap gap-1 mb-1.5">
+      {/* Row 3: pips */}
+      <div style={{ display: 'flex', gap: 5, alignItems: 'center', flexWrap: 'wrap', marginBottom: 11 }}>
         {entry.parts.map((part, i) => (
-          <PartChip key={i} part={part} />
+          <PartPips key={i} part={part} />
         ))}
       </div>
 
-      {/* Total */}
-      <div className={`text-lg font-bold ${isNat20 ? 'text-green-400' : isNat1 ? 'text-red-400' : 'text-zinc-100'}`}>
-        {entry.total}
-        {isNat20 && <span className="text-xs font-normal text-green-500 ml-1">NAT 20!</span>}
-        {isNat1 && <span className="text-xs font-normal text-red-500 ml-1">NAT 1</span>}
+      {/* Row 4: total + badge */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <span style={{
+          fontFamily: 'var(--serif)',
+          fontSize: 32,
+          fontWeight: 600,
+          lineHeight: 1,
+          color: isNat20 ? 'var(--gold)' : isNat1 ? 'var(--garnet)' : 'var(--hi)',
+        }}>
+          {entry.total}
+        </span>
+        {isNat20 && (
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '3px 7px', borderRadius: 5, fontWeight: 600, color: 'var(--gold)', background: '#e8b76519' }}>
+            CRITICAL HIT
+          </span>
+        )}
+        {isNat1 && (
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', padding: '3px 7px', borderRadius: 5, fontWeight: 600, color: 'var(--garnet)', background: '#b6485a1f' }}>
+            CRITICAL MISS
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-function PartChip({ part }: { part: RollPart }) {
+// ---------------------------------------------------------------------------
+// Pip rendering
+// ---------------------------------------------------------------------------
+
+function PartPips({ part }: { part: RollPart }) {
   if (part.kind === 'modifier') {
     return (
-      <span className="inline-flex items-center px-1.5 py-0.5 bg-zinc-800 text-zinc-400 text-xs rounded font-mono">
+      <span style={{
+        fontFamily: 'var(--mono)', fontSize: 12,
+        color: 'var(--low)',
+        background: 'transparent',
+        border: 'none',
+        padding: '0 3px',
+        minWidth: 'auto',
+      }}>
         {part.value >= 0 ? `+${part.value}` : String(part.value)}
       </span>
     );
   }
 
+  // Dice part
+  const droppedSet = new Set(part.dropped ?? []);
+
   return (
     <>
-      {part.rolls.map((roll, i) => (
-        <span
-          key={i}
-          className={`inline-flex items-center px-1.5 py-0.5 text-xs rounded font-mono border ${
-            roll === part.sides
-              ? 'bg-green-900 border-green-700 text-green-200'
-              : roll === 1
-              ? 'bg-red-900 border-red-700 text-red-200'
-              : 'bg-zinc-800 border-zinc-700 text-zinc-300'
-          }`}
-          title={`d${part.sides}`}
-        >
-          {part.negative ? '-' : i > 0 || part.negative ? '' : ''}{roll}
-        </span>
+      {part.rolls.map((roll, i) => {
+        const isDropped = droppedSet.has(i);
+        const isMax = roll === part.sides;
+        const isMin = roll === 1;
+
+        return (
+          <span
+            key={i}
+            style={{
+              minWidth: 25, height: 25,
+              padding: '0 6px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 7,
+              fontFamily: 'var(--mono)',
+              fontSize: 12,
+              fontWeight: 600,
+              opacity: isDropped ? 0.35 : 1,
+              // Max = gold, min = garnet, dropped stays neutral
+              background: !isDropped && isMax
+                ? '#e8b76524'
+                : !isDropped && isMin
+                ? '#b6485a22'
+                : 'rgba(255,255,255,0.05)',
+              border: `1px solid ${!isDropped && isMax ? '#e8b76577' : !isDropped && isMin ? '#b6485a66' : 'rgba(255,255,255,0.08)'}`,
+              color: !isDropped && isMax
+                ? 'var(--gold)'
+                : !isDropped && isMin
+                ? '#e08a8a'
+                : 'var(--hi)',
+            }}
+            title={`d${part.sides}${isDropped ? ' (dropped)' : ''}`}
+          >
+            {roll}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Nat-20 board moment component — rendered over the canvas area from here
+// ---------------------------------------------------------------------------
+export function BoardMoments() {
+  const boardMoments = useStore((s) => s.boardMoments ?? []);
+  const removeBoardMoment = useStore((s) => s.removeBoardMoment ?? (() => {}));
+
+  return (
+    <>
+      {boardMoments.map((id) => (
+        <Nat20BoardMomentWrapper key={id} id={id} onDone={() => removeBoardMoment(id)} />
       ))}
     </>
   );
 }
 
+function Nat20BoardMomentWrapper({ onDone }: { id: string; onDone: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 900);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
+  return (
+    <>
+      <Nat20BoardMoment />
+      <div
+        className="crit-glow"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'radial-gradient(circle at center, #e8b76518, transparent 55%)',
+          animation: 'glow-fade 800ms ease-out forwards',
+          pointerEvents: 'none',
+          zIndex: 99,
+        }}
+        aria-hidden="true"
+      />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Relative timestamp
+// ---------------------------------------------------------------------------
+
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const s = Math.floor(diff / 1000);
+  if (s < 5) return 'now';
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ago`;

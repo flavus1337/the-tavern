@@ -33,14 +33,15 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryS
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
           <div className="text-center max-w-sm">
-            <p className="text-zinc-400 mb-2 font-medium">Something went wrong</p>
-            <p className="text-zinc-600 text-sm mb-4">{this.state.message}</p>
+            <p className="mb-2 font-medium" style={{ color: 'var(--mid)' }}>Something went wrong</p>
+            <p className="text-sm mb-4" style={{ color: 'var(--faint)' }}>{this.state.message}</p>
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="px-4 py-2 bg-zinc-800 text-zinc-200 rounded-md text-sm hover:bg-zinc-700 transition-colors"
+              className="px-4 py-2 text-sm transition-colors"
+              style={{ background: 'var(--surface2)', color: 'var(--hi)', borderRadius: 9, border: '1px solid var(--border)' }}
             >
               Reload
             </button>
@@ -132,8 +133,8 @@ function AppContent() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-zinc-600 text-sm animate-pulse">Loading…</div>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg)' }}>
+        <div className="text-sm animate-pulse" style={{ color: 'var(--faint)' }}>Loading…</div>
       </div>
     );
   }

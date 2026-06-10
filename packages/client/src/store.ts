@@ -10,6 +10,18 @@ import type {
   ServerSnapshotPayload,
 } from '@vtt/shared';
 
+/** A transient join-notification toast */
+export interface JoinToast {
+  id: string;
+  entry: PresenceEntry;
+}
+
+/** A transient share notification toast */
+export interface ShareToast {
+  id: string;
+  docTitle: string;
+}
+
 const ROLL_LOG_MAX = 200;
 
 // ---------------------------------------------------------------------------
@@ -84,6 +96,12 @@ interface TableSlice {
   noteEditor: { noteId: string | null } | null;
   /** transient roll-result popups shown over the canvas */
   rollToasts: RollLogEntry[];
+  /** transient presence-join popups */
+  joinToasts: JoinToast[];
+  /** transient nat-20 board moment IDs (ring sweep) */
+  boardMoments: string[];
+  /** transient document-share toasts */
+  shareToasts: ShareToast[];
   myNotes: Note[];
   lastErrorMessage: string | null;
 
@@ -96,6 +114,12 @@ interface TableSlice {
   setBoardView: (view: BoardView) => void;
   addRollEntry: (entry: RollLogEntry) => void;
   dismissRollToast: (id: string) => void;
+  addJoinToast: (entry: PresenceEntry) => void;
+  dismissJoinToast: (id: string) => void;
+  addBoardMoment: (id: string) => void;
+  removeBoardMoment: (id: string) => void;
+  addShareToast: (docTitle: string) => void;
+  dismissShareToast: (id: string) => void;
   setAssets: (assets: AssetManifest[]) => void;
   setDocuments: (documents: AssetManifest[]) => void;
   setViewingDocument: (doc: AssetManifest | null) => void;
@@ -125,6 +149,9 @@ const tableDefaults = {
   viewingDocument: null,
   noteEditor: null,
   rollToasts: [],
+  joinToasts: [] as JoinToast[],
+  boardMoments: [] as string[],
+  shareToasts: [] as ShareToast[],
   myNotes: [],
   lastErrorMessage: null,
 };
@@ -200,6 +227,28 @@ export const useStore = create<StoreState>()((set) => ({
 
   dismissRollToast: (id) =>
     set((s) => ({ rollToasts: s.rollToasts.filter((t) => t.id !== id) })),
+
+  addJoinToast: (entry) =>
+    set((s) => ({
+      joinToasts: [...s.joinToasts, { id: `join-${entry.userId}-${Date.now()}`, entry }].slice(-3),
+    })),
+
+  dismissJoinToast: (id) =>
+    set((s) => ({ joinToasts: s.joinToasts.filter((t) => t.id !== id) })),
+
+  addBoardMoment: (id) =>
+    set((s) => ({ boardMoments: [...s.boardMoments, id].slice(-5) })),
+
+  removeBoardMoment: (id) =>
+    set((s) => ({ boardMoments: s.boardMoments.filter((m) => m !== id) })),
+
+  addShareToast: (docTitle) =>
+    set((s) => ({
+      shareToasts: [...s.shareToasts, { id: `share-${Date.now()}`, docTitle }].slice(-3),
+    })),
+
+  dismissShareToast: (id) =>
+    set((s) => ({ shareToasts: s.shareToasts.filter((t) => t.id !== id) })),
 
   setAssets: (assets) => set({ assets }),
   setDocuments: (documents) =>

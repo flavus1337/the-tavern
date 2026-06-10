@@ -112,7 +112,7 @@ export function DialogContent({ className, children, title }: DialogContentProps
       <div
         ref={contentRef}
         className={cn(
-          'relative z-10 w-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl',
+          'relative z-10 w-full bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-2xl',
           // className replaces the default sizing/padding so callers can build
           // large layouts (e.g. the PDF viewer) without utility conflicts.
           className ?? 'max-w-md p-6',
@@ -135,11 +135,11 @@ export function DialogHeader({ title, onClose }: DialogHeaderProps) {
   const close = onClose ?? ctxClose;
   return (
     <div className="flex items-center justify-between mb-4">
-      <h2 className="text-lg font-semibold text-zinc-100">{title}</h2>
+      <h2 className="text-lg font-semibold text-[var(--hi)]">{title}</h2>
       <button
         type="button"
         onClick={close}
-        className="text-zinc-500 hover:text-zinc-200 transition-colors p-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
+        className="text-[var(--low)] hover:text-[var(--hi)] transition-colors p-1 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ember)]"
         aria-label="Close dialog"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">

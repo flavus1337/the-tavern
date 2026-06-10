@@ -21,7 +21,7 @@ export function DmPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-zinc-800 space-y-2">
+      <div className="p-3 border-b border-[var(--border)] space-y-2">
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList className="w-full">
             <TabsTrigger value="assets">Assets</TabsTrigger>
@@ -36,8 +36,8 @@ export function DmPanel() {
             aria-checked={uploadsLocked}
             disabled={connection !== 'open'}
             onClick={toggleUploadLock}
-            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 disabled:opacity-50 ${
-              uploadsLocked ? 'bg-red-600' : 'bg-zinc-700'
+            className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ember)] disabled:opacity-50 ${
+              uploadsLocked ? 'bg-[var(--garnet)]' : 'bg-[var(--raised)]'
             }`}
           >
             <span
@@ -46,7 +46,7 @@ export function DmPanel() {
               }`}
             />
           </button>
-          <span className="text-xs text-zinc-400">
+          <span className="text-xs text-[var(--mid)]">
             {uploadsLocked ? 'Player uploads locked' : 'Lock player uploads'}
           </span>
         </label>

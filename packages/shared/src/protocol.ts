@@ -30,7 +30,15 @@ export type RollVisibility = 'public' | 'dm';
 export type DieSides = 4 | 6 | 8 | 10 | 12 | 20 | 100;
 
 export type RollPart =
-  | { kind: 'dice'; count: number; sides: DieSides; rolls: number[]; negative?: boolean }
+  | {
+      kind: 'dice';
+      count: number;
+      sides: DieSides;
+      rolls: number[];
+      negative?: boolean;
+      /** Indices (0-based) of rolls dropped by keep-highest. Absent for normal rolls. */
+      dropped?: number[];
+    }
   | { kind: 'modifier'; value: number };
 
 export interface RollLogEntry {

@@ -55,7 +55,7 @@ export function CreateCampaignDialog({ open, onClose, onCreate }: CreateCampaign
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="campaign-desc">Description <span className="text-zinc-500 font-normal">(optional)</span></Label>
+              <Label htmlFor="campaign-desc">Description <span className="text-[var(--low)] font-normal">(optional)</span></Label>
               <Input
                 id="campaign-desc"
                 value={description}

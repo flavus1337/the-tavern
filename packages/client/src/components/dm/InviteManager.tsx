@@ -110,7 +110,7 @@ export function InviteManager() {
   return (
     <div className="p-4 space-y-5">
       <form onSubmit={(e) => { void handleCreate(e); }} className="space-y-3">
-        <h3 className="text-sm font-semibold text-zinc-200">Create Invite Link</h3>
+        <h3 className="text-sm font-semibold text-[var(--hi)]">Create Invite Link</h3>
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
             <Label htmlFor="inv-expires" className="text-xs">Expires (hours)</Label>
@@ -143,8 +143,8 @@ export function InviteManager() {
       </form>
 
       {newInviteUrl && (
-        <div className="bg-zinc-950 border border-zinc-700 rounded-lg p-3 space-y-2">
-          <p className="text-xs text-zinc-400">Invite link (share this):</p>
+        <div className="bg-[var(--bg)] border border-[var(--border)] rounded-lg p-3 space-y-2">
+          <p className="text-xs text-[var(--mid)]">Invite link (share this):</p>
           <div className="flex gap-2">
             <input
               ref={urlInputRef}
@@ -153,7 +153,7 @@ export function InviteManager() {
               onFocus={(e) => e.currentTarget.select()}
               onClick={(e) => e.currentTarget.select()}
               aria-label="Invite link"
-              className="flex-1 min-w-0 text-xs font-mono text-indigo-300 bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 focus:outline-none focus-visible:border-indigo-500 select-all"
+              className="flex-1 min-w-0 text-xs font-mono text-[var(--ember)] bg-[var(--surface)] border border-[var(--border)] rounded px-2 py-1.5 focus:outline-none focus-visible:border-[var(--ember)] select-all"
             />
             <Button
               size="sm"
@@ -164,7 +164,7 @@ export function InviteManager() {
               {copied ? 'Copied!' : 'Copy'}
             </Button>
           </div>
-          {copyHint && <p className="text-xs text-zinc-400">{copyHint}</p>}
+          {copyHint && <p className="text-xs text-[var(--mid)]">{copyHint}</p>}
         </div>
       )}
 
@@ -175,21 +175,21 @@ export function InviteManager() {
       )}
 
       <div>
-        <h3 className="text-sm font-semibold text-zinc-200 mb-2">Existing Invites</h3>
+        <h3 className="text-sm font-semibold text-[var(--hi)] mb-2">Existing Invites</h3>
         {loading ? (
-          <p className="text-xs text-zinc-500">Loading…</p>
+          <p className="text-xs text-[var(--low)]">Loading…</p>
         ) : invites.length === 0 ? (
-          <p className="text-xs text-zinc-500">No invites yet.</p>
+          <p className="text-xs text-[var(--low)]">No invites yet.</p>
         ) : (
           <div className="space-y-2">
             {invites.map((inv) => (
               <div
                 key={inv.token}
-                className="flex items-center gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg"
+                className="flex items-center gap-2 p-2.5 bg-[var(--bg)] border border-[var(--border)] rounded-lg"
               >
                 <div className="flex-1 min-w-0">
-                  <code className="text-xs text-zinc-400 truncate block">{inv.token.slice(0, 12)}…</code>
-                  <p className="text-xs text-zinc-600 mt-0.5">
+                  <code className="text-xs text-[var(--mid)] truncate block">{inv.token.slice(0, 12)}…</code>
+                  <p className="text-xs text-[var(--faint)] mt-0.5">
                     {inv.uses}/{inv.maxUses ?? '∞'} uses
                     {inv.expiresAt && ` · expires ${new Date(inv.expiresAt).toLocaleDateString()}`}
                   </p>

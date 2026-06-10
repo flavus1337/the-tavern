@@ -5,10 +5,10 @@ export const ScrollArea = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEleme
   ({ className, children, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('overflow-y-auto scrollbar-thin', className)}
+      className={cn('overflow-y-auto', className)}
       style={{
         scrollbarWidth: 'thin',
-        scrollbarColor: '#3f3f46 transparent',
+        scrollbarColor: 'var(--border) transparent',
       }}
       {...props}
     >

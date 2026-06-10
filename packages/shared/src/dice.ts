@@ -1,7 +1,8 @@
 // Dice expression parser — pure, RNG injected.
 // Grammar: expression = term (('+'|'-') term)*
-//   term = NdX | dX (N defaults 1) | integer modifier
+//   term = NdX[kh] | dX[kh] (N defaults 1) | integer modifier
 //   X ∈ {4,6,8,10,12,20,100}
+//   kh suffix = keep highest (rolls N dice, keeps the single highest result)
 // Limits: N ≤ 100 per term, ≤ 10 terms total, modifier |value| ≤ 1000.
 // Case-insensitive, whitespace-tolerant.
 
@@ -17,6 +18,8 @@ export interface ParsedTermDice {
   count: number;
   sides: DieSides;
   negative: boolean;
+  /** When true: roll `count` dice but only keep the single highest result. */
+  keepHighest?: boolean;
 }
 
 export interface ParsedTermModifier {
@@ -102,11 +105,11 @@ export function parseDiceExpression(
     const negative = sign === '-';
 
     // Look ahead to determine term type.
-    // Cases: dX, NdX, N (modifier)
+    // Cases: dX[kh], NdX[kh], N (modifier)
     const leadingDigits = consumeDigits();
 
     if (peek() === 'd') {
-      // Dice term: [N]dX
+      // Dice term: [N]dX[kh]
       pos++; // consume 'd'
       const sidesStr = consumeDigits();
 
@@ -132,7 +135,16 @@ export function parseDiceExpression(
         return { ok: false, error: `too many dice in one term (max ${MAX_DICE_PER_TERM})` };
       }
 
-      terms.push({ kind: 'dice', count, sides: sides as DieSides, negative });
+      // Check for optional 'kh' suffix (keep highest)
+      let keepHighest = false;
+      if (pos + 1 < raw.length && raw[pos] === 'k' && raw[pos + 1] === 'h') {
+        keepHighest = true;
+        pos += 2; // consume 'kh'
+      }
+
+      const term: ParsedTermDice = { kind: 'dice', count, sides: sides as DieSides, negative };
+      if (keepHighest) term.keepHighest = true;
+      terms.push(term);
     } else {
       // Modifier term.
       if (leadingDigits.length === 0) {
@@ -174,7 +186,8 @@ export function normalizeExpression(roll: ParsedRoll): string {
     if (term === undefined) continue;
 
     if (term.kind === 'dice') {
-      const diceStr = `${term.count}d${term.sides}`;
+      const suffix = term.keepHighest ? 'kh' : '';
+      const diceStr = `${term.count}d${term.sides}${suffix}`;
       if (i === 0) {
         parts.push(term.negative ? `-${diceStr}` : diceStr);
       } else {
@@ -204,6 +217,10 @@ export function normalizeExpression(roll: ParsedRoll): string {
  * Negative dice terms: the dice part carries `negative: true`; the rolled
  * values are kept positive in the `rolls` array, and the contribution to
  * total is subtracted.
+ *
+ * keepHighest terms: all N dice are rolled and appear in `rolls`, but only
+ * the highest contributes to the total. `dropped` contains the 0-based
+ * indices of dice that were dropped.
  */
 export function executeRoll(
   roll: ParsedRoll,
@@ -215,20 +232,39 @@ export function executeRoll(
   for (const term of roll.terms) {
     if (term.kind === 'dice') {
       const rolls: number[] = [];
-      let diceSum = 0;
       for (let i = 0; i < term.count; i++) {
-        const result = rng(term.sides) + 1;
-        rolls.push(result);
-        diceSum += result;
+        rolls.push(rng(term.sides) + 1);
       }
-      parts.push({
-        kind: 'dice',
-        count: term.count,
-        sides: term.sides,
-        rolls,
-        negative: term.negative,
-      });
-      total += term.negative ? -diceSum : diceSum;
+
+      if (term.keepHighest) {
+        // Find the index of the highest die (last occurrence if tied).
+        let keptIdx = 0;
+        for (let i = 1; i < rolls.length; i++) {
+          if ((rolls[i] as number) >= (rolls[keptIdx] as number)) keptIdx = i;
+        }
+        const keptValue = rolls[keptIdx] as number;
+        const dropped = rolls.map((_, i) => i).filter((i) => i !== keptIdx);
+
+        parts.push({
+          kind: 'dice',
+          count: term.count,
+          sides: term.sides,
+          rolls,
+          negative: term.negative,
+          dropped,
+        });
+        total += term.negative ? -keptValue : keptValue;
+      } else {
+        const diceSum = rolls.reduce((s, v) => s + v, 0);
+        parts.push({
+          kind: 'dice',
+          count: term.count,
+          sides: term.sides,
+          rolls,
+          negative: term.negative,
+        });
+        total += term.negative ? -diceSum : diceSum;
+      }
     } else {
       parts.push({ kind: 'modifier', value: term.value });
       total += term.value;

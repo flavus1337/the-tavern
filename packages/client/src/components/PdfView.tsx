@@ -52,17 +52,26 @@ export function PdfView({ url, title }: { url: string; title: string }) {
   }, []);
 
   return (
-    <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto bg-zinc-950">
+    <div
+      ref={containerRef}
+      className="flex-1 min-h-0 overflow-y-auto"
+      style={{ background: 'var(--bg)' }}
+    >
       {error && (
         <div className="flex flex-col items-center justify-center gap-2 py-16">
-          <p className="text-sm text-red-400">Could not load PDF: {error}</p>
-          <a href={url} className="text-sm text-indigo-400 hover:underline" download>
+          <p className="text-sm" style={{ color: 'var(--garnet)' }}>Could not load PDF: {error}</p>
+          <a
+            href={url}
+            className="text-sm hover:underline"
+            style={{ color: 'var(--ember)' }}
+            download
+          >
             Download {title}
           </a>
         </div>
       )}
       {!error && !pdf && (
-        <p className="text-sm text-zinc-500 text-center py-16 animate-pulse">Loading PDF…</p>
+        <p className="text-sm text-center py-16 animate-pulse" style={{ color: 'var(--faint)' }}>Loading PDF…</p>
       )}
       {pdf && width > 0 && (
         <div className="flex flex-col items-center gap-3 p-3">

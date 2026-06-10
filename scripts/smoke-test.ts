@@ -1050,6 +1050,34 @@ async function main(): Promise<void> {
     const p2CountAfter2 = p2Messages.filter((m) => m['type'] === 'rollResult').length;
     assert(p2CountAfter2 === p2CountBefore2, 'G10: BAD_EXPRESSION not broadcast to others');
 
+    // G11–G14: advantage roll (keep highest) — 2d20kh
+    const advReqId = 'adv-roll-1';
+    send(p1Ws, { type: 'roll', requestId: advReqId, expression: '2d20kh+3', visibility: 'public' });
+    try {
+      const advMsg = await waitForMessage(
+        p1Messages,
+        (m) => m['type'] === 'rollResult' && m['requestId'] === advReqId,
+        3000,
+      );
+      const entry = advMsg['entry'] as {
+        total?: number;
+        parts?: Array<{ kind: string; rolls?: number[]; dropped?: number[]; value?: number }>;
+      };
+      const dicePart = entry.parts?.find((p) => p.kind === 'dice');
+      assert(dicePart?.rolls?.length === 2, 'G11: 2d20kh rolls both dice');
+      const rolls = dicePart?.rolls ?? [];
+      const dropped = dicePart?.dropped ?? [];
+      assert(dropped.length === 1, 'G12: exactly one die dropped');
+      const droppedIdx = dropped[0] ?? -1;
+      const keptIdx = droppedIdx === 0 ? 1 : 0;
+      const keptVal = rolls[keptIdx] ?? 0;
+      const droppedVal = rolls[droppedIdx] ?? 0;
+      assert(keptVal >= droppedVal, 'G13: dropped die is the lower roll');
+      assert(entry.total === keptVal + 3, `G14: total = kept die + 3 (got ${entry.total}, kept ${keptVal})`);
+    } catch {
+      fail('G11: 2d20kh+3 roll', 'timeout');
+    }
+
     // =========================================================================
     // H. Isolation
     // =========================================================================

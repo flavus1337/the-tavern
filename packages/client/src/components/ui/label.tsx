@@ -6,7 +6,7 @@ type LabelProps = LabelHTMLAttributes<HTMLLabelElement>;
 export const Label = forwardRef<HTMLLabelElement, LabelProps>(({ className, ...props }, ref) => (
   <label
     ref={ref}
-    className={cn('text-sm font-medium text-zinc-300 select-none', className)}
+    className={cn('text-[13px] font-semibold text-[var(--mid)] select-none block mb-[7px]', className)}
     {...props}
   />
 ));

@@ -1,7 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { cn } from '../../lib/utils';
 
-type Variant = 'default' | 'secondary' | 'ghost' | 'destructive';
+type Variant = 'default' | 'secondary' | 'ghost' | 'destructive' | 'teal';
 type Size = 'sm' | 'md';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -11,19 +11,26 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClasses: Record<Variant, string> = {
+  // Solid ember — primary CTA
   default:
-    'bg-indigo-600 text-white hover:bg-indigo-500 active:bg-indigo-700 disabled:bg-zinc-700 disabled:text-zinc-400',
+    'bg-[var(--ember)] text-[var(--ink)] hover:bg-[var(--ember-h)] active:scale-[0.98] disabled:bg-[var(--raised)] disabled:text-[var(--faint)] hover:shadow-[0_0_22px_-6px_rgba(224,138,75,0.67)]',
+  // Secondary ghost-ish
   secondary:
-    'bg-zinc-800 text-zinc-200 border border-zinc-700 hover:bg-zinc-700 active:bg-zinc-600 disabled:opacity-50',
+    'bg-[var(--surface2)] text-[var(--mid)] border border-[var(--border)] hover:border-[#473b34] hover:bg-[#ffffff06] active:scale-[0.98] disabled:opacity-50',
+  // Fully transparent
   ghost:
-    'bg-transparent text-zinc-300 hover:bg-zinc-800 active:bg-zinc-700 disabled:opacity-50',
+    'bg-transparent text-[var(--low)] hover:text-[var(--hi)] active:scale-[0.98] disabled:opacity-50',
+  // Danger
   destructive:
-    'bg-red-700 text-white hover:bg-red-600 active:bg-red-800 disabled:bg-zinc-700 disabled:text-zinc-400',
+    'bg-[var(--garnet)] text-[var(--hi)] hover:opacity-90 active:scale-[0.98] disabled:bg-[var(--raised)] disabled:text-[var(--faint)]',
+  // Teal for share actions
+  teal:
+    'bg-[#69b7a615] text-[var(--teal)] border border-[#69b7a63a] hover:bg-[#69b7a626] active:scale-[0.98] disabled:opacity-50',
 };
 
 const sizeClasses: Record<Size, string> = {
-  sm: 'px-2.5 py-1 text-xs rounded',
-  md: 'px-4 py-2 text-sm rounded-md',
+  sm: 'px-3 py-1.5 text-xs rounded-[9px]',
+  md: 'px-4 py-2.5 text-sm rounded-[9px]',
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -32,8 +39,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       ref={ref}
       disabled={disabled ?? loading}
       className={cn(
-        'inline-flex items-center justify-center gap-2 font-medium transition-colors cursor-pointer',
-        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 focus-visible:outline-offset-2',
+        'inline-flex items-center justify-center gap-2 font-semibold transition-all cursor-pointer whitespace-nowrap',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ember)] focus-visible:outline-offset-2',
         'disabled:cursor-not-allowed select-none',
         variantClasses[variant],
         sizeClasses[size],

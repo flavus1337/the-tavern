@@ -114,22 +114,29 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   ];
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-zinc-900 border-r border-zinc-800 lg:inset-auto lg:right-4 lg:top-4 lg:bottom-4 lg:w-[55%] lg:max-w-3xl lg:rounded-xl lg:border lg:border-zinc-700 lg:shadow-2xl lg:overflow-hidden">
+    <div
+      className="absolute inset-0 z-20 flex flex-col lg:inset-auto lg:right-4 lg:top-4 lg:bottom-4 lg:w-[55%] lg:max-w-3xl lg:rounded-xl lg:shadow-2xl lg:overflow-hidden"
+      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-zinc-800 bg-zinc-950 shrink-0">
-        <p className="text-sm font-medium text-zinc-200 truncate">
+      <div
+        className="flex items-center justify-between gap-2 px-4 py-2 shrink-0"
+        style={{ borderBottom: '1px solid var(--border-soft)', background: 'var(--bg)' }}
+      >
+        <p className="text-sm font-medium truncate" style={{ color: 'var(--hi)' }}>
           {noteId ? (editing ? 'Edit note' : 'Note') : 'New note'}
         </p>
         <div className="flex items-center gap-2 shrink-0">
           {editing ? (
             <>
               {isDm && (
-                <label className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer">
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--mid)' }}>
                   <input
                     type="checkbox"
                     checked={visibility === 'dm'}
                     onChange={(e) => setVisibility(e.target.checked ? 'dm' : 'player')}
                     className="rounded"
+                    style={{ accentColor: 'var(--ember)' }}
                   />
                   DM-only
                 </label>
@@ -166,7 +173,10 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           <button
             type="button"
             onClick={() => setNoteEditor(null)}
-            className="p-1.5 text-zinc-400 hover:text-zinc-200 rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
+            className="p-1.5 rounded transition-colors"
+            style={{ color: 'var(--low)' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--hi)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--low)'; }}
             aria-label="Close editor (back to canvas)"
             title="Close (back to canvas)"
           >
@@ -182,13 +192,23 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="max-w-3xl w-full mx-auto p-6">
             <div className="flex items-center gap-2 mb-4">
-              <h1 className="text-2xl font-bold text-zinc-100">{title}</h1>
+              <h1
+                className="text-2xl font-bold"
+                style={{ fontFamily: 'var(--serif)', color: 'var(--hi)' }}
+              >
+                {title}
+              </h1>
               {isDm && visibility === 'dm' && (
-                <span className="text-[10px] uppercase tracking-wider bg-zinc-800 text-zinc-400 rounded px-1.5 py-0.5">DM</span>
+                <span
+                  className="text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5"
+                  style={{ background: 'var(--raised)', color: 'var(--mid)' }}
+                >
+                  DM
+                </span>
               )}
             </div>
             {body.trim() === '' ? (
-              <p className="text-sm text-zinc-600 italic">This note is empty — hit Edit to write something.</p>
+              <p className="text-sm italic" style={{ color: 'var(--faint)' }}>This note is empty — hit Edit to write something.</p>
             ) : (
               renderMarkdown(body)
             )}
@@ -215,25 +235,37 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
               type="button"
               onClick={t.action}
               disabled={mode === 'preview'}
-              className={`w-8 h-8 rounded border border-zinc-700 text-zinc-300 hover:bg-zinc-800 disabled:opacity-40 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 ${t.className ?? ''}`}
+              className={`w-8 h-8 rounded text-sm transition-colors disabled:opacity-40 ${t.className ?? ''}`}
+              style={{ border: '1px solid var(--border)', color: 'var(--mid)', background: 'transparent' }}
+              onMouseEnter={(e) => { if (!(e.currentTarget as HTMLButtonElement).disabled) (e.currentTarget as HTMLElement).style.background = 'var(--surface2)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
               title={t.title}
               aria-label={t.title}
             >
               {t.label}
             </button>
           ))}
-          <div className="ml-auto flex rounded-md border border-zinc-700 overflow-hidden text-xs">
+          <div
+            className="ml-auto flex overflow-hidden text-xs"
+            style={{ borderRadius: 9, border: '1px solid var(--border)' }}
+          >
             <button
               type="button"
               onClick={() => setMode('write')}
-              className={`px-3 py-1.5 transition-colors ${mode === 'write' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className="px-3 py-1.5 transition-colors"
+              style={mode === 'write'
+                ? { background: 'var(--raised)', color: 'var(--hi)' }
+                : { color: 'var(--low)' }}
             >
               Write
             </button>
             <button
               type="button"
               onClick={() => setMode('preview')}
-              className={`px-3 py-1.5 transition-colors ${mode === 'preview' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className="px-3 py-1.5 transition-colors"
+              style={mode === 'preview'
+                ? { background: 'var(--raised)', color: 'var(--hi)' }
+                : { color: 'var(--low)' }}
             >
               Preview
             </button>
@@ -246,12 +278,31 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
             placeholder="Write your note… (markdown: **bold**, *italic*, ## heading, - list)"
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            className="flex-1 min-h-0 w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus-visible:border-indigo-500 resize-none font-mono leading-relaxed"
+            className="flex-1 min-h-0 w-full px-3 py-2.5 text-sm resize-none leading-relaxed focus:outline-none"
+            style={{
+              fontFamily: 'var(--mono)',
+              background: '#100c0a',
+              border: '1px solid var(--border)',
+              borderRadius: 9,
+              color: 'var(--hi)',
+              caretColor: 'var(--ember)',
+            }}
+            onFocus={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--ember)';
+              (e.currentTarget as HTMLElement).style.boxShadow = '0 0 0 3px rgba(224,138,75,0.13)';
+            }}
+            onBlur={(e) => {
+              (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+              (e.currentTarget as HTMLElement).style.boxShadow = '';
+            }}
           />
         ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto rounded-md bg-zinc-950 border border-zinc-800 px-4 py-3">
+          <div
+            className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
+            style={{ background: '#100c0a', border: '1px solid var(--border)', borderRadius: 9 }}
+          >
             {body.trim() === '' ? (
-              <p className="text-sm text-zinc-600 italic">Nothing to preview yet.</p>
+              <p className="text-sm italic" style={{ color: 'var(--faint)' }}>Nothing to preview yet.</p>
             ) : (
               renderMarkdown(body)
             )}

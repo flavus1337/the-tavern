@@ -1,27 +1,33 @@
 import { type HTMLAttributes } from 'react';
 import { cn } from '../../lib/utils';
 
-type Variant = 'default' | 'success' | 'warning' | 'destructive' | 'outline' | 'dm' | 'player';
+type Variant = 'default' | 'success' | 'warning' | 'destructive' | 'outline' | 'dm' | 'player' | 'teal' | 'private';
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: Variant;
 }
 
 const variantClasses: Record<Variant, string> = {
-  default: 'bg-zinc-700 text-zinc-200',
-  success: 'bg-green-900 text-green-300',
-  warning: 'bg-yellow-900 text-yellow-300',
-  destructive: 'bg-red-900 text-red-300',
-  outline: 'border border-zinc-600 text-zinc-300',
-  dm: 'bg-violet-900 text-violet-200',
-  player: 'bg-indigo-900 text-indigo-200',
+  default: 'bg-[var(--raised)] text-[var(--mid)]',
+  success: 'bg-[#69b7a622] text-[var(--teal)]',
+  warning: 'bg-[#e8b76522] text-[var(--gold)]',
+  destructive: 'bg-[#b6485a22] text-[var(--garnet)]',
+  outline: 'border border-[var(--border)] text-[var(--low)]',
+  // DM role — garnet on transparent garnet tint
+  dm: 'bg-[#b6485a1f] text-[var(--garnet)] font-mono uppercase tracking-[0.12em]',
+  // Player role — ember on transparent ember tint
+  player: 'bg-[#e08a4b1a] text-[var(--ember)] font-mono uppercase tracking-[0.12em]',
+  // Teal shared tag
+  teal: 'bg-[#69b7a61a] text-[var(--teal)] font-mono tracking-[0.08em]',
+  // Private roll chip
+  private: 'border border-[var(--border)] text-[var(--faint)] font-mono',
 };
 
 export function Badge({ variant = 'default', className, ...props }: BadgeProps) {
   return (
     <span
       className={cn(
-        'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium',
+        'inline-flex items-center px-2 py-0.5 rounded-[5px] text-[10px] font-semibold whitespace-nowrap',
         variantClasses[variant],
         className,
       )}

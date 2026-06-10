@@ -6,6 +6,8 @@ import { useStore } from '../store';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { D20Logo } from '../components/D20Logo';
+import loginHero from '../assets/login-hero.png';
 
 export function LoginScreen() {
   const { inviteToken, setRoute, setUser, setCampaigns } = useStore(
@@ -38,9 +40,8 @@ export function LoginScreen() {
       const res = await api.post<LoginResponse>('/api/auth/login', body);
       setUser(res.user);
 
-      // Load campaigns
       const { CampaignListItem } = await import('@vtt/shared').then(() => ({ CampaignListItem: null }));
-      void CampaignListItem; // type only
+      void CampaignListItem;
       const campaigns = await api.get<import('@vtt/shared').CampaignListItem[]>('/api/campaigns');
       setCampaigns(campaigns);
 
@@ -59,79 +60,124 @@ export function LoginScreen() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Logo area */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-indigo-600 mb-3">
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-7 h-7 text-white">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-zinc-100">Tabletop</h1>
-          <p className="text-zinc-500 text-sm mt-1">Virtual tabletop for D&amp;D</p>
-        </div>
+    <div
+      className="relative min-h-screen w-full overflow-hidden flex items-center"
+      style={{ background: 'var(--bg)' }}
+    >
+      {/* Backdrop: hero image */}
+      <div
+        className="absolute inset-0 z-0"
+        style={{
+          backgroundImage: `url(${loginHero})`,
+          backgroundPosition: 'center 38%',
+          backgroundSize: 'cover',
+        }}
+        aria-hidden="true"
+      />
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-          {inviteToken && (
-            <div className="mb-4 p-3 rounded-lg bg-indigo-950 border border-indigo-800 text-sm text-indigo-200">
-              You've been invited — log in to join the campaign.{' '}
-              <button
-                type="button"
-                onClick={() => setRoute('register')}
-                className="underline text-indigo-300 hover:text-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
-              >
-                Register instead
-              </button>
-            </div>
-          )}
+      {/* Scrim stack */}
+      <div
+        className="absolute inset-0 z-[1] pointer-events-none"
+        style={{
+          background: `
+            linear-gradient(90deg, #0c0a09f2 0%, #0c0a09cc 20%, #0c0a0955 40%, transparent 60%),
+            linear-gradient(0deg, #0c0a09d9, transparent 32%),
+            radial-gradient(55% 65% at 74% 42%, #e0824c16, transparent 70%),
+            radial-gradient(125% 105% at 50% 50%, transparent 58%, #0c0a09 100%)
+          `,
+        }}
+        aria-hidden="true"
+      />
 
-          <form onSubmit={(e) => { void handleSubmit(e); }} noValidate>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="username">Username</Label>
-                <Input
-                  id="username"
-                  type="text"
-                  autoComplete="username"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  disabled={loading}
-                  placeholder="Your username"
-                />
-              </div>
+      {/* Content */}
+      <div className="relative z-[3] w-full max-w-[1240px] mx-auto px-[6vw] py-12">
+        <div className="max-w-[392px]">
 
-              <div className="space-y-1.5">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={loading}
-                  placeholder="••••••••"
-                />
-              </div>
-
-              {error && (
-                <div role="alert" className="text-sm text-red-400 bg-red-950/50 border border-red-900 rounded-md p-3">
-                  {error}
-                  {lockoutSeconds != null && (
-                    <span className="block mt-1 text-red-300">
-                      Try again in {lockoutSeconds}s
-                    </span>
-                  )}
+          {/* Brand block */}
+          <div className="flex flex-col gap-1 mb-1" style={{ color: 'var(--ember)' }}>
+            <div className="flex items-center gap-[11px]">
+              <D20Logo size={40} />
+              <div>
+                <div style={{ fontFamily: 'var(--serif)', fontSize: 30, fontWeight: 600, color: 'var(--hi)', letterSpacing: '-0.01em', lineHeight: 1.1 }}>
+                  The Tavern
                 </div>
-              )}
-
-              <Button type="submit" loading={loading} className="w-full" size="md">
-                Sign In
-              </Button>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--low)', marginTop: 4 }}>
+                  GATHER · ROLL · ADVENTURE
+                </div>
+              </div>
             </div>
-          </form>
+          </div>
+
+          {/* Lead line */}
+          <p style={{ fontFamily: 'var(--serif)', fontWeight: 300, fontSize: 19, color: 'var(--mid)', margin: '20px 0 30px', lineHeight: 1.5 }}>
+            Pull up a chair. Your party is{' '}
+            <em style={{ color: 'var(--gold)', fontStyle: 'italic' }}>waiting by the fire.</em>
+          </p>
+
+          {/* Card */}
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
+
+            {/* Invite line (login with token) */}
+            {inviteToken && (
+              <div style={{ fontSize: 13, color: 'var(--low)', marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid var(--border-soft)', lineHeight: 1.5 }}>
+                You've been invited — log in to join the campaign.{' '}
+                <button
+                  type="button"
+                  onClick={() => setRoute('register')}
+                  style={{ color: 'var(--ember)', textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}
+                >
+                  Register instead
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={(e) => { void handleSubmit(e); }} noValidate>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="username">Username</Label>
+                  <Input
+                    id="username"
+                    type="text"
+                    autoComplete="username"
+                    required
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    disabled={loading}
+                    placeholder="Your username"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={loading}
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                {error && (
+                  <div role="alert" style={{ fontSize: 13, color: 'var(--garnet)', background: '#b6485a18', border: '1px solid #b6485a44', borderRadius: 9, padding: '10px 13px' }}>
+                    {error}
+                    {lockoutSeconds != null && (
+                      <span style={{ display: 'block', marginTop: 4, color: 'var(--mid)' }}>
+                        Try again in {lockoutSeconds}s
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <Button type="submit" loading={loading} className="w-full" size="md">
+                  Enter the Tavern
+                </Button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </div>

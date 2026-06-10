@@ -5,6 +5,8 @@ import { useStore } from '../store';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { D20Logo } from '../components/D20Logo';
+import loginHero from '../assets/login-hero.png';
 
 export function RegisterScreen() {
   const inviteToken = useStore((s) => s.inviteToken);
@@ -24,7 +26,6 @@ export function RegisterScreen() {
   const [error, setError] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // If no invite token, show friendly message
   useEffect(() => {
     if (!inviteToken) {
       setPreviewLoading(false);
@@ -79,30 +80,76 @@ export function RegisterScreen() {
     }
   }
 
-  if (!inviteToken) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-sm text-center">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8">
-            <div className="text-4xl mb-4">🔒</div>
-            <h2 className="text-xl font-semibold text-zinc-100 mb-2">Invite Only</h2>
-            <p className="text-zinc-400 text-sm mb-4">
-              Registration requires an invitation link. Ask your DM to invite you.
-            </p>
-            <Button variant="secondary" onClick={() => setRoute('login')}>
-              Back to Login
-            </Button>
+  const campaignName = preview?.valid ? preview.campaignName : null;
+  const dmName = preview?.valid && 'dmUsername' in preview ? (preview as { dmUsername?: string }).dmUsername : null;
+
+  // Shared hero/card layout wrapper
+  const Shell = ({ children }: { children: React.ReactNode }) => (
+    <div
+      className="relative min-h-screen w-full overflow-hidden flex items-center"
+      style={{ background: 'var(--bg)' }}
+    >
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 z-0"
+        style={{ backgroundImage: `url(${loginHero})`, backgroundPosition: 'center 38%', backgroundSize: 'cover' }}
+        aria-hidden="true"
+      />
+      {/* Scrim */}
+      <div
+        className="absolute inset-0 z-[1] pointer-events-none"
+        style={{
+          background: `
+            linear-gradient(90deg, #0c0a09f2 0%, #0c0a09cc 20%, #0c0a0955 40%, transparent 60%),
+            linear-gradient(0deg, #0c0a09d9, transparent 32%),
+            radial-gradient(55% 65% at 74% 42%, #e0824c16, transparent 70%),
+            radial-gradient(125% 105% at 50% 50%, transparent 58%, #0c0a09 100%)
+          `,
+        }}
+        aria-hidden="true"
+      />
+      <div className="relative z-[3] w-full max-w-[1240px] mx-auto px-[6vw] py-12">
+        <div className="max-w-[392px]">
+          {/* Brand */}
+          <div className="flex items-center gap-[11px] mb-6" style={{ color: 'var(--ember)' }}>
+            <D20Logo size={40} />
+            <div>
+              <div style={{ fontFamily: 'var(--serif)', fontSize: 30, fontWeight: 600, color: 'var(--hi)', letterSpacing: '-0.01em', lineHeight: 1.1 }}>
+                The Tavern
+              </div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--low)', marginTop: 4 }}>
+                GATHER · ROLL · ADVENTURE
+              </div>
+            </div>
           </div>
+          {children}
         </div>
       </div>
+    </div>
+  );
+
+  if (!inviteToken) {
+    return (
+      <Shell>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 32, textAlign: 'center' }}>
+          <div style={{ fontSize: 36, marginBottom: 16 }}>🔒</div>
+          <h2 style={{ fontFamily: 'var(--serif)', fontSize: 21, fontWeight: 600, color: 'var(--hi)', marginBottom: 10 }}>Invite Only</h2>
+          <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 20, lineHeight: 1.6 }}>
+            Registration requires an invitation link. Ask your DM to invite you.
+          </p>
+          <Button variant="secondary" onClick={() => setRoute('login')}>
+            Back to Login
+          </Button>
+        </div>
+      </Shell>
     );
   }
 
   if (previewLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-zinc-400">Validating invite…</div>
-      </div>
+      <Shell>
+        <p style={{ color: 'var(--mid)', fontFamily: 'var(--mono)' }}>Validating invite…</p>
+      </Shell>
     );
   }
 
@@ -114,114 +161,113 @@ export function RegisterScreen() {
       unknown: 'This invite is invalid.',
     };
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-sm text-center">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8">
-            <div className="text-4xl mb-4">❌</div>
-            <h2 className="text-xl font-semibold text-zinc-100 mb-2">Invalid Invite</h2>
-            <p className="text-zinc-400 text-sm mb-4">
-              {reasons[preview.reason] ?? 'This invite is invalid.'}
-            </p>
-            <Button variant="secondary" onClick={() => setRoute('login')}>
-              Back to Login
-            </Button>
-          </div>
+      <Shell>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 32, textAlign: 'center' }}>
+          <div style={{ fontSize: 36, marginBottom: 16 }}>❌</div>
+          <h2 style={{ fontFamily: 'var(--serif)', fontSize: 21, fontWeight: 600, color: 'var(--hi)', marginBottom: 10 }}>Invalid Invite</h2>
+          <p style={{ fontSize: 14, color: 'var(--mid)', marginBottom: 20, lineHeight: 1.6 }}>
+            {reasons[preview.reason] ?? 'This invite is invalid.'}
+          </p>
+          <Button variant="secondary" onClick={() => setRoute('login')}>
+            Back to Login
+          </Button>
         </div>
-      </div>
+      </Shell>
     );
   }
 
-  const campaignName = preview?.valid ? preview.campaignName : null;
-
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-indigo-600 mb-3">
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-7 h-7 text-white">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-            </svg>
+    <Shell>
+      {/* Lead line */}
+      <p style={{ fontFamily: 'var(--serif)', fontWeight: 300, fontSize: 19, color: 'var(--mid)', margin: '0 0 30px', lineHeight: 1.5 }}>
+        Pull up a chair. Your party is{' '}
+        <em style={{ color: 'var(--gold)', fontStyle: 'italic' }}>waiting by the fire.</em>
+      </p>
+
+      {/* Card */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
+
+        {/* Invite line */}
+        {campaignName && (
+          <div style={{ fontSize: 13, color: 'var(--low)', marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid var(--border-soft)', lineHeight: 1.5 }}>
+            You've been invited to{' '}
+            <strong style={{ color: 'var(--ember)', fontWeight: 600, fontFamily: 'var(--serif)', fontSize: 14 }}>
+              {campaignName}
+            </strong>
+            {dmName ? ` by ${dmName}.` : '.'}
           </div>
-          <h1 className="text-2xl font-bold text-zinc-100">Create Account</h1>
-          {campaignName && (
-            <p className="text-indigo-300 text-sm mt-1">
-              You're invited to <strong>{campaignName}</strong>
-            </p>
-          )}
-        </div>
+        )}
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-          <form onSubmit={(e) => { void handleSubmit(e); }} noValidate>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="reg-username">Username</Label>
-                <Input
-                  id="reg-username"
-                  type="text"
-                  autoComplete="username"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  disabled={loading}
-                  placeholder="Choose a username"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="reg-password">Password</Label>
-                <Input
-                  id="reg-password"
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  minLength={8}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={loading}
-                  placeholder="At least 8 characters"
-                  error={!!validationError && password.length > 0 && password.length < 8}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="reg-confirm">Confirm Password</Label>
-                <Input
-                  id="reg-confirm"
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  disabled={loading}
-                  placeholder="Repeat your password"
-                  error={!!validationError && confirm.length > 0 && confirm !== password}
-                />
-              </div>
-
-              {(validationError ?? error) && (
-                <div role="alert" className="text-sm text-red-400 bg-red-950/50 border border-red-900 rounded-md p-3">
-                  {validationError ?? error}
-                </div>
-              )}
-
-              <Button type="submit" loading={loading} className="w-full" size="md">
-                Create Account &amp; Join
-              </Button>
-
-              <p className="text-center text-zinc-500 text-xs">
-                Already have an account?{' '}
-                <button
-                  type="button"
-                  onClick={() => setRoute('login')}
-                  className="text-indigo-400 hover:text-indigo-200 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
-                >
-                  Sign in
-                </button>
-              </p>
+        <form onSubmit={(e) => { void handleSubmit(e); }} noValidate>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="reg-username">Username</Label>
+              <Input
+                id="reg-username"
+                type="text"
+                autoComplete="username"
+                required
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                disabled={loading}
+                placeholder="Choose a username"
+              />
             </div>
-          </form>
-        </div>
+
+            <div>
+              <Label htmlFor="reg-password">Password</Label>
+              <Input
+                id="reg-password"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+                placeholder="At least 8 characters"
+                error={!!validationError && password.length > 0 && password.length < 8}
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="reg-confirm">Confirm Password</Label>
+              <Input
+                id="reg-confirm"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                disabled={loading}
+                placeholder="Repeat your password"
+                error={!!validationError && confirm.length > 0 && confirm !== password}
+              />
+            </div>
+
+            {(validationError ?? error) && (
+              <div role="alert" style={{ fontSize: 13, color: 'var(--garnet)', background: '#b6485a18', border: '1px solid #b6485a44', borderRadius: 9, padding: '10px 13px' }}>
+                {validationError ?? error}
+              </div>
+            )}
+
+            <Button type="submit" loading={loading} className="w-full" size="md">
+              Create Account &amp; Join
+            </Button>
+
+            <p style={{ textAlign: 'center', fontSize: 12, color: 'var(--faint)' }}>
+              Already have an account?{' '}
+              <button
+                type="button"
+                onClick={() => setRoute('login')}
+                style={{ color: 'var(--ember)', textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}
+              >
+                Sign in
+              </button>
+            </p>
+          </div>
+        </form>
       </div>
-    </div>
+    </Shell>
   );
 }

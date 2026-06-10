@@ -3,8 +3,22 @@ import type { CampaignListItem, CreateCampaignRequest, CreateCampaignResponse } 
 import { api, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { Button } from '../components/ui/button';
-import { Badge } from '../components/ui/badge';
+import { D20Logo } from '../components/D20Logo';
 import { CreateCampaignDialog } from '../components/dm/CreateCampaignDialog';
+import lobbyBg from '../assets/lobby-tavern.png';
+
+// Avatar gradient assignments (stable by index)
+const PLAYER_GRADIENTS = [
+  'linear-gradient(135deg,#5b86c2,#41609c)',
+  'linear-gradient(135deg,#5bb3a3,#3f8c7f)',
+  'linear-gradient(135deg,#c79a4b,#a07a32)',
+];
+const DM_GRADIENT = 'linear-gradient(135deg,#c2596a,#9c4150)';
+
+function avatarGradient(role: string, index: number): string {
+  if (role === 'dm') return DM_GRADIENT;
+  return PLAYER_GRADIENTS[index % PLAYER_GRADIENTS.length] ?? DM_GRADIENT;
+}
 
 export function CampaignLobby() {
   const user = useStore((s) => s.user);
@@ -50,23 +64,76 @@ export function CampaignLobby() {
     enterCampaign(res.campaign.id);
   }
 
+  // Sort campaigns: most recent (active) first, then alphabetically
+  const sorted = [...campaigns].sort((a, b) => {
+    if (a.id === activeCampaignId) return -1;
+    if (b.id === activeCampaignId) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="border-b border-zinc-800 bg-zinc-950 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-white">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <span className="font-semibold text-zinc-100">Tabletop</span>
+    <div
+      className="relative overflow-hidden"
+      style={{ height: '100dvh', width: '100vw', background: 'var(--bg)' }}
+    >
+      {/* Tavern backdrop */}
+      <div
+        className="absolute inset-0 z-0"
+        style={{
+          backgroundImage: `url(${lobbyBg})`,
+          backgroundPosition: 'center 42%',
+          backgroundSize: 'cover',
+          filter: 'brightness(1.32) saturate(1.08)',
+        }}
+        aria-hidden="true"
+      />
+
+      {/* Lobby scrims */}
+      <div
+        className="absolute inset-0 z-[1] pointer-events-none"
+        style={{
+          background: `
+            linear-gradient(180deg, #0c0a09f2 0%, #0c0a09b0 9%, #0c0a0950 24%, transparent 46%),
+            linear-gradient(90deg, #0c0a0985 0%, #0c0a0938 32%, transparent 56%)
+          `,
+        }}
+        aria-hidden="true"
+      />
+
+      {/* Glass top bar */}
+      <header
+        className="absolute top-0 left-0 right-0 z-[5] flex items-center justify-between"
+        style={{
+          height: 60,
+          padding: '0 22px',
+          background: 'rgba(12,10,9,0.72)',
+          backdropFilter: 'blur(14px) saturate(130%)',
+          WebkitBackdropFilter: 'blur(14px) saturate(130%)',
+          borderBottom: '1px solid rgba(255,255,255,0.07)',
+        }}
+      >
+        <div className="flex items-center gap-[11px]" style={{ color: 'var(--ember)' }}>
+          <D20Logo size={30} />
+          <span style={{ fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, color: 'var(--hi)', letterSpacing: '-0.01em' }}>
+            The Tavern
+          </span>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-zinc-400">{user?.username}</span>
-          {user?.isAdmin && (
-            <Badge variant="dm">Admin</Badge>
-          )}
+
+        <div className="flex items-center gap-[14px]">
+          {/* Avatar */}
+          <div
+            style={{
+              width: 28, height: 28, borderRadius: '50%',
+              background: avatarGradient(user?.isAdmin ? 'dm' : 'player', 0),
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 600, color: '#fff',
+              border: '1.5px solid var(--bg)', flexShrink: 0,
+            }}
+            aria-hidden="true"
+          >
+            {user?.username.slice(0, 2).toUpperCase()}
+          </div>
+          <span style={{ fontSize: 13, color: 'var(--mid)' }}>{user?.username}</span>
           <Button
             variant="ghost"
             size="sm"
@@ -78,42 +145,81 @@ export function CampaignLobby() {
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-zinc-100">Your Campaigns</h2>
+      {/* Main content — scrollable below top bar */}
+      <main
+        className="absolute left-0 right-0 bottom-0 overflow-auto z-[2]"
+        style={{ top: 60, padding: '44px 7vw' }}
+      >
+        {/* Heading */}
+        <div className="flex items-baseline justify-between mb-7" style={{ maxWidth: 1080 }}>
+          <h1 style={{ fontFamily: 'var(--serif)', fontSize: 32, fontWeight: 600, color: 'var(--hi)' }}>
+            Your Campaigns
+          </h1>
+        </div>
+
+        {/* Campaign grid */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 332px))',
+            gap: 18,
+            maxWidth: 1080,
+          }}
+        >
+          {sorted.map((c, i) => (
+            <CampaignCard
+              key={c.id}
+              campaign={c}
+              isPrimary={i === 0}
+              onEnter={() => enterCampaign(c.id)}
+            />
+          ))}
+
+          {/* New Campaign tile — admin only */}
           {user?.isAdmin && (
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-              </svg>
-              New Campaign
-            </Button>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              style={{
+                border: '1px dashed var(--border)',
+                background: 'rgba(20,15,13,0.69)',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+                borderRadius: 14,
+                minHeight: 210,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                color: 'var(--low)',
+                cursor: 'pointer',
+                transition: 'border-color 0.15s, color 0.15s',
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = 'var(--ember)';
+                (e.currentTarget as HTMLElement).style.color = 'var(--ember)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+                (e.currentTarget as HTMLElement).style.color = 'var(--low)';
+              }}
+              aria-label="New Campaign"
+            >
+              <span style={{ fontSize: 24, lineHeight: 1 }}>＋</span>
+              <span style={{ fontFamily: 'var(--serif)', fontSize: 17, fontWeight: 600 }}>New Campaign</span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', opacity: 0.7 }}>
+                Light a new fire
+              </span>
+            </button>
           )}
         </div>
 
-        {campaigns.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-4">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-8 h-8 text-zinc-600">
-                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-            <p className="text-zinc-400 font-medium">No campaigns yet</p>
-            <p className="text-zinc-600 text-sm mt-1">
-              {user?.isAdmin ? 'Create your first campaign above.' : 'Ask your DM to invite you to a campaign.'}
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {campaigns.map((c) => (
-              <CampaignCard
-                key={c.id}
-                campaign={c}
-                highlighted={c.id === activeCampaignId}
-                onEnter={() => enterCampaign(c.id)}
-              />
-            ))}
+        {/* Empty state (no campaigns, non-admin) */}
+        {campaigns.length === 0 && !user?.isAdmin && (
+          <div className="text-center py-20">
+            <p style={{ fontSize: 15, color: 'var(--mid)' }}>No campaigns yet.</p>
+            <p style={{ fontSize: 13, color: 'var(--faint)', marginTop: 6 }}>Ask your DM to invite you to a campaign.</p>
           </div>
         )}
       </main>
@@ -129,37 +235,123 @@ export function CampaignLobby() {
 
 interface CampaignCardProps {
   campaign: CampaignListItem;
-  highlighted: boolean;
+  isPrimary: boolean;
   onEnter: () => void;
 }
 
-function CampaignCard({ campaign, highlighted, onEnter }: CampaignCardProps) {
+function CampaignCard({ campaign, isPrimary, onEnter }: CampaignCardProps) {
+  const isDm = campaign.role === 'dm';
+
   return (
     <div
-      className={`
-        group bg-zinc-900 border rounded-xl p-5 flex flex-col gap-3
-        hover:border-indigo-700 transition-colors cursor-pointer
-        ${highlighted ? 'border-indigo-600 ring-1 ring-indigo-600' : 'border-zinc-800'}
-      `}
+      style={{
+        background: 'rgba(26,21,18,0.93)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        border: '1px solid var(--border)',
+        borderRadius: 14,
+        padding: 20,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        boxShadow: '0 20px 50px -20px #000c',
+        position: 'relative',
+        overflow: 'hidden',
+        transition: 'border-color 0.15s, transform 0.12s, box-shadow 0.15s',
+        cursor: 'pointer',
+      }}
       onClick={onEnter}
+      onMouseEnter={(e) => {
+        const el = e.currentTarget as HTMLElement;
+        el.style.borderColor = '#5a4a40';
+        el.style.transform = 'translateY(-2px)';
+        el.style.boxShadow = '0 28px 60px -18px #000e, 0 0 0 1px #e0824c22';
+      }}
+      onMouseLeave={(e) => {
+        const el = e.currentTarget as HTMLElement;
+        el.style.borderColor = 'var(--border)';
+        el.style.transform = '';
+        el.style.boxShadow = '0 20px 50px -20px #000c';
+      }}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEnter(); } }}
       aria-label={`Enter campaign: ${campaign.name}`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="font-semibold text-zinc-100 text-base leading-snug">{campaign.name}</h3>
-        <Badge variant={campaign.role === 'dm' ? 'dm' : 'player'}>
-          {campaign.role === 'dm' ? 'DM' : 'Player'}
-        </Badge>
+      {/* Decorative radial ember highlight */}
+      <div
+        style={{
+          position: 'absolute', right: -30, top: -30, width: 120, height: 120,
+          background: 'radial-gradient(circle, #e0824c14, transparent 70%)',
+          pointerEvents: 'none',
+        }}
+        aria-hidden="true"
+      />
+
+      {/* Name + role badge */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 6 }}>
+        <h3 style={{ fontFamily: 'var(--serif)', fontSize: 21, fontWeight: 600, color: 'var(--hi)', lineHeight: 1.2 }}>
+          {campaign.name}
+        </h3>
+        <span
+          style={{
+            fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase',
+            padding: '3px 8px', borderRadius: 5, fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
+            color: isDm ? 'var(--garnet)' : 'var(--ember)',
+            background: isDm ? '#b6485a1f' : '#e08a4b1a',
+          }}
+        >
+          {isDm ? 'DM' : 'PLAYER'}
+        </span>
       </div>
+
+      {/* Description */}
       {campaign.description && (
-        <p className="text-sm text-zinc-500 line-clamp-2">{campaign.description}</p>
+        <p style={{ fontSize: 14, color: 'var(--low)', marginBottom: 18, flex: 1, lineHeight: 1.5 }}>
+          {campaign.description}
+        </p>
       )}
-      <div className="mt-auto pt-1">
-        <Button size="sm" variant="secondary" className="w-full group-hover:bg-indigo-600 group-hover:text-white group-hover:border-transparent transition-colors">
-          Enter Table
-        </Button>
+
+      <div style={{ marginTop: 'auto', paddingTop: campaign.description ? 0 : 16 }}>
+        {/* CTA */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onEnter(); }}
+          style={{
+            width: '100%',
+            padding: '11px 16px',
+            borderRadius: 9,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            background: isPrimary ? 'var(--ember)' : 'transparent',
+            color: isPrimary ? 'var(--ink)' : 'var(--hi)',
+            border: isPrimary ? 'none' : '1px solid var(--border)',
+          }}
+          onMouseEnter={(e) => {
+            const el = e.currentTarget as HTMLElement;
+            if (isPrimary) {
+              el.style.background = 'var(--ember-h)';
+              el.style.boxShadow = '0 0 22px -6px rgba(224,138,75,0.67)';
+            } else {
+              el.style.borderColor = '#473b34';
+              el.style.background = '#ffffff06';
+            }
+          }}
+          onMouseLeave={(e) => {
+            const el = e.currentTarget as HTMLElement;
+            if (isPrimary) {
+              el.style.background = 'var(--ember)';
+              el.style.boxShadow = '';
+            } else {
+              el.style.borderColor = 'var(--border)';
+              el.style.background = 'transparent';
+            }
+          }}
+        >
+          {isPrimary ? 'Enter the Table' : 'Open Table'}
+        </button>
       </div>
     </div>
   );

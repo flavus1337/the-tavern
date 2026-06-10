@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import type { PresenceEntry } from '@vtt/shared';
 import { useStore } from '../store';
 import { TableConnection } from '../ws/connection';
 import { CanvasViewer } from './CanvasViewer';
@@ -11,22 +12,8 @@ import { DocumentsPanel } from './DocumentsPanel';
 import { NotesPanel } from './NotesPanel';
 import { PresenceBar } from './PresenceBar';
 import { DmPanel } from './dm/DmPanel';
+import { D20Logo } from './D20Logo';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
-import { Button } from './ui/button';
-
-const CONNECTION_COLORS: Record<string, string> = {
-  open: 'bg-green-500',
-  connecting: 'bg-yellow-500 animate-pulse',
-  reconnecting: 'bg-yellow-500 animate-pulse',
-  closed: 'bg-zinc-600',
-};
-
-const CONNECTION_LABELS: Record<string, string> = {
-  open: 'Connected',
-  connecting: 'Connecting…',
-  reconnecting: 'Reconnecting…',
-  closed: 'Disconnected',
-};
 
 export function TableLayout() {
   const activeCampaignId = useStore((s) => s.activeCampaignId);
@@ -34,6 +21,7 @@ export function TableLayout() {
   const connection = useStore((s) => s.connection);
   const presence = useStore((s) => s.presence);
   const rollLog = useStore((s) => s.rollLog);
+  const documents = useStore((s) => s.documents);
   const self = useStore((s) => s.self);
   const lastErrorMessage = useStore((s) => s.lastErrorMessage);
   const viewingDocument = useStore((s) => s.viewingDocument);
@@ -41,11 +29,13 @@ export function TableLayout() {
   const setRoute = useStore((s) => s.setRoute);
   const resetTable = useStore((s) => s.resetTable);
   const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
+  const addJoinToast = useStore((s) => s.addJoinToast);
 
   const connRef = useRef<TableConnection | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'dice' | 'docs' | 'notes' | 'dm'>('dice');
 
   const isDm = self?.role === 'dm';
+  const isConnected = connection === 'open';
 
   useEffect(() => {
     if (!activeCampaignId) return;
@@ -53,7 +43,6 @@ export function TableLayout() {
     const conn = new TableConnection();
     connRef.current = conn;
 
-    // Expose for child components that need to send WS messages
     (window as unknown as Record<string, unknown>).__vttConn = conn;
 
     conn.connect(activeCampaignId);
@@ -81,44 +70,127 @@ export function TableLayout() {
     return () => clearTimeout(t);
   }, [lastErrorMessage]);
 
-  return (
-    <div className="h-dvh flex flex-col overflow-hidden">
-      {/* Top bar */}
-      <header className="shrink-0 h-12 border-b border-zinc-800 bg-zinc-950 flex items-center px-3 gap-3 z-10">
-        <span className="font-semibold text-zinc-100 truncate max-w-[200px]">
-          {campaignName || 'Loading…'}
-        </span>
+  const handlePresenceJoin = useCallback((entry: PresenceEntry) => {
+    addJoinToast(entry);
+  }, [addJoinToast]);
 
-        <div className="flex items-center gap-1.5 ml-auto min-w-0 overflow-hidden">
-          <PresenceBar entries={presence} />
+  // Listen for empty-board DM CTA tab switch
+  useEffect(() => {
+    function onSwitchTab(e: Event) {
+      const tab = (e as CustomEvent<string>).detail;
+      if (tab === 'dice' || tab === 'docs' || tab === 'notes' || tab === 'dm') {
+        setSidebarTab(tab as 'dice' | 'docs' | 'notes' | 'dm');
+      }
+    }
+    window.addEventListener('vtt:switch-sidebar-tab', onSwitchTab);
+    return () => window.removeEventListener('vtt:switch-sidebar-tab', onSwitchTab);
+  }, []);
+
+  return (
+    <div className="h-dvh flex flex-col overflow-hidden" style={{ background: 'var(--bg)' }}>
+
+      {/* Top bar — 56px, three zones */}
+      <header
+        style={{
+          height: 56,
+          flexShrink: 0,
+          background: 'var(--surface)',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: 18,
+          paddingRight: 16,
+          gap: 16,
+          zIndex: 10,
+          position: 'relative',
+        }}
+      >
+        {/* Left zone: d20 + campaign name */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+          <span style={{ color: 'var(--ember)', flexShrink: 0 }}>
+            <D20Logo size={26} />
+          </span>
+          <span
+            style={{
+              fontFamily: 'var(--serif)',
+              fontSize: 17,
+              fontWeight: 600,
+              color: 'var(--hi)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {campaignName || 'Loading…'}
+          </span>
         </div>
 
-        <div
-          className={`w-2 h-2 rounded-full shrink-0 ${CONNECTION_COLORS[connection] ?? 'bg-zinc-600'}`}
-          title={CONNECTION_LABELS[connection] ?? connection}
-          aria-label={CONNECTION_LABELS[connection] ?? connection}
-        />
+        {/* Center zone: presence pill */}
+        <div style={{ display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+          <PresenceBar entries={presence} onJoin={handlePresenceJoin} />
+        </div>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleLeave}
-        >
-          Leave
-        </Button>
+        {/* Right zone: connection status + Leave */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, justifyContent: 'flex-end' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--mid)' }}
+            title={connection === 'open' ? 'Connected' : connection === 'connecting' ? 'Connecting…' : connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
+          >
+            <span
+              style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                background: isConnected ? 'var(--teal)' : connection === 'connecting' || connection === 'reconnecting' ? 'var(--gold)' : 'var(--faint)',
+                boxShadow: isConnected ? '0 0 9px var(--teal)' : undefined,
+              }}
+              aria-hidden="true"
+            />
+            {isConnected ? 'Connected' : connection === 'connecting' ? 'Connecting…' : connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleLeave}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--low)',
+              fontSize: 13,
+              cursor: 'pointer',
+              padding: '6px 10px',
+              borderRadius: 7,
+              fontWeight: 500,
+              fontFamily: 'var(--sans)',
+              transition: 'color 0.15s',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--hi)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--low)'; }}
+          >
+            Leave
+          </button>
+        </div>
       </header>
 
-      {/* Error toast */}
+      {/* Error bar */}
       {lastErrorMessage && (
         <div
           role="alert"
-          className="shrink-0 bg-red-950 border-b border-red-900 text-red-300 text-sm px-4 py-2 flex items-center justify-between"
+          style={{
+            flexShrink: 0,
+            background: '#b6485a22',
+            borderBottom: '1px solid #b6485a44',
+            color: 'var(--garnet)',
+            fontSize: 13,
+            padding: '8px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
         >
           <span>{lastErrorMessage}</span>
           <button
             type="button"
             onClick={() => useStore.getState().setLastErrorMessage(null)}
-            className="text-red-500 hover:text-red-200 ml-3"
+            style={{ color: 'var(--garnet)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 12, fontSize: 16 }}
             aria-label="Dismiss error"
           >
             ×
@@ -126,10 +198,9 @@ export function TableLayout() {
         </div>
       )}
 
-      {/* Main content — stacks vertically on narrow screens, sidebar right on md+ */}
+      {/* Main layout */}
       <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-        {/* Canvas area — the document viewer overlays it, keeping the canvas
-            mounted (pan/zoom state survives) and the sidebar interactive. */}
+        {/* Board area */}
         <div className="flex-1 min-w-0 min-h-0 relative flex">
           <CanvasViewer />
           {viewingDocument && <DocumentViewer doc={viewingDocument} />}
@@ -137,48 +208,78 @@ export function TableLayout() {
           <RollToasts />
         </div>
 
-        {/* Sidebar: bottom panel on mobile, right column on md+ */}
-        <aside className="w-full h-2/5 border-t md:w-80 md:h-auto md:border-t-0 md:border-l shrink-0 border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
-          <Tabs
-            value={sidebarTab}
-            onValueChange={(v) => setSidebarTab(v as typeof sidebarTab)}
-            className="flex flex-col h-full"
-          >
-            <div className="p-2 border-b border-zinc-800">
-              <TabsList className="w-full">
+        {/* Sidebar */}
+        <aside
+          className="w-full h-2/5 border-t md:h-auto md:border-t-0 md:border-l"
+          style={{
+            width: undefined,
+            borderColor: 'var(--border)',
+            background: 'var(--surface)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            flexShrink: 0,
+          }}
+        >
+          <style>{`
+            @media (min-width: 768px) {
+              .sidebar-md { width: 340px !important; }
+            }
+          `}</style>
+          <div className="sidebar-md flex flex-col h-full">
+            <Tabs
+              value={sidebarTab}
+              onValueChange={(v) => setSidebarTab(v as typeof sidebarTab)}
+              className="flex flex-col h-full"
+            >
+              <TabsList>
                 <TabsTrigger value="dice">Dice</TabsTrigger>
-                <TabsTrigger value="docs">Docs</TabsTrigger>
+                <TabsTrigger value="docs">
+                  Docs
+                  {documents.length > 0 && (
+                    <span
+                      style={{
+                        fontFamily: 'var(--mono)', fontSize: 10,
+                        color: sidebarTab === 'docs' ? 'var(--ember)' : 'var(--low)',
+                        background: sidebarTab === 'docs' ? '#e08a4b1a' : 'var(--raised)',
+                        padding: '1px 6px', borderRadius: 20,
+                      }}
+                    >
+                      {documents.length}
+                    </span>
+                  )}
+                </TabsTrigger>
                 <TabsTrigger value="notes">Notes</TabsTrigger>
                 {isDm && <TabsTrigger value="dm">DM</TabsTrigger>}
               </TabsList>
-            </div>
 
-            <TabsContent value="dice" className="flex flex-col overflow-y-auto">
-              <DiceRoller />
-              <div className="border-t border-zinc-800 flex-1 min-h-44 overflow-hidden flex flex-col">
-                <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider px-3 pt-2 pb-1">
-                  Roll Log
-                </p>
-                <div className="flex-1 min-h-0 overflow-y-auto">
-                  <RollLog entries={rollLog} />
+              <TabsContent value="dice" className="flex flex-col overflow-y-auto">
+                <DiceRoller />
+                <div style={{ borderTop: '1px solid var(--border)', flex: 1, minHeight: 176, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <p style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--faint)', padding: '10px 14px 6px', fontWeight: 500 }}>
+                    Roll Log
+                  </p>
+                  <div className="flex-1 min-h-0 overflow-y-auto">
+                    <RollLog entries={rollLog} />
+                  </div>
                 </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="docs" className="flex flex-col h-full overflow-hidden">
-              <DocumentsPanel />
-            </TabsContent>
-
-            <TabsContent value="notes" className="flex flex-col h-full overflow-hidden">
-              <NotesPanel />
-            </TabsContent>
-
-            {isDm && (
-              <TabsContent value="dm" className="flex flex-col h-full overflow-hidden">
-                <DmPanel />
               </TabsContent>
-            )}
-          </Tabs>
+
+              <TabsContent value="docs" className="flex flex-col h-full overflow-hidden">
+                <DocumentsPanel />
+              </TabsContent>
+
+              <TabsContent value="notes" className="flex flex-col h-full overflow-hidden">
+                <NotesPanel />
+              </TabsContent>
+
+              {isDm && (
+                <TabsContent value="dm" className="flex flex-col h-full overflow-hidden">
+                  <DmPanel />
+                </TabsContent>
+              )}
+            </Tabs>
+          </div>
         </aside>
       </div>
     </div>

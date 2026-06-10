@@ -101,7 +101,7 @@ export function AssetPicker() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 space-y-2 border-b border-zinc-800">
+      <div className="p-3 space-y-2" style={{ borderBottom: '1px solid var(--border-soft)' }}>
         <Input
           placeholder="Search assets…"
           value={search}
@@ -115,11 +115,18 @@ export function AssetPicker() {
                 key={tag}
                 type="button"
                 onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                className="text-xs px-2 py-0.5 rounded-full border transition-colors"
+                style={
                   activeTag === tag
-                    ? 'bg-indigo-600 border-indigo-600 text-white'
-                    : 'border-zinc-700 text-zinc-400 hover:border-zinc-500'
-                }`}
+                    ? { background: 'var(--ember)', borderColor: 'var(--ember)', color: 'var(--ink)' }
+                    : { borderColor: 'var(--border)', color: 'var(--low)' }
+                }
+                onMouseEnter={(e) => {
+                  if (activeTag !== tag) (e.currentTarget as HTMLElement).style.borderColor = '#473b34';
+                }}
+                onMouseLeave={(e) => {
+                  if (activeTag !== tag) (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+                }}
               >
                 {tag}
               </button>
@@ -129,12 +136,13 @@ export function AssetPicker() {
 
         {/* Upload */}
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer">
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--mid)' }}>
             <input
               type="checkbox"
               checked={dmOnly}
               onChange={(e) => setDmOnly(e.target.checked)}
               className="rounded"
+              style={{ accentColor: 'var(--ember)' }}
             />
             DM only
           </label>
@@ -160,10 +168,10 @@ export function AssetPicker() {
         </div>
 
         {uploadError && (
-          <p role="alert" className="text-xs text-red-400">{uploadError}</p>
+          <p role="alert" className="text-xs" style={{ color: 'var(--garnet)' }}>{uploadError}</p>
         )}
         {deleteError && (
-          <p role="alert" className="text-xs text-red-400">{deleteError}</p>
+          <p role="alert" className="text-xs" style={{ color: 'var(--garnet)' }}>{deleteError}</p>
         )}
 
         {board.length > 0 && (
@@ -182,7 +190,7 @@ export function AssetPicker() {
       {/* Grid */}
       <div className="flex-1 overflow-y-auto p-3">
         {filtered.length === 0 ? (
-          <p className="text-xs text-zinc-500 text-center py-8">
+          <p className="text-xs text-center py-8" style={{ color: 'var(--faint)' }}>
             {assets.length === 0 ? 'No assets yet. Upload one above.' : 'No assets match.'}
           </p>
         ) : (
@@ -214,7 +222,7 @@ interface AssetThumbProps {
 
 function AssetThumb({ asset, campaignId, onPin, onDelete, disabled }: AssetThumbProps) {
   return (
-    <div className="relative group bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
+    <div className="relative group bg-[var(--bg)] border border-[var(--border)] rounded-lg overflow-hidden">
       <img
         src={`/api/campaigns/${campaignId}/files/assets/${asset.file}`}
         alt={asset.title}
@@ -231,7 +239,7 @@ function AssetThumb({ asset, campaignId, onPin, onDelete, disabled }: AssetThumb
         </div>
       )}
       <div className="p-1.5">
-        <p className="text-xs text-zinc-300 truncate">{asset.title}</p>
+        <p className="text-xs text-[var(--mid)] truncate">{asset.title}</p>
         <div className="flex gap-1 mt-1">
           <Button
             size="sm"

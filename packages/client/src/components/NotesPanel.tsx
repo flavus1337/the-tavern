@@ -20,7 +20,7 @@ export function NotesPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-zinc-800">
+      <div className="p-3" style={{ borderBottom: '1px solid var(--border-soft)' }}>
         <Button size="sm" variant="secondary" className="w-full" onClick={() => setNoteEditor({ noteId: null })}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
             <path d="M12 5v14M5 12h14" strokeLinecap="round" />
@@ -32,7 +32,7 @@ export function NotesPanel() {
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-2">
           {sorted.length === 0 ? (
-            <p className="text-xs text-zinc-500 text-center py-8">
+            <p className="text-xs text-center py-8" style={{ color: 'var(--faint)' }}>
               No notes yet. Create one — it opens in the main area and only you can see it.
             </p>
           ) : (
@@ -43,17 +43,36 @@ export function NotesPanel() {
                   key={note.id}
                   type="button"
                   onClick={() => setNoteEditor({ noteId: note.id })}
-                  className={`w-full text-left p-2.5 bg-zinc-950 border rounded-lg transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500 ${
-                    isOpen ? 'border-indigo-600' : 'border-zinc-800 hover:border-zinc-600'
-                  }`}
+                  className="w-full text-left p-2.5 rounded-lg transition-colors"
+                  style={{
+                    background: 'var(--surface2)',
+                    border: `1px solid ${isOpen ? 'var(--ember)' : 'var(--border)'}`,
+                    ...(isOpen ? { background: '#e08a4b0a' } : {}),
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isOpen) (e.currentTarget as HTMLElement).style.borderColor = '#473b34';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isOpen) (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+                  }}
                   title="Edit note"
                 >
                   <div className="flex items-center gap-2">
-                    <p className="text-sm text-zinc-200 truncate flex-1">{note.title}</p>
+                    <p
+                      className="truncate flex-1"
+                      style={{ fontFamily: 'var(--serif)', fontSize: 15, fontWeight: 600, color: 'var(--hi)' }}
+                    >
+                      {note.title}
+                    </p>
                     {isDm && note.visibility === 'dm' && <Badge>DM</Badge>}
                   </div>
                   {note.body && (
-                    <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{note.body}</p>
+                    <p
+                      className="mt-1 truncate"
+                      style={{ fontSize: 12, color: 'var(--low)' }}
+                    >
+                      {note.body}
+                    </p>
                   )}
                 </button>
               );

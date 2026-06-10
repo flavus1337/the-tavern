@@ -1,22 +1,92 @@
+/* ============================================================
+   Candlelight Theme — The Tavern
+   ============================================================ */
+
+/* Self-hosted fonts */
+@import "@fontsource/spectral/300.css";
+@import "@fontsource/spectral/300-italic.css";
+@import "@fontsource/spectral/400.css";
+@import "@fontsource/spectral/400-italic.css";
+@import "@fontsource/spectral/600.css";
+@import "@fontsource/spectral/600-italic.css";
+@import "@fontsource/spectral/700.css";
+@import "@fontsource/spectral/700-italic.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/600.css";
+
 @import "tailwindcss";
 
+/* ---- Tailwind v4 @theme tokens ---- */
+@theme {
+  /* Colors */
+  --color-bg: #0c0a09;
+  --color-surface: #16110f;
+  --color-surface2: #1f1815;
+  --color-raised: #262019;
+  --color-border: #2e2723;
+  --color-border-soft: #241d19;
+  --color-hi: #f4efe9;
+  --color-mid: #b3a89e;
+  --color-low: #7d7269;
+  --color-faint: #574e48;
+  --color-ember: #e08a4b;
+  --color-ember-h: #ec9a5e;
+  --color-ink: #1a1209;
+  --color-gold: #e8b765;
+  --color-garnet: #b6485a;
+  --color-nat1: #d24b4b;
+  --color-teal: #69b7a6;
+
+  /* Font families */
+  --font-serif: "Spectral", Georgia, serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Border radius */
+  --radius-control: 9px;
+  --radius-card: 14px;
+  --radius-log: 11px;
+  --radius-pip: 7px;
+  --radius-pill: 999px;
+}
+
+/* ---- CSS custom properties (for inline usage) ---- */
 :root {
-  --bg: #09090b;
-  --surface: #18181b;
-  --surface-2: #27272a;
-  --border: #3f3f46;
-  --text: #e4e4e7;
-  --text-muted: #a1a1aa;
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --destructive: #ef4444;
-  --success: #22c55e;
+  --bg: #0c0a09;
+  --surface: #16110f;
+  --surface2: #1f1815;
+  --raised: #262019;
+  --border: #2e2723;
+  --border-soft: #241d19;
+  --hi: #f4efe9;
+  --mid: #b3a89e;
+  --low: #7d7269;
+  --faint: #574e48;
+  --ember: #e08a4b;
+  --ember-h: #ec9a5e;
+  --ink: #1a1209;
+  --gold: #e8b765;
+  --garnet: #b6485a;
+  --nat1: #d24b4b;
+  --teal: #69b7a6;
+  --serif: "Spectral", Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* ---- Base reset ---- */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
 }
 
 body {
   background-color: var(--bg);
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: var(--mid);
+  font-family: var(--sans);
   margin: 0;
   padding: 0;
   min-height: 100vh;
@@ -24,22 +94,88 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-*, *::before, *::after {
-  box-sizing: border-box;
+::selection {
+  background: var(--ember);
+  color: var(--ink);
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--ember);
   outline-offset: 2px;
 }
+
+/* ---- Animations ---- */
 
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(10px) scale(0.96);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
+  }
+}
+
+@keyframes log-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
+}
+
+@keyframes ring-sweep {
+  0% {
+    width: 40px;
+    height: 40px;
+    opacity: 0.9;
+    margin-left: -20px;
+    margin-top: -20px;
+  }
+  100% {
+    width: 620px;
+    height: 620px;
+    opacity: 0;
+    margin-left: -310px;
+    margin-top: -310px;
+  }
+}
+
+@keyframes glow-fade {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes presence-join {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ---- Reduced motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  .log-entry-animate,
+  .log-entry-shake,
+  .toast-animate,
+  .presence-join-animate,
+  .crit-ring,
+  .crit-glow {
+    animation: none !important;
   }
 }
