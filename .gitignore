@@ -4,3 +4,6 @@ data/
 campaigns/*/.runtime/
 .DS_Store
 *.log
+
+# Live local world (accounts, campaigns with uploads) — personal data, never commit
+/live/
