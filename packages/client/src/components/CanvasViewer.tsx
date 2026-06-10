@@ -7,13 +7,11 @@ import {
   type PointerEvent,
 } from 'react';
 import type { BoardItemView, ClientMessage } from '@vtt/shared';
-import { Button } from './ui/button';
 import { useStore } from '../store';
 import type { BoardView } from '../store';
 
 const SCALE_MIN = 0.05;
 const SCALE_MAX = 8;
-const ZOOM_STEP = 1.25;
 const FIT_MARGIN = 0.9; // 10% margin = 90% of viewport used
 
 interface CanvasViewerProps {
@@ -280,34 +278,16 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     setView({ x, y, scale });
   }
 
-  function resetTo100() {
-    const container = containerRef.current;
-    if (!container) return;
-    const { clientWidth: cw, clientHeight: ch } = container;
-
-    if (board.length === 0) {
-      setView({ x: 0, y: 0, scale: 1 });
-      return;
+  // Auto-fit once when board content first arrives, so everyone starts with
+  // the pinned images in view (navigation after that is wheel zoom + drag pan).
+  const fittedOnce = useRef(false);
+  useEffect(() => {
+    if (!fittedOnce.current && board.length > 0) {
+      fittedOnce.current = true;
+      fitBoard();
     }
-
-    // Center on board content at 1:1.
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const item of board) {
-      const aspect = item.naturalWidth && item.naturalHeight
-        ? item.naturalHeight / item.naturalWidth
-        : 1;
-      const h = item.w * aspect;
-      minX = Math.min(minX, item.x);
-      minY = Math.min(minY, item.y);
-      maxX = Math.max(maxX, item.x + item.w);
-      maxY = Math.max(maxY, item.y + h);
-    }
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const x = cw / 2 - cx;
-    const y = ch / 2 - cy;
-    setView({ x, y, scale: 1 });
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board.length]);
 
   // ---------------------------------------------------------------------------
   // Canvas pan + wheel zoom (only triggered when NOT on an item)
@@ -352,34 +332,6 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Zoom toolbar helpers (anchored at viewport center)
-  // ---------------------------------------------------------------------------
-
-  function zoomIn() {
-    const container = containerRef.current;
-    if (!container) return;
-    const cx = container.clientWidth / 2;
-    const cy = container.clientHeight / 2;
-    setView((v) => {
-      const newScale = clampScale(v.scale * ZOOM_STEP);
-      const scaleDelta = newScale / v.scale;
-      return { x: cx - scaleDelta * (cx - v.x), y: cy - scaleDelta * (cy - v.y), scale: newScale };
-    });
-  }
-
-  function zoomOut() {
-    const container = containerRef.current;
-    if (!container) return;
-    const cx = container.clientWidth / 2;
-    const cy = container.clientHeight / 2;
-    setView((v) => {
-      const newScale = clampScale(v.scale / ZOOM_STEP);
-      const scaleDelta = newScale / v.scale;
-      return { x: cx - scaleDelta * (cx - v.x), y: cy - scaleDelta * (cy - v.y), scale: newScale };
-    });
-  }
-
   const sortedItems = [...board].sort((a, b) => a.z - b.z);
   const isEmpty = board.length === 0;
 
@@ -410,56 +362,6 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
             <BoardItemEl key={item.id} item={item} isDm={isDm} scale={view.scale} />
           ))}
           {children}
-        </div>
-      )}
-
-      {/* Zoom toolbar — always visible when board has content */}
-      {!isEmpty && (
-        <div className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-10">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={fitBoard}
-            title="Fit board to screen"
-            aria-label="Fit board to screen"
-            className="px-2.5"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-              <path d="M4 8V4m0 0h4M4 4l5 5M20 8V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5M20 16v4m0 0h-4m4 0l-5-5" strokeLinecap="round" />
-            </svg>
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={resetTo100}
-            title="100% zoom"
-            aria-label="Reset to 100% zoom"
-            className="px-2.5 font-mono"
-          >
-            1:1
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={zoomIn}
-            aria-label="Zoom in"
-            className="px-2.5"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-              <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M11 8v6M8 11h6" strokeLinecap="round" />
-            </svg>
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={zoomOut}
-            aria-label="Zoom out"
-            className="px-2.5"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-              <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35M8 11h6" strokeLinecap="round" />
-            </svg>
-          </Button>
         </div>
       )}
 
