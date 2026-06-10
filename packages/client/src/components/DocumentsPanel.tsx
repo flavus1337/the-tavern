@@ -14,8 +14,8 @@ export function DocumentsPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const setViewingDocument = useStore((s) => s.setViewingDocument);
-  const viewingDocument = useStore((s) => s.viewingDocument);
+  const openDocPanel = useStore((s) => s.openDocPanel);
+  const openPanels = useStore((s) => s.openPanels);
   const connection = useStore((s) => s.connection);
 
   function shareDocument(assetId: string) {
@@ -143,12 +143,12 @@ export function DocumentsPanel() {
                   key={doc.id}
                   doc={doc}
                   campaignId={campaignId ?? ''}
-                  isActive={viewingDocument?.id === doc.id}
+                  isActive={openPanels.some((p) => p.kind === 'doc' && p.doc.id === doc.id)}
                   canDelete={isDm || doc.ownerUsername === self?.username}
                   canShare={connection === 'open' && (isDm || doc.ownerUsername === self?.username)}
                   sharedByOther={doc.ownerUsername !== self?.username}
                   onDelete={() => { void handleDelete(doc.id); }}
-                  onView={() => setViewingDocument(doc)}
+                  onView={() => openDocPanel(doc)}
                   onShare={() => shareDocument(doc.id)}
                 />
               );

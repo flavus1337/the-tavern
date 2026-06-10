@@ -11,9 +11,10 @@ const INLINE_TEXT_MIMES = new Set(['text/plain', 'text/markdown']);
  * Floating document panel, 520px wide, draggable by title bar, clamped within
  * the board area. Restyled to the Tavern "framed on a warm mat" design.
  */
-export function DocumentViewer({ doc }: { doc: AssetManifest }) {
+export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifest; panelId: string; stackIndex: number }) {
   const campaignId = useStore((s) => s.activeCampaignId);
-  const setViewingDocument = useStore((s) => s.setViewingDocument);
+  const closePanel = useStore((s) => s.closePanel);
+  const bringPanelToFront = useStore((s) => s.bringPanelToFront);
   const connection = useStore((s) => s.connection);
   const self = useStore((s) => s.self);
 
@@ -23,8 +24,8 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
 
   const url = `/api/campaigns/${campaignId}/files/assets/${doc.file}`;
 
-  // Panel position — start near top-left offset from board
-  const [pos, setPos] = useState({ x: 40, y: 20 });
+  // Panel position — staggered so multiple panels don't fully overlap
+  const [pos, setPos] = useState(() => ({ x: 40 + (stackIndex % 5) * 36, y: 20 + (stackIndex % 5) * 28 }));
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -171,9 +172,10 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
   return (
     <div
       ref={panelRef}
+      onPointerDownCapture={() => bringPanelToFront(panelId)}
       style={{
         position: 'absolute',
-        zIndex: 8,
+        zIndex: 8 + stackIndex,
         left: pos.x,
         top: pos.y,
         width: 520,
@@ -263,7 +265,7 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
           {/* Close */}
           <button
             type="button"
-            onClick={() => setViewingDocument(null)}
+            onClick={() => closePanel(panelId)}
             style={{ width: 30, height: 30, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--low)', background: 'none', border: 'none', cursor: 'pointer', transition: 'all 0.12s' }}
             onMouseEnter={(e) => { Object.assign((e.currentTarget as HTMLElement).style, { background: 'rgba(255,255,255,0.06)', color: 'var(--hi)' }); }}
             onMouseLeave={(e) => { Object.assign((e.currentTarget as HTMLElement).style, { background: 'transparent', color: 'var(--low)' }); }}

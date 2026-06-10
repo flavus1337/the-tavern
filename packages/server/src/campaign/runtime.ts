@@ -11,6 +11,8 @@ export interface BoardItem {
   y: number;
   w: number;
   z: number;
+  /** players may move/resize this item (DM-granted, per item) */
+  playersCanMove?: boolean;
 }
 
 export interface RuntimeState {

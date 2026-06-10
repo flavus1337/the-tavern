@@ -24,8 +24,7 @@ export function TableLayout() {
   const documents = useStore((s) => s.documents);
   const self = useStore((s) => s.self);
   const lastErrorMessage = useStore((s) => s.lastErrorMessage);
-  const viewingDocument = useStore((s) => s.viewingDocument);
-  const noteEditor = useStore((s) => s.noteEditor);
+  const openPanels = useStore((s) => s.openPanels);
   const setRoute = useStore((s) => s.setRoute);
   const resetTable = useStore((s) => s.resetTable);
   const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
@@ -203,8 +202,13 @@ export function TableLayout() {
         {/* Board area */}
         <div className="flex-1 min-w-0 min-h-0 relative flex">
           <CanvasViewer />
-          {viewingDocument && <DocumentViewer doc={viewingDocument} />}
-          {noteEditor && <NoteEditor key={noteEditor.noteId ?? 'new'} noteId={noteEditor.noteId} />}
+          {openPanels.map((panel, i) =>
+            panel.kind === 'doc' ? (
+              <DocumentViewer key={panel.panelId} panelId={panel.panelId} doc={panel.doc} stackIndex={i} />
+            ) : (
+              <NoteEditor key={panel.panelId} panelId={panel.panelId} noteId={panel.noteId} stackIndex={i} />
+            ),
+          )}
           <RollToasts />
         </div>
 

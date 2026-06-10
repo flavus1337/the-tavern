@@ -23,6 +23,8 @@ export interface BoardItemView {
   title: string;
   naturalWidth: number | null;
   naturalHeight: number | null;
+  /** when true, players may move/resize this item (DM toggles per item) */
+  playersCanMove: boolean;
 }
 
 export type RollVisibility = 'public' | 'dm';
@@ -104,6 +106,13 @@ export interface ClientBoardRemovePayload {
   itemId: string;
 }
 
+export interface ClientBoardSetAccessPayload {
+  type: 'boardSetAccess';
+  itemId: string;
+  /** DM only: allow players to move/resize this item */
+  playersCanMove: boolean;
+}
+
 export interface ClientSetUploadsLockedPayload {
   type: 'setUploadsLocked';
   locked: boolean;
@@ -140,6 +149,7 @@ export type ClientMessage =
   | ClientBoardAddPayload
   | ClientBoardMovePayload
   | ClientBoardRemovePayload
+  | ClientBoardSetAccessPayload
   | ClientSetUploadsLockedPayload
   | ClientShareDocumentPayload
   | ClientSaveNotePayload

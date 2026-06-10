@@ -9,11 +9,12 @@ import { Input } from './ui/input';
  * Note editor rendered over the canvas area (non-modal — the sidebar stays
  * usable). Markdown body with a small formatting toolbar and live preview.
  */
-export function NoteEditor({ noteId }: { noteId: string | null }) {
+export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | null; panelId: string; stackIndex: number }) {
   const myNotes = useStore((s) => s.myNotes);
   const self = useStore((s) => s.self);
   const connection = useStore((s) => s.connection);
-  const setNoteEditor = useStore((s) => s.setNoteEditor);
+  const closePanel = useStore((s) => s.closePanel);
+  const bringPanelToFront = useStore((s) => s.bringPanelToFront);
 
   const existing = noteId ? myNotes.find((n) => n.id === noteId) : undefined;
   const isDm = self?.role === 'dm';
@@ -63,7 +64,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       setMode('write');
     } else {
       // New note gets its id server-side; close — it appears in the list.
-      setNoteEditor(null);
+      closePanel(panelId);
     }
   }
 
@@ -83,7 +84,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       setEditing(false);
       setMode('write');
     } else {
-      setNoteEditor(null);
+      closePanel(panelId);
     }
   }
 
@@ -132,8 +133,15 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
 
   return (
     <div
-      className="absolute inset-0 z-20 flex flex-col lg:inset-auto lg:right-4 lg:top-4 lg:bottom-4 lg:w-[55%] lg:max-w-3xl lg:rounded-xl lg:shadow-2xl lg:overflow-hidden"
-      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+      className="absolute inset-0 flex flex-col lg:inset-auto lg:top-4 lg:bottom-4 lg:w-[55%] lg:max-w-3xl lg:rounded-xl lg:shadow-2xl lg:overflow-hidden"
+      onPointerDownCapture={() => bringPanelToFront(panelId)}
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        zIndex: 8 + stackIndex,
+        // Stagger stacked panels on large screens (right-anchored).
+        right: `calc(1rem + ${(stackIndex % 5) * 36}px)`,
+      }}
     >
       {/* Header */}
       <div
@@ -216,7 +224,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           )}
           <button
             type="button"
-            onClick={() => setNoteEditor(null)}
+            onClick={() => closePanel(panelId)}
             className="p-1.5 rounded transition-colors"
             style={{ color: 'var(--low)' }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--hi)'; }}

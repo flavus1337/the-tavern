@@ -145,7 +145,7 @@ export class TableConnection {
         break;
 
       case 'documentShared':
-        store.setViewingDocument(msg.asset);
+        store.openDocPanel(msg.asset);
         break;
 
       case 'noteSaved':

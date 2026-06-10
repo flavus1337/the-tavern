@@ -43,6 +43,8 @@ interface BoardItemProps {
 
 function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
   const [hovered, setHovered] = useState(false);
+  // DM always; players only when the DM unlocked this item.
+  const canManipulate = isDm || item.playersCanMove;
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
   const [localW, setLocalW] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -68,7 +70,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
   const handlePx = Math.round(24 / scale);
 
   function onItemPointerDown(e: PointerEvent<HTMLDivElement>) {
-    if (!isDm) return;
+    if (!canManipulate) return;
     e.stopPropagation();
     if (e.button !== 0) return;
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -85,7 +87,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
   }
 
   function onResizePointerDown(e: PointerEvent<HTMLDivElement>) {
-    if (!isDm) return;
+    if (!canManipulate) return;
     e.stopPropagation();
     if (e.button !== 0) return;
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -149,17 +151,17 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
         // stickers and must not be clipped. The img clips its own corners.
         border: '1px solid rgba(0,0,0,0.5)',
         boxShadow: shadowLifted,
-        cursor: isDm ? (isDragging ? 'grabbing' : 'grab') : undefined,
+        cursor: canManipulate ? (isDragging ? 'grabbing' : 'grab') : undefined,
         transition: isDragging ? undefined : 'box-shadow 0.15s',
         touchAction: 'none',
         userSelect: 'none',
       }}
-      onPointerDown={isDm ? onItemPointerDown : undefined}
-      onPointerMove={isDm ? onPointerMove : undefined}
-      onPointerUp={isDm ? onPointerUp : undefined}
-      onPointerLeave={isDm ? onPointerUp : undefined}
-      onMouseEnter={isDm ? () => setHovered(true) : undefined}
-      onMouseLeave={isDm ? () => { setHovered(false); } : undefined}
+      onPointerDown={canManipulate ? onItemPointerDown : undefined}
+      onPointerMove={canManipulate ? onPointerMove : undefined}
+      onPointerUp={canManipulate ? onPointerUp : undefined}
+      onPointerLeave={canManipulate ? onPointerUp : undefined}
+      onMouseEnter={canManipulate ? () => setHovered(true) : undefined}
+      onMouseLeave={canManipulate ? () => { setHovered(false); } : undefined}
     >
       <img
         src={item.url}
@@ -184,8 +186,8 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
         Map · {item.title}
       </div>
 
-      {/* DM controls */}
-      {isDm && hovered && !isDragging && (
+      {/* Hover controls — outline + resize for anyone who can manipulate; ✕ and lock are DM-only */}
+      {canManipulate && hovered && !isDragging && (
         <>
           {/* Ember outline on hover */}
           <div
@@ -196,38 +198,77 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
               pointerEvents: 'none',
             }}
           />
-          {/* Remove button */}
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              sendWs({ type: 'boardRemove', itemId: item.id });
-            }}
-            style={{
-              position: 'absolute',
-              top: -handlePx / 2,
-              right: -handlePx / 2,
-              width: handlePx,
-              height: handlePx,
-              fontSize: Math.max(8, 12 / scale),
-              lineHeight: `${handlePx}px`,
-              textAlign: 'center',
-              cursor: 'pointer',
-              background: 'var(--garnet)',
-              color: '#fff',
-              border: `${Math.max(1.5, 2 / scale)}px solid rgba(255,255,255,0.9)`,
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 2px 10px rgba(0,0,0,0.8)',
-            }}
-            aria-label={`Remove ${item.title} from board`}
-            title="Remove from board"
-          >
-            ✕
-          </button>
+          {isDm && (
+            /* Player-access lock toggle — top-left */
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                sendWs({ type: 'boardSetAccess', itemId: item.id, playersCanMove: !item.playersCanMove });
+              }}
+              style={{
+                position: 'absolute',
+                top: -handlePx / 2,
+                left: -handlePx / 2,
+                width: handlePx,
+                height: handlePx,
+                cursor: 'pointer',
+                background: item.playersCanMove ? 'var(--teal)' : 'var(--raised)',
+                color: item.playersCanMove ? '#0c2520' : 'var(--mid)',
+                border: `${Math.max(1.5, 2 / scale)}px solid rgba(255,255,255,0.9)`,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.8)',
+              }}
+              aria-label={item.playersCanMove ? 'Lock item (players cannot move it)' : 'Unlock item (players can move it)'}
+              title={item.playersCanMove ? 'Players can move this — click to lock' : 'Locked — click to let players move this'}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{ width: '58%', height: '58%' }}>
+                {item.playersCanMove ? (
+                  <path d="M7 11V7a5 5 0 019.5-2M5 11h14v9a1 1 0 01-1 1H6a1 1 0 01-1-1v-9z" strokeLinecap="round" strokeLinejoin="round" />
+                ) : (
+                  <path d="M7 11V7a5 5 0 0110 0v4M5 11h14v9a1 1 0 01-1 1H6a1 1 0 01-1-1v-9z" strokeLinecap="round" strokeLinejoin="round" />
+                )}
+              </svg>
+            </button>
+          )}
+          {/* Remove button — DM only */}
+          {isDm && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                sendWs({ type: 'boardRemove', itemId: item.id });
+              }}
+              style={{
+                position: 'absolute',
+                top: -handlePx / 2,
+                right: -handlePx / 2,
+                width: handlePx,
+                height: handlePx,
+                fontSize: Math.max(8, 12 / scale),
+                lineHeight: `${handlePx}px`,
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: 'var(--garnet)',
+                color: '#fff',
+                border: `${Math.max(1.5, 2 / scale)}px solid rgba(255,255,255,0.9)`,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 2px 10px rgba(0,0,0,0.8)',
+              }}
+              aria-label={`Remove ${item.title} from board`}
+              title="Remove from board"
+            >
+              ✕
+            </button>
+          )}
           {/* Resize handle */}
           <div
             onPointerDown={onResizePointerDown}

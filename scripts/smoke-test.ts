@@ -823,6 +823,59 @@ async function main(): Promise<void> {
     })();
     assert(typeof pinnedItemId === 'string', 'E17-pre: board item id available');
 
+    // E16a–E16d: per-item player move permission (boardSetAccess)
+    if (pinnedItemId) {
+      // Player move while locked (default) → FORBIDDEN
+      send(p1Ws, { type: 'boardMove', itemId: pinnedItemId, x: 50, y: 50, w: 400 });
+      try {
+        const lockMsg = await waitForMessage(p1Messages, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(lockMsg['code'] === 'FORBIDDEN', 'E16a: player boardMove on locked item → FORBIDDEN');
+      } catch {
+        fail('E16a: player boardMove on locked item → FORBIDDEN', 'timeout');
+      }
+
+      // Player toggling access themselves → FORBIDDEN
+      send(p1Ws, { type: 'boardSetAccess', itemId: pinnedItemId, playersCanMove: true });
+      try {
+        const accMsg = await waitForMessage(
+          p1Messages,
+          (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN' && String(m['message']).includes('permissions'),
+          2000,
+        );
+        assert(accMsg['code'] === 'FORBIDDEN', 'E16b: player boardSetAccess → FORBIDDEN');
+      } catch {
+        fail('E16b: player boardSetAccess → FORBIDDEN', 'timeout');
+      }
+
+      // DM unlocks → boardUpdated carries playersCanMove: true
+      send(adminWs, { type: 'boardSetAccess', itemId: pinnedItemId, playersCanMove: true });
+      try {
+        const unlocked = await waitForMessage(
+          p1Messages,
+          (m) => m['type'] === 'boardUpdated' &&
+            (m['items'] as Array<{ id?: string; playersCanMove?: boolean }>).some((it) => it.id === pinnedItemId && it.playersCanMove === true),
+          3000,
+        );
+        assert(!!unlocked, 'E16c: boardSetAccess broadcasts playersCanMove=true');
+      } catch {
+        fail('E16c: boardSetAccess broadcasts playersCanMove=true', 'timeout');
+      }
+
+      // Player move now succeeds → boardUpdated with the new position
+      send(p1Ws, { type: 'boardMove', itemId: pinnedItemId, x: 123, y: 456, w: 500 });
+      try {
+        const moved = await waitForMessage(
+          adminMessages,
+          (m) => m['type'] === 'boardUpdated' &&
+            (m['items'] as Array<{ id?: string; x?: number; y?: number }>).some((it) => it.id === pinnedItemId && it.x === 123 && it.y === 456),
+          3000,
+        );
+        assert(!!moved, 'E16d: player can move unlocked item');
+      } catch {
+        fail('E16d: player can move unlocked item', 'timeout');
+      }
+    }
+
     if (pinnedItemId) {
       send(adminWs, { type: 'boardRemove', itemId: pinnedItemId });
       try {

@@ -65,6 +65,9 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
       case 'boardRemove':
         await handleBoardRemove(session, msg);
         break;
+      case 'boardSetAccess':
+        await handleBoardSetAccess(session, msg);
+        break;
       case 'setUploadsLocked':
         await handleSetUploadsLocked(session, msg);
         break;
@@ -226,8 +229,39 @@ async function handleBoardMove(
   session: WsSession,
   msg: { type: 'boardMove'; itemId: string; x: number; y: number; w: number },
 ): Promise<void> {
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  const idx = entry.runtime.state.board.findIndex((item) => item.id === msg.itemId);
+  if (idx === -1) {
+    sendError(session, 'UNKNOWN_ITEM', `Board item "${msg.itemId}" not found`);
+    return;
+  }
+
+  // DM always; players only when the DM unlocked this item for them.
+  if (session.role !== 'dm' && !entry.runtime.state.board[idx]!.playersCanMove) {
+    sendError(session, 'FORBIDDEN', 'The DM has not unlocked this item for players');
+    return;
+  }
+
+  // Clamp w to [40, 8000].
+  const w = Math.min(BOARD_W_MAX, Math.max(BOARD_W_MIN, msg.w));
+
+  const updated = [...entry.runtime.state.board];
+  updated[idx] = { ...updated[idx]!, x: msg.x, y: msg.y, w };
+  entry.runtime.state = { ...entry.runtime.state, board: updated };
+  await persistState(entry.runtime);
+
+  broadcastBoardUpdated(campaignId, entry);
+}
+
+async function handleBoardSetAccess(
+  session: WsSession,
+  msg: { type: 'boardSetAccess'; itemId: string; playersCanMove: boolean },
+): Promise<void> {
   if (session.role !== 'dm') {
-    sendError(session, 'FORBIDDEN', 'Only the DM can move board items');
+    sendError(session, 'FORBIDDEN', 'Only the DM can change item permissions');
     return;
   }
 
@@ -241,11 +275,8 @@ async function handleBoardMove(
     return;
   }
 
-  // Clamp w to [40, 8000].
-  const w = Math.min(BOARD_W_MAX, Math.max(BOARD_W_MIN, msg.w));
-
   const updated = [...entry.runtime.state.board];
-  updated[idx] = { ...updated[idx]!, x: msg.x, y: msg.y, w };
+  updated[idx] = { ...updated[idx]!, playersCanMove: msg.playersCanMove };
   entry.runtime.state = { ...entry.runtime.state, board: updated };
   await persistState(entry.runtime);
 

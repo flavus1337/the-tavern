@@ -68,6 +68,16 @@ export interface BoardView {
 }
 
 // ---------------------------------------------------------------------------
+// Floating panels over the board (multiple docs/notes open simultaneously)
+// ---------------------------------------------------------------------------
+export type TablePanel =
+  | { panelId: string; kind: 'doc'; doc: AssetManifest }
+  | { panelId: string; kind: 'note'; noteId: string | null };
+
+let panelSeq = 0;
+const nextPanelId = () => `panel_${++panelSeq}`;
+
+// ---------------------------------------------------------------------------
 // Table slice
 // ---------------------------------------------------------------------------
 type ConnectionState = 'connecting' | 'open' | 'reconnecting' | 'closed';
@@ -90,10 +100,8 @@ interface TableSlice {
   rollLog: RollLogEntry[];
   assets: AssetManifest[] | null;
   documents: AssetManifest[];
-  /** document currently open in the in-table viewer (local; also set by documentShared pushes) */
-  viewingDocument: AssetManifest | null;
-  /** note editor open over the canvas area; noteId null = new note */
-  noteEditor: { noteId: string | null } | null;
+  /** open floating panels over the board (docs + notes), render order = z-order */
+  openPanels: TablePanel[];
   /** transient roll-result popups shown over the canvas */
   rollToasts: RollLogEntry[];
   /** transient presence-join popups */
@@ -122,8 +130,10 @@ interface TableSlice {
   dismissShareToast: (id: string) => void;
   setAssets: (assets: AssetManifest[]) => void;
   setDocuments: (documents: AssetManifest[]) => void;
-  setViewingDocument: (doc: AssetManifest | null) => void;
-  setNoteEditor: (editor: { noteId: string | null } | null) => void;
+  openDocPanel: (doc: AssetManifest) => void;
+  openNotePanel: (noteId: string | null) => void;
+  closePanel: (panelId: string) => void;
+  bringPanelToFront: (panelId: string) => void;
   upsertNote: (note: Note) => void;
   removeNote: (noteId: string) => void;
   setLastErrorMessage: (msg: string | null) => void;
@@ -146,8 +156,7 @@ const tableDefaults = {
   rollLog: [],
   assets: null,
   documents: [],
-  viewingDocument: null,
-  noteEditor: null,
+  openPanels: [],
   rollToasts: [],
   joinToasts: [] as JoinToast[],
   boardMoments: [] as string[],
@@ -254,16 +263,49 @@ export const useStore = create<StoreState>()((set) => ({
   setDocuments: (documents) =>
     set((s) => ({
       documents,
-      // Close the viewer if the open document was deleted.
-      viewingDocument:
-        s.viewingDocument && !documents.some((d) => d.id === s.viewingDocument!.id)
-          ? null
-          : s.viewingDocument,
+      // Close panels of deleted documents; refresh the doc object in surviving ones.
+      openPanels: s.openPanels.flatMap((p): TablePanel[] => {
+        if (p.kind !== 'doc') return [p];
+        const fresh = documents.find((d) => d.id === p.doc.id);
+        return fresh ? [{ ...p, doc: fresh }] : [];
+      }),
     })),
-  // Document viewer and note editor share the canvas overlay — opening one
-  // closes the other.
-  setViewingDocument: (doc) => set(doc ? { viewingDocument: doc, noteEditor: null } : { viewingDocument: null }),
-  setNoteEditor: (editor) => set(editor ? { noteEditor: editor, viewingDocument: null } : { noteEditor: null }),
+
+  openDocPanel: (doc) =>
+    set((s) => {
+      const existing = s.openPanels.find((p) => p.kind === 'doc' && p.doc.id === doc.id);
+      if (existing) {
+        // Already open — bring to front with the fresh doc object.
+        return {
+          openPanels: [
+            ...s.openPanels.filter((p) => p.panelId !== existing.panelId),
+            { ...existing, doc },
+          ],
+        };
+      }
+      return { openPanels: [...s.openPanels, { panelId: nextPanelId(), kind: 'doc', doc }] };
+    }),
+
+  openNotePanel: (noteId) =>
+    set((s) => {
+      const existing = s.openPanels.find((p) => p.kind === 'note' && p.noteId === noteId);
+      if (existing) {
+        return {
+          openPanels: [...s.openPanels.filter((p) => p.panelId !== existing.panelId), existing],
+        };
+      }
+      return { openPanels: [...s.openPanels, { panelId: nextPanelId(), kind: 'note', noteId }] };
+    }),
+
+  closePanel: (panelId) =>
+    set((s) => ({ openPanels: s.openPanels.filter((p) => p.panelId !== panelId) })),
+
+  bringPanelToFront: (panelId) =>
+    set((s) => {
+      const panel = s.openPanels.find((p) => p.panelId === panelId);
+      if (!panel || s.openPanels[s.openPanels.length - 1] === panel) return s;
+      return { openPanels: [...s.openPanels.filter((p) => p.panelId !== panelId), panel] };
+    }),
 
   upsertNote: (note) =>
     set((s) => {
@@ -279,8 +321,8 @@ export const useStore = create<StoreState>()((set) => ({
   removeNote: (noteId) =>
     set((s) => ({
       myNotes: s.myNotes.filter((n) => n.id !== noteId),
-      // Close the editor if the deleted note is open.
-      noteEditor: s.noteEditor?.noteId === noteId ? null : s.noteEditor,
+      // Close any panel showing the deleted note.
+      openPanels: s.openPanels.filter((p) => !(p.kind === 'note' && p.noteId === noteId)),
     })),
 
   setLastErrorMessage: (msg) => set({ lastErrorMessage: msg }),

@@ -12,8 +12,8 @@ import { Badge } from './ui/badge';
 export function NotesPanel() {
   const myNotes = useStore((s) => s.myNotes);
   const self = useStore((s) => s.self);
-  const noteEditor = useStore((s) => s.noteEditor);
-  const setNoteEditor = useStore((s) => s.setNoteEditor);
+  const openPanels = useStore((s) => s.openPanels);
+  const openNotePanel = useStore((s) => s.openNotePanel);
 
   const isDm = self?.role === 'dm';
   const sorted = [...myNotes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -21,12 +21,12 @@ export function NotesPanel() {
   const sharedWithMe = sorted.filter((n) => n.ownerUsername !== self?.username);
 
   function NoteRow({ note }: { note: Note }) {
-    const isOpen = noteEditor?.noteId === note.id;
+    const isOpen = openPanels.some((p) => p.kind === 'note' && p.noteId === note.id);
     const ownNote = note.ownerUsername === self?.username;
     return (
       <button
         type="button"
-        onClick={() => setNoteEditor({ noteId: note.id })}
+        onClick={() => openNotePanel(note.id)}
         className="w-full text-left p-2.5 rounded-lg transition-colors"
         style={{
           background: 'var(--surface2)',
@@ -87,7 +87,7 @@ export function NotesPanel() {
   return (
     <div className="flex flex-col h-full">
       <div className="p-3" style={{ borderBottom: '1px solid var(--border-soft)' }}>
-        <Button size="sm" variant="secondary" className="w-full" onClick={() => setNoteEditor({ noteId: null })}>
+        <Button size="sm" variant="secondary" className="w-full" onClick={() => openNotePanel(null)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
             <path d="M12 5v14M5 12h14" strokeLinecap="round" />
           </svg>

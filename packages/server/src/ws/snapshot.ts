@@ -6,7 +6,7 @@ import { visibleDocuments } from './documents.js';
 
 function makeBoardItemView(
   campaignId: string,
-  item: { id: string; assetId: string; x: number; y: number; w: number; z: number },
+  item: { id: string; assetId: string; x: number; y: number; w: number; z: number; playersCanMove?: boolean },
   entry: CampaignEntry,
 ): BoardItemView {
   const manifest = entry.store.assets.get(item.assetId);
@@ -17,6 +17,7 @@ function makeBoardItemView(
     y: item.y,
     w: item.w,
     z: item.z,
+    playersCanMove: item.playersCanMove ?? false,
     url: `/api/campaigns/${campaignId}/files/assets/${manifest?.file ?? ''}`,
     title: manifest?.title ?? '',
     naturalWidth: manifest?.width ?? null,
