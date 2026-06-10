@@ -81,14 +81,14 @@ export function TableLayout() {
   }, [lastErrorMessage]);
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-dvh flex flex-col overflow-hidden">
       {/* Top bar */}
       <header className="shrink-0 h-12 border-b border-zinc-800 bg-zinc-950 flex items-center px-3 gap-3 z-10">
         <span className="font-semibold text-zinc-100 truncate max-w-[200px]">
           {campaignName || 'Loading…'}
         </span>
 
-        <div className="flex items-center gap-1.5 ml-auto">
+        <div className="flex items-center gap-1.5 ml-auto min-w-0 overflow-hidden">
           <PresenceBar entries={presence} />
         </div>
 
@@ -125,18 +125,18 @@ export function TableLayout() {
         </div>
       )}
 
-      {/* Main content */}
-      <div className="flex-1 min-h-0 flex">
+      {/* Main content — stacks vertically on narrow screens, sidebar right on md+ */}
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
         {/* Canvas area — the document viewer overlays it, keeping the canvas
             mounted (pan/zoom state survives) and the sidebar interactive. */}
-        <div className="flex-1 min-w-0 relative flex">
+        <div className="flex-1 min-w-0 min-h-0 relative flex">
           <CanvasViewer />
           {viewingDocument && <DocumentViewer doc={viewingDocument} />}
           {noteEditor && <NoteEditor key={noteEditor.noteId ?? 'new'} noteId={noteEditor.noteId} />}
         </div>
 
-        {/* Right sidebar */}
-        <aside className="w-80 shrink-0 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
+        {/* Sidebar: bottom panel on mobile, right column on md+ */}
+        <aside className="w-full h-2/5 border-t md:w-80 md:h-auto md:border-t-0 md:border-l shrink-0 border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">
           <Tabs
             value={sidebarTab}
             onValueChange={(v) => setSidebarTab(v as typeof sidebarTab)}

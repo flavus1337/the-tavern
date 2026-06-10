@@ -208,7 +208,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         />
 
         {/* Toolbar */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap gap-y-2">
           {toolbar.map((t) => (
             <button
               key={t.title}
