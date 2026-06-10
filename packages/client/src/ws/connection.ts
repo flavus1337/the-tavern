@@ -145,7 +145,12 @@ export class TableConnection {
         break;
 
       case 'documentShared':
-        store.openDocPanel(msg.asset);
+        // Audio lives in the bottom dock, not a floating panel.
+        if (msg.asset.mime.startsWith('audio/')) {
+          store.openAudioDock(msg.asset.id);
+        } else {
+          store.openDocPanel(msg.asset);
+        }
         break;
 
       case 'noteSaved':
@@ -157,12 +162,15 @@ export class TableConnection {
         break;
 
       case 'mediaControl': {
-        // Record the table-playback state — audio panels follow it (including
-        // panels that mount later, e.g. via the auto-open below).
+        // Record the table-playback state — the audio dock follows it
+        // (including docks that mount later, e.g. via the auto-open below).
         store.setMediaSync(msg.assetId, { action: msg.action, time: msg.time, atMs: Date.now() });
         if (msg.action === 'play') {
-          const doc = store.documents.find((d) => d.id === msg.assetId);
-          if (doc) store.openDocPanel(doc);
+          store.openAudioDock(msg.assetId);
+        } else if (msg.action === 'stop') {
+          if (useStore.getState().audioDock?.assetId === msg.assetId) {
+            store.closeAudioDock();
+          }
         }
         break;
       }

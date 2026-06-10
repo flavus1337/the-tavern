@@ -103,7 +103,9 @@ interface TableSlice {
   /** open floating panels over the board (docs + notes), render order = z-order */
   openPanels: TablePanel[];
   /** latest table-playback command per audio asset (drives synced players) */
-  mediaSync: Record<string, { action: 'play' | 'pause'; time: number; atMs: number }>;
+  mediaSync: Record<string, { action: 'play' | 'pause' | 'stop'; time: number; atMs: number }>;
+  /** bottom audio dock — one active track at a time */
+  audioDock: { assetId: string; minimized: boolean } | null;
   /** transient roll-result popups shown over the canvas */
   rollToasts: RollLogEntry[];
   /** transient presence-join popups */
@@ -136,7 +138,10 @@ interface TableSlice {
   openNotePanel: (noteId: string | null) => void;
   closePanel: (panelId: string) => void;
   bringPanelToFront: (panelId: string) => void;
-  setMediaSync: (assetId: string, cmd: { action: 'play' | 'pause'; time: number; atMs: number }) => void;
+  setMediaSync: (assetId: string, cmd: { action: 'play' | 'pause' | 'stop'; time: number; atMs: number }) => void;
+  openAudioDock: (assetId: string) => void;
+  closeAudioDock: () => void;
+  setAudioDockMinimized: (minimized: boolean) => void;
   upsertNote: (note: Note) => void;
   removeNote: (noteId: string) => void;
   setLastErrorMessage: (msg: string | null) => void;
@@ -161,6 +166,7 @@ const tableDefaults = {
   documents: [],
   openPanels: [],
   mediaSync: {},
+  audioDock: null,
   rollToasts: [],
   joinToasts: [] as JoinToast[],
   boardMoments: [] as string[],
@@ -273,6 +279,10 @@ export const useStore = create<StoreState>()((set) => ({
         const fresh = documents.find((d) => d.id === p.doc.id);
         return fresh ? [{ ...p, doc: fresh }] : [];
       }),
+      audioDock:
+        s.audioDock && !documents.some((d) => d.id === s.audioDock!.assetId)
+          ? null
+          : s.audioDock,
     })),
 
   openDocPanel: (doc) =>
@@ -313,6 +323,19 @@ export const useStore = create<StoreState>()((set) => ({
 
   setMediaSync: (assetId, cmd) =>
     set((s) => ({ mediaSync: { ...s.mediaSync, [assetId]: cmd } })),
+
+  openAudioDock: (assetId) =>
+    set((s) => ({
+      audioDock:
+        s.audioDock?.assetId === assetId
+          ? s.audioDock
+          : { assetId, minimized: false },
+    })),
+
+  closeAudioDock: () => set({ audioDock: null }),
+
+  setAudioDockMinimized: (minimized) =>
+    set((s) => (s.audioDock ? { audioDock: { ...s.audioDock, minimized } } : s)),
 
   upsertNote: (note) =>
     set((s) => {

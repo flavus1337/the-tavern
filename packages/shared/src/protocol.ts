@@ -142,7 +142,7 @@ export interface ClientMediaControlPayload {
   type: 'mediaControl';
   /** asset id of an audio document; sender must be its owner or the DM */
   assetId: string;
-  action: 'play' | 'pause';
+  action: 'play' | 'pause' | 'stop';
   /** current playback position in seconds */
   time: number;
 }
@@ -254,7 +254,7 @@ export interface ServerNoteDeletedPayload {
 export interface ServerMediaControlPayload {
   type: 'mediaControl';
   assetId: string;
-  action: 'play' | 'pause';
+  action: 'play' | 'pause' | 'stop';
   time: number;
   by: string;
 }

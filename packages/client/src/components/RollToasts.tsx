@@ -11,6 +11,7 @@ const SHARE_TOAST_MS = 3400;
  */
 export function RollToasts() {
   const rollToasts = useStore((s) => s.rollToasts);
+  const audioDock = useStore((s) => s.audioDock);
   const joinToasts = useStore((s) => s.joinToasts);
   const shareToasts = useStore((s) => s.shareToasts);
 
@@ -24,7 +25,8 @@ export function RollToasts() {
 
   return (
     <div
-      className="absolute bottom-[22px] left-1/2 -translate-x-1/2 z-30 flex flex-col-reverse items-center gap-[10px] pointer-events-none w-full px-4"
+      className="absolute left-1/2 -translate-x-1/2 z-30 flex flex-col-reverse items-center gap-[10px] pointer-events-none w-full px-4"
+      style={{ bottom: audioDock && !audioDock.minimized ? 96 : audioDock ? 56 : 22 }}
       aria-live="polite"
       aria-label="Recent notifications"
     >

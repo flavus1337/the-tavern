@@ -15,6 +15,7 @@ export function DocumentsPanel() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const openDocPanel = useStore((s) => s.openDocPanel);
+  const openAudioDock = useStore((s) => s.openAudioDock);
   const openPanels = useStore((s) => s.openPanels);
   const connection = useStore((s) => s.connection);
 
@@ -148,7 +149,7 @@ export function DocumentsPanel() {
                   canShare={connection === 'open' && (isDm || doc.ownerUsername === self?.username)}
                   sharedByOther={doc.ownerUsername !== self?.username}
                   onDelete={() => { void handleDelete(doc.id); }}
-                  onView={() => openDocPanel(doc)}
+                  onView={() => (doc.mime.startsWith('audio/') ? openAudioDock(doc.id) : openDocPanel(doc))}
                   onShare={() => shareDocument(doc.id)}
                 />
               );
@@ -190,7 +191,7 @@ interface DocumentItemProps {
 
 function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedByOther, onDelete, onView, onShare }: DocumentItemProps) {
   const extLabel = doc.mime === 'application/pdf' ? 'PDF'
-    : doc.mime.startsWith('video/') ? 'Video'
+    : doc.mime.startsWith('audio/') ? 'Audio'
     : doc.mime.startsWith('image/') ? 'Image'
     : doc.mime.startsWith('text/') ? 'Text'
     : 'File';

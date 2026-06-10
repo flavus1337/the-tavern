@@ -462,7 +462,7 @@ async function handleSaveNote(
 
 function handleMediaControl(
   session: WsSession,
-  msg: { type: 'mediaControl'; assetId: string; action: 'play' | 'pause'; time: number },
+  msg: { type: 'mediaControl'; assetId: string; action: 'play' | 'pause' | 'stop'; time: number },
 ): void {
   const campaignId = session.campaignId!;
   const entry = getCampaign(campaignId);

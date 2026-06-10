@@ -8,117 +8,6 @@ const INLINE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'im
 const INLINE_TEXT_MIMES = new Set(['text/plain', 'text/markdown']);
 
 /**
- * Audio on the mat with table-synced playback: the owner/DM's play, pause and
- * seek drive everyone else's player via mediaControl messages.
- */
-function AudioBody({ url, assetId, canDrive }: { url: string; assetId: string; canDrive: boolean }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  // Set while applying a remote command so the resulting events don't re-emit.
-  const applyingRemote = useRef(false);
-  const sync = useStore((s) => s.mediaSync[assetId]);
-  // True when the browser's autoplay policy rejected a remote play — the user
-  // joins playback with one real click.
-  const [needsGesture, setNeedsGesture] = useState(false);
-
-  function emit(action: 'play' | 'pause') {
-    if (!canDrive || applyingRemote.current) return;
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'mediaControl', assetId, action, time: audioRef.current?.currentTime ?? 0 });
-  }
-
-  /** Target position right now: command time + elapsed wall-clock while playing. */
-  function syncedTime(cmd: { action: 'play' | 'pause'; time: number; atMs: number }): number {
-    return cmd.action === 'play' ? cmd.time + (Date.now() - cmd.atMs) / 1000 : cmd.time;
-  }
-
-  // Follow the table-playback state (covers panels mounted after the command).
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !sync) return;
-    applyingRemote.current = true;
-    const target = syncedTime(sync);
-    if (Math.abs(audio.currentTime - target) > 1.5) audio.currentTime = target;
-    const done = () => setTimeout(() => { applyingRemote.current = false; }, 150);
-    if (sync.action === 'play') {
-      audio.play().then(() => {
-        setNeedsGesture(false);
-        done();
-      }).catch(() => {
-        // Autoplay blocked — offer a one-click join instead.
-        setNeedsGesture(true);
-        done();
-      });
-    } else {
-      audio.pause();
-      setNeedsGesture(false);
-      done();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sync, assetId]);
-
-  function joinPlayback() {
-    const audio = audioRef.current;
-    if (!audio || !sync) return;
-    applyingRemote.current = true;
-    audio.currentTime = syncedTime(sync);
-    // Called from a click handler — a real user gesture, so play() is allowed.
-    audio.play().catch(() => undefined).finally(() => {
-      setTimeout(() => { applyingRemote.current = false; }, 150);
-    });
-    setNeedsGesture(false);
-  }
-
-  return (
-    <div
-      style={{
-        background: 'var(--surface2)',
-        border: '1px solid var(--border)',
-        borderRadius: 6,
-        overflow: 'hidden',
-        boxShadow: '0 14px 40px -8px #000b',
-        maxWidth: 520,
-        margin: '0 auto',
-        padding: '18px 16px 4px',
-      }}
-    >
-      <audio
-        ref={audioRef}
-        src={url}
-        controls
-        preload="metadata"
-        style={{ display: 'block', width: '100%' }}
-        onPlay={() => emit('play')}
-        onPause={() => emit('pause')}
-        onSeeked={() => {
-          const a = audioRef.current;
-          if (a) emit(a.paused ? 'pause' : 'play');
-        }}
-      />
-      {needsGesture && (
-        <button
-          type="button"
-          onClick={joinPlayback}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            width: 'calc(100% - 0px)', margin: '8px 0 6px', padding: '10px 12px',
-            fontSize: 13, fontWeight: 600,
-            background: 'var(--ember)', color: 'var(--ink)',
-            border: 'none', borderRadius: 9, cursor: 'pointer',
-          }}
-        >
-          ▶ Join playback
-        </button>
-      )}
-      {canDrive && (
-        <p style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--faint)', padding: '6px 10px', margin: 0 }}>
-          Your play/pause controls the whole table.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/**
  * Floating document panel, 520px wide, draggable by title bar, clamped within
  * the board area. Restyled to the Tavern "framed on a warm mat" design.
  */
@@ -190,15 +79,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
     : 'File';
 
   let body;
-  if (doc.mime.startsWith('audio/')) {
-    body = (
-      <AudioBody
-        url={url}
-        assetId={doc.id}
-        canDrive={self?.role === 'dm' || doc.ownerUsername === self?.username}
-      />
-    );
-  } else if (doc.mime === 'application/pdf') {
+  if (doc.mime === 'application/pdf') {
     body = (
       <Suspense
         fallback={

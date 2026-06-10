@@ -6,6 +6,7 @@ import { CanvasViewer } from './CanvasViewer';
 import { DocumentViewer } from './DocumentViewer';
 import { NoteEditor } from './NoteEditor';
 import { RollToasts } from './RollToasts';
+import { AudioDock } from './AudioDock';
 import { DiceRoller } from './DiceRoller';
 import { RollLog } from './RollLog';
 import { DocumentsPanel } from './DocumentsPanel';
@@ -209,6 +210,7 @@ export function TableLayout() {
               <NoteEditor key={panel.panelId} panelId={panel.panelId} noteId={panel.noteId} stackIndex={i} />
             ),
           )}
+          <AudioDock />
           <RollToasts />
         </div>
 
