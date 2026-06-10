@@ -53,28 +53,6 @@ function getKeptD20Value(entry: RollLogEntry): number | null {
 // Nat-20 board moment: gold ring sweep
 // ---------------------------------------------------------------------------
 
-function Nat20BoardMoment() {
-  return (
-    <div
-      className="crit-ring"
-      style={{
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        width: 0,
-        height: 0,
-        borderRadius: '50%',
-        border: '2px solid var(--gold)',
-        transform: 'translate(-50%, -50%)',
-        animation: 'ring-sweep 700ms ease-out forwards',
-        pointerEvents: 'none',
-        zIndex: 100,
-      }}
-      aria-hidden="true"
-    />
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Individual roll entry
 // ---------------------------------------------------------------------------
@@ -285,7 +263,6 @@ function Nat20BoardMomentWrapper({ onDone }: { id: string; onDone: () => void })
 
   return (
     <>
-      <Nat20BoardMoment />
       <div
         className="crit-glow"
         style={{

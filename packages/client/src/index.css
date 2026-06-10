@@ -135,23 +135,6 @@ body {
   40%, 60% { transform: translateX(3px); }
 }
 
-@keyframes ring-sweep {
-  0% {
-    width: 40px;
-    height: 40px;
-    opacity: 0.9;
-    margin-left: -20px;
-    margin-top: -20px;
-  }
-  100% {
-    width: 620px;
-    height: 620px;
-    opacity: 0;
-    margin-left: -310px;
-    margin-top: -310px;
-  }
-}
-
 @keyframes glow-fade {
   0% { opacity: 1; }
   100% { opacity: 0; }
@@ -174,7 +157,6 @@ body {
   .log-entry-shake,
   .toast-animate,
   .presence-join-animate,
-  .crit-ring,
   .crit-glow {
     animation: none !important;
   }
