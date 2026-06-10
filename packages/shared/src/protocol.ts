@@ -78,6 +78,12 @@ export interface ClientClearImagePayload {
   type: 'clearImage';
 }
 
+export interface ClientShareDocumentPayload {
+  type: 'shareDocument';
+  /** must reference an assetKind 'document' asset; any member may share */
+  assetId: string;
+}
+
 export interface ClientSaveNotePayload {
   type: 'saveNote';
   noteId?: string;
@@ -96,6 +102,7 @@ export type ClientMessage =
   | ClientRollPayload
   | ClientShareImagePayload
   | ClientClearImagePayload
+  | ClientShareDocumentPayload
   | ClientSaveNotePayload
   | ClientPingPayload;
 
@@ -161,6 +168,13 @@ export interface ServerDocumentsUpdatedPayload {
   documents: AssetManifest[];
 }
 
+export interface ServerDocumentSharedPayload {
+  type: 'documentShared';
+  /** broadcast to ALL members; clients open this document in their viewer */
+  asset: AssetManifest;
+  sharedBy: string;
+}
+
 export interface ServerNoteSavedPayload {
   type: 'noteSaved';
   note: Note;
@@ -196,6 +210,7 @@ export type ServerMessage =
   | ServerRollResultPayload
   | ServerAssetsUpdatedPayload
   | ServerDocumentsUpdatedPayload
+  | ServerDocumentSharedPayload
   | ServerNoteSavedPayload
   | ServerErrorPayload
   | ServerPongPayload;

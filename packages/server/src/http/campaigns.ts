@@ -166,7 +166,25 @@ router.get('/:id/files/assets/:filename', requireMember(), async (req: Request, 
   }
 
   res.setHeader('Cache-Control', 'private, max-age=3600');
-  res.setHeader('Content-Type', manifest.mime);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  // Only types a browser can render harmlessly are served inline; everything
+  // else is forced to download so user uploads can never execute same-origin.
+  const INLINE_SAFE_MIMES = new Set([
+    'application/pdf',
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+    'text/plain',
+  ]);
+  const inlineMime = manifest.mime === 'text/markdown' ? 'text/plain' : manifest.mime;
+  if (INLINE_SAFE_MIMES.has(inlineMime)) {
+    res.setHeader('Content-Type', inlineMime);
+  } else {
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  }
   res.sendFile(filePath);
 });
 

@@ -66,6 +66,8 @@ interface TableSlice {
   rollLog: RollLogEntry[];
   assets: AssetManifest[] | null;
   documents: AssetManifest[];
+  /** document currently open in the in-table viewer (local; also set by documentShared pushes) */
+  viewingDocument: AssetManifest | null;
   myNotes: Note[];
   lastErrorMessage: string | null;
 
@@ -77,6 +79,7 @@ interface TableSlice {
   addRollEntry: (entry: RollLogEntry) => void;
   setAssets: (assets: AssetManifest[]) => void;
   setDocuments: (documents: AssetManifest[]) => void;
+  setViewingDocument: (doc: AssetManifest | null) => void;
   upsertNote: (note: Note) => void;
   setLastErrorMessage: (msg: string | null) => void;
   resetTable: () => void;
@@ -96,6 +99,7 @@ const tableDefaults = {
   rollLog: [],
   assets: null,
   documents: [],
+  viewingDocument: null,
   myNotes: [],
   lastErrorMessage: null,
 };
@@ -165,7 +169,16 @@ export const useStore = create<StoreState>()((set) => ({
     })),
 
   setAssets: (assets) => set({ assets }),
-  setDocuments: (documents) => set({ documents }),
+  setDocuments: (documents) =>
+    set((s) => ({
+      documents,
+      // Close the viewer if the open document was deleted.
+      viewingDocument:
+        s.viewingDocument && !documents.some((d) => d.id === s.viewingDocument!.id)
+          ? null
+          : s.viewingDocument,
+    })),
+  setViewingDocument: (doc) => set({ viewingDocument: doc }),
 
   upsertNote: (note) =>
     set((s) => {

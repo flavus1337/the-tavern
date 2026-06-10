@@ -52,6 +52,9 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
       case 'clearImage':
         await handleClearImage(session, msg);
         break;
+      case 'shareDocument':
+        await handleShareDocument(session, msg);
+        break;
       case 'saveNote':
         await handleSaveNote(session, msg);
         break;
@@ -191,6 +194,25 @@ async function handleShareImage(
   };
 
   broadcast(campaignId, { type: 'imageShared', asset: assetRef });
+}
+
+async function handleShareDocument(
+  session: WsSession,
+  msg: { type: 'shareDocument'; assetId: string },
+): Promise<void> {
+  // Any member may share a document with the table.
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  const manifest = entry.store.assets.get(msg.assetId);
+  if (!manifest || manifest.assetKind !== 'document') {
+    sendError(session, 'UNKNOWN_ASSET', `Document "${msg.assetId}" not found`);
+    return;
+  }
+
+  // Transient push — not persisted; everyone's viewer opens it.
+  broadcast(campaignId, { type: 'documentShared', asset: manifest, sharedBy: session.username });
 }
 
 async function handleClearImage(session: WsSession, _msg: { type: 'clearImage' }): Promise<void> {

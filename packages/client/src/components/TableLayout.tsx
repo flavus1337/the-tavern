@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { TableConnection } from '../ws/connection';
 import { CanvasViewer } from './CanvasViewer';
+import { DocumentViewer } from './DocumentViewer';
 import { DiceRoller } from './DiceRoller';
 import { RollLog } from './RollLog';
 import { DocumentsPanel } from './DocumentsPanel';
@@ -32,6 +33,7 @@ export function TableLayout() {
   const rollLog = useStore((s) => s.rollLog);
   const self = useStore((s) => s.self);
   const lastErrorMessage = useStore((s) => s.lastErrorMessage);
+  const viewingDocument = useStore((s) => s.viewingDocument);
   const setRoute = useStore((s) => s.setRoute);
   const resetTable = useStore((s) => s.resetTable);
   const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
@@ -122,8 +124,12 @@ export function TableLayout() {
 
       {/* Main content */}
       <div className="flex-1 min-h-0 flex">
-        {/* Canvas */}
-        <CanvasViewer />
+        {/* Canvas area — the document viewer overlays it, keeping the canvas
+            mounted (pan/zoom state survives) and the sidebar interactive. */}
+        <div className="flex-1 min-w-0 relative flex">
+          <CanvasViewer />
+          {viewingDocument && <DocumentViewer doc={viewingDocument} />}
+        </div>
 
         {/* Right sidebar */}
         <aside className="w-80 shrink-0 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950">

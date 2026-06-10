@@ -1,13 +1,12 @@
 import { useRef, type ChangeEvent } from 'react';
-import type { AssetManifest, UploadAssetResponse } from '@vtt/shared';
+import type { AssetManifest, UploadAssetResponse, ClientMessage } from '@vtt/shared';
 import { api, apiUpload, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
-import { Dialog, DialogContent } from './ui/dialog';
 import { useState } from 'react';
 
-const MAX_PDF_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
 export function DocumentsPanel() {
   const campaignId = useStore((s) => s.activeCampaignId);
@@ -16,7 +15,13 @@ export function DocumentsPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewing, setViewing] = useState<AssetManifest | null>(null);
+  const setViewingDocument = useStore((s) => s.setViewingDocument);
+  const connection = useStore((s) => s.connection);
+
+  function shareDocument(assetId: string) {
+    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
+    conn?.send({ type: 'shareDocument', assetId });
+  }
 
   const isDm = self?.role === 'dm';
 
@@ -24,7 +29,7 @@ export function DocumentsPanel() {
     const file = e.target.files?.[0];
     if (!file || !campaignId) return;
 
-    if (file.size > MAX_PDF_SIZE) {
+    if (file.size > MAX_FILE_SIZE) {
       setError('File too large. Maximum 25MB.');
       return;
     }
@@ -69,12 +74,11 @@ export function DocumentsPanel() {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
             <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4-4 4M12 8v8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Upload PDF
+          Upload File
         </Button>
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf"
           className="hidden"
           onChange={(e) => { void handleUpload(e); }}
         />
@@ -88,7 +92,7 @@ export function DocumentsPanel() {
         <div className="p-3 space-y-2">
           {documents.length === 0 ? (
             <p className="text-xs text-zinc-500 text-center py-8">
-              No documents yet. Upload a PDF to share with the party.
+              No documents yet. Upload a file (character sheet, handout, …) to share with the party.
             </p>
           ) : (
             documents.map((doc) => (
@@ -97,75 +101,16 @@ export function DocumentsPanel() {
                 doc={doc}
                 campaignId={campaignId ?? ''}
                 canDelete={isDm || doc.ownerUsername === self?.username}
+                canShare={connection === 'open'}
                 onDelete={() => { void handleDelete(doc.id); }}
-                onView={() => setViewing(doc)}
+                onView={() => setViewingDocument(doc)}
+                onShare={() => shareDocument(doc.id)}
               />
             ))
           )}
         </div>
       </ScrollArea>
-
-      {/* In-app PDF viewer */}
-      <PdfViewerDialog
-        doc={viewing}
-        campaignId={campaignId ?? ''}
-        onClose={() => setViewing(null)}
-      />
     </div>
-  );
-}
-
-interface PdfViewerDialogProps {
-  doc: AssetManifest | null;
-  campaignId: string;
-  onClose: () => void;
-}
-
-function PdfViewerDialog({ doc, campaignId, onClose }: PdfViewerDialogProps) {
-  const url = doc ? `/api/campaigns/${campaignId}/files/assets/${doc.file}` : '';
-  return (
-    <Dialog open={doc !== null} onClose={onClose}>
-      <DialogContent
-        title={doc?.title ?? 'Document'}
-        className="max-w-5xl h-[85vh] p-0 flex flex-col overflow-hidden"
-      >
-        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800 shrink-0">
-          <p className="text-sm font-medium text-zinc-200 truncate">{doc?.title}</p>
-          <div className="flex items-center gap-1 shrink-0">
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 text-zinc-400 hover:text-zinc-200 rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
-              aria-label="Open in new tab"
-              title="Open in new tab"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </a>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 text-zinc-400 hover:text-zinc-200 rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
-              aria-label="Close viewer"
-              title="Close"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                <path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        {doc && (
-          <iframe
-            src={url}
-            title={doc.title}
-            className="flex-1 w-full bg-zinc-950"
-          />
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -173,11 +118,13 @@ interface DocumentItemProps {
   doc: AssetManifest;
   campaignId: string;
   canDelete: boolean;
+  canShare: boolean;
   onDelete: () => void;
   onView: () => void;
+  onShare: () => void;
 }
 
-function DocumentItem({ doc, campaignId, canDelete, onDelete, onView }: DocumentItemProps) {
+function DocumentItem({ doc, campaignId, canDelete, canShare, onDelete, onView, onShare }: DocumentItemProps) {
   return (
     <div className="flex items-center gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
       <button
@@ -200,6 +147,18 @@ function DocumentItem({ doc, campaignId, canDelete, onDelete, onView }: Document
         </div>
       </button>
       <div className="flex items-center gap-1 shrink-0">
+        <button
+          type="button"
+          onClick={onShare}
+          disabled={!canShare}
+          className="p-1.5 text-zinc-400 hover:text-indigo-400 disabled:opacity-40 rounded transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500"
+          aria-label={`Share ${doc.title} with the table`}
+          title="Share with table"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+            <path d="M8.7 10.7l6.6-3.4M8.7 13.3l6.6 3.4M21 5a3 3 0 11-6 0 3 3 0 016 0zM9 12a3 3 0 11-6 0 3 3 0 016 0zm12 7a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
         <a
           href={`/api/campaigns/${campaignId}/files/assets/${doc.file}`}
           target="_blank"

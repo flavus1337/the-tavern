@@ -140,6 +140,10 @@ export class TableConnection {
         store.setDocuments(msg.documents);
         break;
 
+      case 'documentShared':
+        store.setViewingDocument(msg.asset);
+        break;
+
       case 'noteSaved':
         store.upsertNote(msg.note);
         break;

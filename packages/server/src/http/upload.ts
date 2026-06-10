@@ -23,6 +23,16 @@ const router = Router();
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_DIMENSION = 2560;
 
+// Never accept files a browser could execute as same-origin markup/script.
+const BLOCKED_DOC_MIMES = new Set([
+  'text/html',
+  'application/xhtml+xml',
+  'image/svg+xml',
+  'application/javascript',
+  'text/javascript',
+]);
+const BLOCKED_DOC_EXTENSIONS = new Set(['html', 'htm', 'xhtml', 'svg', 'js', 'mjs']);
+
 // POST /api/campaigns/:id/assets — dm only, images.
 router.post(
   '/:id/assets',
@@ -108,7 +118,9 @@ router.post(
   },
 );
 
-// POST /api/campaigns/:id/documents — any member, PDFs only.
+// POST /api/campaigns/:id/documents — any member, any file type except
+// browser-executable markup/script (those would be a stored-XSS vector when
+// served same-origin). PDFs additionally get a magic-byte check.
 router.post(
   '/:id/documents',
   requireMember(),
@@ -127,23 +139,32 @@ router.post(
       return;
     }
 
-    // Check mimetype AND magic bytes (%PDF header).
-    if (file.mimetype !== 'application/pdf') {
-      res.status(400).json({ error: 'Only PDF files are allowed', code: 'INVALID_FILE_TYPE' });
-      return;
-    }
-
-    const magicBytes = file.buffer.slice(0, 4).toString('ascii');
-    if (magicBytes !== '%PDF') {
-      res.status(400).json({ error: 'File does not appear to be a valid PDF', code: 'INVALID_FILE_TYPE' });
-      return;
-    }
-
     const originalName = file.originalname;
+    const rawExt = path.extname(originalName).slice(1).toLowerCase();
+    const ext = /^[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : 'bin';
+    const mime = file.mimetype && file.mimetype !== '' ? file.mimetype : 'application/octet-stream';
+
+    if (BLOCKED_DOC_MIMES.has(mime) || BLOCKED_DOC_EXTENSIONS.has(ext)) {
+      res.status(400).json({
+        error: 'This file type cannot be uploaded (HTML/SVG/script files are not allowed)',
+        code: 'INVALID_FILE_TYPE',
+      });
+      return;
+    }
+
+    // PDFs get a magic-byte sanity check.
+    if (mime === 'application/pdf' || ext === 'pdf') {
+      const magicBytes = file.buffer.slice(0, 4).toString('ascii');
+      if (magicBytes !== '%PDF') {
+        res.status(400).json({ error: 'File does not appear to be a valid PDF', code: 'INVALID_FILE_TYPE' });
+        return;
+      }
+    }
+
     const baseName = path.basename(originalName, path.extname(originalName));
     const slug = slugify(baseName);
     const shortId = randomId().slice(0, 8);
-    const outputFilename = `${slug}-${shortId}.pdf`;
+    const outputFilename = `${slug}-${shortId}.${ext}`;
     const outputPath = path.join(entry.store.dir, 'assets', outputFilename);
 
     await fs.writeFile(outputPath, file.buffer);
@@ -159,7 +180,7 @@ router.post(
       dmOnly: false,
       width: null,
       height: null,
-      mime: 'application/pdf',
+      mime,
       ownerUsername: req.user!.username,
     };
 
