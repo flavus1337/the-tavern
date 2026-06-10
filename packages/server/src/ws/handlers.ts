@@ -119,6 +119,11 @@ async function handleRoll(
   session: WsSession,
   msg: { type: 'roll'; requestId: string; expression: string; label?: string; visibility: 'public' | 'dm' },
 ): Promise<void> {
+  if (typeof msg.expression !== 'string' || msg.expression.trim() === '') {
+    sendError(session, 'BAD_EXPRESSION', 'expression must be a non-empty string');
+    return;
+  }
+
   const result = roll(msg.expression, {
     userId: session.userId,
     username: session.username,

@@ -33,6 +33,10 @@ const LOCK_MS = 5 * 60 * 1000;
 
 let store: JsonFileStore<UsersFile>;
 
+// In-flight reservation set: normalized usernames currently being hashed/inserted.
+// Prevents concurrent async paths from both passing the pre-hash uniqueness check.
+const inFlightUsernames = new Set<string>();
+
 export async function initUsersStore(): Promise<void> {
   store = await JsonFileStore.create<UsersFile>(path.join(config.DATA_DIR, 'users.json'), {
     type: 'vtt.users',
@@ -70,22 +74,47 @@ export async function createUser(
   const v = validateUsername(norm);
   if (!v.ok) throw new Error(v.reason);
 
-  const existing = store.get().users.find((u) => u.username.toLowerCase() === norm);
-  if (existing) throw new Error('username_taken');
-
   if (password.length < 8) throw new Error('password_too_short');
 
-  const passwordHash = await hashPassword(password);
-  const user: UserRecord = {
-    id: randomId('usr'),
-    username: norm,
-    passwordHash,
-    isAdmin,
-    createdAt: new Date().toISOString(),
-  };
+  // Fast pre-check before the expensive hash to give a quick rejection for
+  // clearly-taken usernames (not a concurrency guarantee — the real check is
+  // inside mutate below).
+  if (
+    store.get().users.some((u) => u.username.toLowerCase() === norm) ||
+    inFlightUsernames.has(norm)
+  ) {
+    throw new Error('username_taken');
+  }
 
-  store.mutate((s) => ({ ...s, users: [...s.users, user] }));
-  return user;
+  // Reserve the slot so other async paths for the same username fail fast.
+  inFlightUsernames.add(norm);
+  let passwordHash: string;
+  try {
+    passwordHash = await hashPassword(password);
+  } finally {
+    inFlightUsernames.delete(norm);
+  }
+
+  // Re-check uniqueness INSIDE the synchronous mutate callback so the check
+  // and the insert are atomic relative to every other mutate call.
+  let inserted: UserRecord | null = null;
+  store.mutate((s) => {
+    if (s.users.some((u) => u.username.toLowerCase() === norm)) {
+      // Another request sneaked in — do not insert.
+      return s;
+    }
+    inserted = {
+      id: randomId('usr'),
+      username: norm,
+      passwordHash,
+      isAdmin,
+      createdAt: new Date().toISOString(),
+    };
+    return { ...s, users: [...s.users, inserted] };
+  });
+
+  if (!inserted) throw new Error('username_taken');
+  return inserted;
 }
 
 export async function seedAdmin(): Promise<void> {

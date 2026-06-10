@@ -72,7 +72,9 @@ export function requireMember(roleNeeded?: 'dm') {
       const role = getRole(campaignId, user.id);
 
       if (!role) {
-        res.status(403).json({ error: 'Not a member of this campaign', code: 'NOT_MEMBER' });
+        // Return 404 — same shape as unknown campaign — so non-members cannot
+        // distinguish an existing campaign from a non-existent one.
+        res.status(404).json({ error: 'Campaign not found', code: 'NOT_FOUND' });
         return;
       }
 
