@@ -1,0 +1,67 @@
+{
+  "type": "character",
+  "schemaVersion": 1,
+  "id": "char-malgrath-lich",
+  "name": "Malgrath the Ashen",
+  "kind": "npc",
+  "tags": ["undead", "lich", "boss", "ch02", "named-villain", "campaign-antagonist"],
+  "portraitAssetId": "asset-malgrath-portrait",
+  "ownerUsername": null,
+  "statBlock": {
+    "size": "Medium",
+    "creatureType": "Undead",
+    "alignment": "Neutral Evil",
+    "ac": 17,
+    "hp": { "average": 135, "formula": "18d8+54" },
+    "speed": "30 ft., fly 40 ft. (hover)",
+    "abilities": {
+      "str": 11,
+      "dex": 16,
+      "con": 16,
+      "int": 20,
+      "wis": 14,
+      "cha": 16
+    },
+    "skills": {
+      "Arcana": 13,
+      "History": 9,
+      "Insight": 6,
+      "Perception": 6
+    },
+    "senses": "Truesight 120 ft., passive Perception 16",
+    "languages": ["Common", "Elvish", "Abyssal", "Infernal", "Draconic"],
+    "cr": "14",
+    "traits": [
+      {
+        "name": "Diminished Form (Campaign Variant)",
+        "text": "If the party interrupted the shard ritual in Chapter 2 Scene 2-2, Malgrath begins this encounter at 68 HP (half maximum) and cannot use Legendary Resistances. If the ritual completed, he uses full statistics."
+      },
+      {
+        "name": "Legendary Resistance (3/Day)",
+        "text": "If Malgrath fails a saving throw, he can choose to succeed instead."
+      },
+      {
+        "name": "Rejuvenation",
+        "text": "If Malgrath is destroyed while his phylactery-stone remains intact on the dais, he regains a new body in 1d10 days. The phylactery-stone (AC 5, 40 HP, immunity to poison and psychic damage) must be destroyed while Malgrath is at 0 HP to permanently kill him."
+      },
+      {
+        "name": "Spellcasting",
+        "text": "Malgrath is an 18th-level spellcaster. His spellcasting ability is Intelligence (spell save DC 17, +9 to hit with spell attacks). He has the following spells prepared — Cantrips: chill touch, mage hand, prestidigitation; 1st (4 slots): magic missile, shield; 2nd (3 slots): darkness, misty step; 3rd (3 slots): counterspell, dispel magic, fly; 4th (3 slots): blight, dimension door; 5th (3 slots): cone of cold, scrying; 6th (1 slot): disintegrate; 7th (1 slot): finger of death; 8th (1 slot): power word stun; 9th (1 slot): power word kill."
+      },
+      {
+        "name": "Turn Resistance",
+        "text": "Malgrath has advantage on saving throws against any effect that turns undead."
+      }
+    ],
+    "actions": [
+      {
+        "name": "Paralyzing Touch",
+        "text": "Melee Spell Attack: +9 to hit, reach 5 ft., one target. Hit: 10 (3d6) cold damage. The target must succeed on a DC 17 Constitution saving throw or be paralyzed for 1 minute. The target can repeat the saving throw at the end of each of its turns, ending the effect on a success."
+      },
+      {
+        "name": "Ashen Bolt (Cantrip — Chill Touch)",
+        "text": "Ranged Spell Attack: +9 to hit, range 120 ft., one creature. Hit: 18 (4d8) necrotic damage. Until the start of Malgrath's next turn, the target can't regain hit points."
+      }
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "type": "character",
+  "schemaVersion": 1,
+  "id": "char-skeleton-sentinel",
+  "name": "Skeleton Sentinel",
+  "kind": "npc",
+  "tags": ["undead", "minion", "entrance-hall", "ch01"],
+  "portraitAssetId": null,
+  "ownerUsername": null,
+  "statBlock": {
+    "size": "Medium",
+    "creatureType": "Undead",
+    "alignment": "Lawful Evil",
+    "ac": 13,
+    "hp": { "average": 13, "formula": "2d8+4" },
+    "speed": "30 ft.",
+    "abilities": {
+      "str": 10,
+      "dex": 14,
+      "con": 15,
+      "int": 6,
+      "wis": 8,
+      "cha": 5
+    },
+    "skills": {
+      "Perception": 1
+    },
+    "senses": "Darkvision 60 ft., passive Perception 11",
+    "languages": ["understands the language it knew in life but cannot speak"],
+    "cr": "1/4",
+    "traits": [
+      {
+        "name": "Sentinel Binding",
+        "text": "This skeleton is magically bound to its assigned post. It will not pursue beyond the boundary of the room or corridor it was bound to. The binding breaks if the creature that cast it (or their designated lieutenant) is killed within 30 feet."
+      },
+      {
+        "name": "Trigger Rune Response",
+        "text": "When the sentinel trigger rune is activated, this creature acts at initiative 20 in the first round regardless of its rolled initiative."
+      }
+    ],
+    "actions": [
+      {
+        "name": "Shortspear",
+        "text": "Melee or Ranged Weapon Attack: +4 to hit, reach 5 ft. or range 20/60 ft., one target. Hit: 4 (1d6+2) piercing damage."
+      },
+      {
+        "name": "Bone Clatter (Recharge 5–6)",
+        "text": "The skeleton rattles loudly. Each living creature within 10 feet that can hear it must succeed on a DC 11 Wisdom saving throw or be frightened until the end of its next turn."
+      }
+    ]
+  }
+}

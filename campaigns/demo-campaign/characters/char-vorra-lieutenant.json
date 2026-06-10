@@ -1,0 +1,58 @@
+{
+  "type": "character",
+  "schemaVersion": 1,
+  "id": "char-vorra-lieutenant",
+  "name": "Vorra, Cultist Lieutenant",
+  "kind": "npc",
+  "tags": ["humanoid", "half-orc", "cult-of-the-ashen-throne", "ch01", "ch02", "named-villain"],
+  "portraitAssetId": null,
+  "ownerUsername": null,
+  "statBlock": {
+    "size": "Medium",
+    "creatureType": "Humanoid (half-orc)",
+    "alignment": "Neutral Evil",
+    "ac": 14,
+    "hp": { "average": 52, "formula": "8d8+16" },
+    "speed": "30 ft.",
+    "abilities": {
+      "str": 16,
+      "dex": 12,
+      "con": 14,
+      "int": 11,
+      "wis": 13,
+      "cha": 10
+    },
+    "skills": {
+      "Athletics": 5,
+      "Intimidation": 4,
+      "Perception": 3
+    },
+    "senses": "Darkvision 60 ft., passive Perception 13",
+    "languages": ["Common", "Orc"],
+    "cr": "2",
+    "traits": [
+      {
+        "name": "Relentless Endurance (1/day)",
+        "text": "When Vorra is reduced to 0 hit points but not killed outright, she drops to 1 hit point instead."
+      },
+      {
+        "name": "Tactical Withdrawal",
+        "text": "When reduced below 20 HP, Vorra uses the Dash action as a bonus action and attempts to flee toward the Ritual Chamber, shouting a warning to Serevath."
+      }
+    ],
+    "actions": [
+      {
+        "name": "Multiattack",
+        "text": "Vorra makes two Orcish Blade attacks."
+      },
+      {
+        "name": "Orcish Blade",
+        "text": "Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 7 (1d8+3) slashing damage. On a hit, if the target is concentrating on a spell, it has disadvantage on the Constitution saving throw to maintain concentration."
+      },
+      {
+        "name": "Throw Flask (Recharge 5–6)",
+        "text": "Ranged Weapon Attack: +3 to hit, range 20/40 ft., one target. Hit: 5 (2d4) fire damage and the target must succeed on a DC 12 Dexterity saving throw or be set alight, taking 2 (1d4) fire damage at the start of each of its turns until it uses an action to extinguish the flames."
+      }
+    ]
+  }
+}

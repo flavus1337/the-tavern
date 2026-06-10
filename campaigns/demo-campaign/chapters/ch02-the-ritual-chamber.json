@@ -1,0 +1,31 @@
+{
+  "type": "chapter",
+  "schemaVersion": 1,
+  "id": "ch02-the-ritual-chamber",
+  "title": "The Ritual Chamber",
+  "order": 2,
+  "summary": "The party pushes deeper, confronting Serevath the cult priest mid-ritual in the Ritual Chamber. The shard sings with necrotic energy. If the ritual completes, Malgrath partially reconstitutes — setting up the boss encounter in the final Boss Chamber.",
+  "scenes": [
+    {
+      "id": "scene-02-01",
+      "title": "The Crypt Passage",
+      "body": "Ancient stone sarcophagi line the walls of the Crypt. Most have been broken open and are empty. A DC 12 Investigation check finds faint scratch marks on the inside of one lid — someone tried to claw their way out. At the far end a heavy door bears the seal of Malgrath (the ring from Scene 1-2 opens it without a check; otherwise DC 18 Thieves' Tools).",
+      "assetIds": ["asset-dungeon-level1"],
+      "characterIds": []
+    },
+    {
+      "id": "scene-02-02",
+      "title": "The Ritual Chamber",
+      "body": "A floating violet shard orbits a black stone altar at the room's centre. Serevath, a gaunt human priest in full ceremonial regalia, stands within a chalk circle chanting. Four cultist acolytes maintain the outer ward. The shard pulses faster as the ritual nears completion — the party has approximately 3 rounds before the partial reconstitution occurs.",
+      "assetIds": ["asset-dungeon-level1"],
+      "characterIds": ["char-malgrath-lich", "char-vorra-lieutenant"]
+    },
+    {
+      "id": "scene-02-03",
+      "title": "The Boss Chamber",
+      "body": "Beyond a shattered archway, Malgrath's amber-eyed phylactery-stone rests on a dais of black iron. If the party stopped the ritual in Scene 2-2, the chamber is empty save for two Wight guardians. If the ritual completed, Malgrath stands here — diminished but aware, furious, and ready to fight for his freedom.",
+      "assetIds": ["asset-dungeon-level1"],
+      "characterIds": ["char-malgrath-lich"]
+    }
+  ]
+}

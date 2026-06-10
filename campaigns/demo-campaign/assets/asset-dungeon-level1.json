@@ -1,0 +1,14 @@
+{
+  "type": "asset",
+  "schemaVersion": 1,
+  "id": "asset-dungeon-level1",
+  "file": "dungeon-level1.png",
+  "title": "Vaelthar's Hold — Dungeon Level 1",
+  "assetKind": "map",
+  "tags": ["map", "dungeon", "level-1", "grid", "vaelthars-hold"],
+  "dmOnly": true,
+  "width": 1200,
+  "height": 900,
+  "mime": "image/png",
+  "ownerUsername": null
+}

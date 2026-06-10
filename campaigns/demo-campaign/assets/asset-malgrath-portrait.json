@@ -1,0 +1,14 @@
+{
+  "type": "asset",
+  "schemaVersion": 1,
+  "id": "asset-malgrath-portrait",
+  "file": "malgrath-portrait.png",
+  "title": "Malgrath the Ashen — Character Portrait",
+  "assetKind": "art",
+  "tags": ["art", "portrait", "villain", "lich", "malgrath"],
+  "dmOnly": false,
+  "width": 900,
+  "height": 1100,
+  "mime": "image/png",
+  "ownerUsername": null
+}

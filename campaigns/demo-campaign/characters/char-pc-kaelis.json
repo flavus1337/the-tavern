@@ -1,0 +1,58 @@
+{
+  "type": "character",
+  "schemaVersion": 1,
+  "id": "char-pc-kaelis",
+  "name": "Kaelis Dawnmark",
+  "kind": "pc",
+  "tags": ["player-character", "rogue", "half-elf"],
+  "portraitAssetId": null,
+  "ownerUsername": null,
+  "sheet": {
+    "class": "Rogue",
+    "level": 5,
+    "race": "Half-Elf",
+    "abilities": {
+      "str": 10,
+      "dex": 18,
+      "con": 13,
+      "int": 14,
+      "wis": 12,
+      "cha": 15
+    },
+    "maxHp": 38,
+    "ac": 15,
+    "speed": "30 ft.",
+    "proficiencies": [
+      "Light Armor",
+      "Simple Weapons",
+      "Hand Crossbows",
+      "Longswords",
+      "Rapiers",
+      "Shortswords",
+      "Thieves' Tools",
+      "Acrobatics",
+      "Athletics",
+      "Deception",
+      "Insight",
+      "Investigation",
+      "Perception",
+      "Sleight of Hand",
+      "Stealth"
+    ],
+    "inventory": [
+      "Rapier",
+      "Shortbow with 20 arrows",
+      "Leather armor",
+      "Thieves' tools",
+      "Bag of holding",
+      "Potion of healing x2",
+      "50 ft. silk rope",
+      "Crowbar",
+      "Signet ring (family crest, unknown significance)",
+      "85 gp"
+    ],
+    "spells": [],
+    "background": "Criminal (Spy variant). Kaelis worked as an information broker for a thieves' guild until the guild was wiped out by agents of the Ashen Throne. She now pursues the cult for revenge as much as justice, though she keeps that motivation close to her chest.",
+    "sheetAssetId": null
+  }
+}

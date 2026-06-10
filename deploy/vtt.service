@@ -1,0 +1,53 @@
+# vtt.service — systemd unit for the VTT Node server.
+#
+# SETUP INSTRUCTIONS:
+#   1. Copy to /etc/systemd/system/vtt.service
+#   2. Replace <youruser> with the Linux username that should own the process (do NOT use root).
+#   3. Set PUBLIC_ORIGIN to your public HTTPS URL (e.g. https://vtt.example.com).
+#   4. Optionally set ADMIN_PASSWORD to a fixed password; if left commented out, a random
+#      password is generated on first run and printed ONCE to the journal — read it with:
+#        journalctl -u vtt -n 50
+#   5. Run: sudo systemctl daemon-reload && sudo systemctl enable vtt && sudo systemctl start vtt
+#
+# UPDATING:
+#   After git pull + pnpm install + pnpm build:
+#     sudo systemctl restart vtt
+
+[Unit]
+Description=VTT — Browser-Based Virtual Tabletop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<youruser>
+WorkingDirectory=/opt/vtt
+
+ExecStart=/usr/bin/node /opt/vtt/packages/server/dist/index.js
+
+# --- Core configuration ---
+Environment=PORT=8080
+Environment=DATA_DIR=/opt/vtt/data
+Environment=CAMPAIGNS_DIR=/opt/vtt/campaigns
+
+# --- Production HTTPS settings ---
+# Uncomment and set PUBLIC_ORIGIN once Cloudflare Tunnel is configured.
+Environment=COOKIE_SECURE=true
+Environment=PUBLIC_ORIGIN=https://vtt.example.com
+
+# --- Admin credentials ---
+# ADMIN_USER defaults to "admin" if not set.
+# ADMIN_PASSWORD: if unset, a random password is generated on first run and printed to the journal.
+# Once users.json exists, this variable has no effect (password is stored hashed in users.json).
+#Environment=ADMIN_USER=admin
+#Environment=ADMIN_PASSWORD=change-me-before-first-start
+
+# --- Process management ---
+Restart=always
+RestartSec=3
+
+# Limit file descriptors (WebSocket connections).
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

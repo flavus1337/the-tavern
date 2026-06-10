@@ -1,0 +1,11 @@
+{
+  "type": "note",
+  "schemaVersion": 1,
+  "id": "note-dm-prep-session1",
+  "title": "DM Prep — Session 1 Notes",
+  "body": "## Pre-Session Checklist\n\n- Share the dungeon map asset before players enter Scene 1-2 (use the Share Image button on `asset-dungeon-level1`).\n- Confirm Kaelis's ownerUsername is set to the player's registered username before the session — edit char-pc-kaelis.json.\n- Print or share the invite link with any new players before session start.\n\n## Key DM Secrets (do not share as player note)\n\n- The signet ring in Kaelis's inventory is actually the Eighth Shard of Malgrath's power, embedded in silver and disguised by the lich's own enchantment three centuries ago. The player does not know this yet.\n- Vorra is not a true believer — she joined the Ashen Throne cult to protect her younger sibling, who is being held hostage in the Escape Tunnel. If the party finds the sibling first, Vorra may switch sides.\n- The phylactery-stone in the Boss Chamber is a decoy. The real one is the Eighth Shard (see above). This is the twist for a hypothetical Chapter 3.\n\n## Atmosphere & Music Cues\n\n- Entrance Hall: low bass drone, no melody, reverb heavy.\n- Guard Room: tense strings, increase BPM when Vorra is alerted.\n- Ritual Chamber: dissonant choir, gradually rising pitch as ritual progresses.\n- Boss Chamber: silence, then a single cello note when Malgrath speaks.\n\n## Contingencies\n\n- If party skips the Entrance Hall via the portcullis window (DC 16 Athletics to climb): allow it; skip to Scene 1-3 with no combat, but the warning shout from Scene 1-3 still happens next session.\n- If party kills Vorra immediately without roleplay: they miss the coded orders hook; compensate by having a dead cultist in Scene 2-1 carrying duplicate orders.",
+  "visibility": "dm",
+  "ownerUsername": null,
+  "createdAt": "2025-09-01T10:00:00.000Z",
+  "updatedAt": "2025-09-01T10:00:00.000Z"
+}

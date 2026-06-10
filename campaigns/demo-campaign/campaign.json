@@ -1,0 +1,8 @@
+{
+  "type": "campaign",
+  "schemaVersion": 1,
+  "id": "demo-campaign",
+  "name": "Shards of the Ashen Throne",
+  "description": "A broken realm of grey ash and forgotten gods. The ancient lich-king Malgrath was shattered into seven shards and sealed beneath Vaelthar's Hold three centuries ago. Now the seals crack, cultists gather, and the party must descend into the dungeon before the final shard is recovered — and an undead empire reborn.",
+  "coverAssetId": "asset-malgrath-portrait"
+}

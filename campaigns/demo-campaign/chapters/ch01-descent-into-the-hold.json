@@ -1,0 +1,31 @@
+{
+  "type": "chapter",
+  "schemaVersion": 1,
+  "id": "ch01-descent-into-the-hold",
+  "title": "Descent into the Hold",
+  "order": 1,
+  "summary": "The party arrives at Vaelthar's Hold, pushes through the entrance hall past skeleton sentinels, and discovers the guard room occupied by a cult lieutenant coordinating the excavation.",
+  "scenes": [
+    {
+      "id": "scene-01-01",
+      "title": "The Ash Gate",
+      "body": "A rusted iron portcullis hangs half-raised in the yawning mouth of Vaelthar's Hold. The air reeks of char and old stone. Footprints in pale ash lead inward.",
+      "assetIds": ["asset-dungeon-level1"],
+      "characterIds": []
+    },
+    {
+      "id": "scene-01-02",
+      "title": "Entrance Hall",
+      "body": "Two skeleton sentinels stand motionless in alcoves. They animate and attack the moment a living creature crosses the threshold rune etched in the floor. The rune glows faint violet when active.",
+      "assetIds": ["asset-dungeon-level1"],
+      "characterIds": ["char-skeleton-sentinel", "char-skeleton-sentinel"]
+    },
+    {
+      "id": "scene-01-03",
+      "title": "The Guard Room",
+      "body": "A scarred half-orc in ashen robes — Cultist Lieutenant Vorra — directs two skeleton soldiers while studying a crumbling wall map. She does not expect resistance this deep in the hold.",
+      "assetIds": ["asset-dungeon-level1"],
+      "characterIds": ["char-vorra-lieutenant", "char-skeleton-sentinel"]
+    }
+  ]
+}
