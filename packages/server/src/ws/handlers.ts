@@ -183,7 +183,7 @@ async function handleShareImage(
 
   const assetRef = {
     assetId: manifest.id,
-    url: `${config.PUBLIC_ORIGIN}/api/campaigns/${campaignId}/files/assets/${manifest.file}`,
+    url: `/api/campaigns/${campaignId}/files/assets/${manifest.file}`,
     title: manifest.title,
     width: manifest.width,
     height: manifest.height,
