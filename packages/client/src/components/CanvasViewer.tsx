@@ -215,11 +215,12 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
               cursor: 'pointer',
               background: 'var(--garnet)',
               color: '#fff',
-              border: 'none',
+              border: `${Math.max(1.5, 2 / scale)}px solid rgba(255,255,255,0.9)`,
               borderRadius: '50%',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              boxShadow: '0 2px 10px rgba(0,0,0,0.8)',
             }}
             aria-label={`Remove ${item.title} from board`}
             title="Remove from board"
@@ -237,7 +238,9 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
               height: handlePx,
               cursor: 'nwse-resize',
               background: 'var(--ember)',
-              borderRadius: 3,
+              border: `${Math.max(1.5, 2 / scale)}px solid rgba(255,255,255,0.9)`,
+              borderRadius: Math.max(3, 5 / scale),
+              boxShadow: '0 2px 10px rgba(0,0,0,0.8)',
             }}
             aria-label="Resize"
             title="Resize"
@@ -330,6 +333,9 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 
   function handlePointerDown(e: PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;
+    // Presses on overlay buttons (empty-state CTA, zoom controls) must stay
+    // clicks — capturing here would retarget the click to the canvas.
+    if ((e.target as HTMLElement).closest('button, a')) return;
     draggingCanvas.current = true;
     lastPointer.current = { x: e.clientX, y: e.clientY };
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -483,7 +489,7 @@ function EmptyCanvas({ isDm }: { isDm: boolean }) {
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--ember-h)'; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--ember)'; }}
         >
-          Pin your first map
+          Pin your first asset
         </button>
       )}
     </div>
