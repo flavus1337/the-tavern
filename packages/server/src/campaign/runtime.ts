@@ -5,6 +5,8 @@ import type { RollLogEntry } from '@vtt/shared';
 
 export interface RuntimeState {
   currentImageAssetId: string | null;
+  /** documents explicitly shared with the table — visible/fetchable by all members */
+  sharedDocumentIds: string[];
 }
 
 export interface CampaignRuntime {
@@ -20,12 +22,15 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
   await fs.mkdir(runtimeDir, { recursive: true });
 
   // Load state.json.
-  let state: RuntimeState = { currentImageAssetId: null };
+  let state: RuntimeState = { currentImageAssetId: null, sharedDocumentIds: [] };
   const statePath = path.join(runtimeDir, 'state.json');
   try {
     const raw = await fs.readFile(statePath, 'utf8');
-    const parsed = JSON.parse(raw) as RuntimeState;
-    state = { currentImageAssetId: parsed.currentImageAssetId ?? null };
+    const parsed = JSON.parse(raw) as Partial<RuntimeState>;
+    state = {
+      currentImageAssetId: parsed.currentImageAssetId ?? null,
+      sharedDocumentIds: Array.isArray(parsed.sharedDocumentIds) ? parsed.sharedDocumentIds : [],
+    };
   } catch {
     // Missing is fine.
   }

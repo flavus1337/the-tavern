@@ -3,6 +3,7 @@ import type { WsSession } from './hub.js';
 import type { CampaignEntry } from '../campaign/registry.js';
 import { config } from '../config.js';
 import { getPresenceEntries } from './hub.js';
+import { visibleDocuments } from './documents.js';
 
 function makeAssetRef(
   campaignId: string,
@@ -53,7 +54,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     : null;
 
   // Documents: all members.
-  const documents = [...store.assets.values()].filter((a) => a.assetKind === 'document');
+  const documents = visibleDocuments(entry, session.username);
 
   // Notes: DM sees all dm-visibility + own; players see own only.
   const myNotes: Note[] = [];

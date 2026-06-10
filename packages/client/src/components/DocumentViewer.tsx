@@ -17,6 +17,9 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
   const campaignId = useStore((s) => s.activeCampaignId);
   const setViewingDocument = useStore((s) => s.setViewingDocument);
   const connection = useStore((s) => s.connection);
+  const self = useStore((s) => s.self);
+
+  const canShare = self?.role === 'dm' || doc.ownerUsername === self?.username;
 
   const url = `/api/campaigns/${campaignId}/files/assets/${doc.file}`;
 
@@ -62,15 +65,17 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
       <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-zinc-800 bg-zinc-950 shrink-0">
         <p className="text-sm font-medium text-zinc-200 truncate">{doc.title}</p>
         <div className="flex items-center gap-1 shrink-0">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={shareWithTable}
-            disabled={connection !== 'open'}
-            title="Open this document for everyone at the table"
-          >
-            Share with table
-          </Button>
+          {canShare && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={shareWithTable}
+              disabled={connection !== 'open'}
+              title="Open this document for everyone at the table"
+            >
+              Share with table
+            </Button>
+          )}
           <a
             href={url}
             target="_blank"

@@ -828,20 +828,20 @@ async function main(): Promise<void> {
     assert(docBody?.asset?.assetKind === 'document', 'F3: assetKind is document');
     assert(docBody?.asset?.ownerUsername === 'player1', 'F4: ownerUsername is player1');
 
-    // F5: admin receives documentsUpdated
+    // F5: documents are PRIVATE to the uploader — admin's documentsUpdated must NOT contain it
     try {
       const docsUpdMsg = await waitForMessage(adminMessages, (m) => m['type'] === 'documentsUpdated', 3000);
-      const docs = docsUpdMsg['documents'] as unknown[];
-      assert(Array.isArray(docs) && docs.length > 0, 'F5: admin receives documentsUpdated with documents');
+      const docs = docsUpdMsg['documents'] as Array<{ id?: string }>;
+      assert(Array.isArray(docs) && !docs.some((d) => d.id === docId), 'F5: admin documentsUpdated does NOT contain player1 private doc');
     } catch {
       fail('F5: admin receives documentsUpdated', 'timeout');
     }
 
-    // F6: player1 receives documentsUpdated
+    // F6: player1 receives documentsUpdated containing their own doc
     try {
       const p1DocsMsg = await waitForMessage(p1Messages, (m) => m['type'] === 'documentsUpdated', 3000);
-      const docs = p1DocsMsg['documents'] as unknown[];
-      assert(Array.isArray(docs) && docs.length > 0, 'F6: player1 receives documentsUpdated');
+      const docs = p1DocsMsg['documents'] as Array<{ id?: string }>;
+      assert(Array.isArray(docs) && docs.some((d) => d.id === docId), 'F6: player1 documentsUpdated contains own doc');
     } catch {
       fail('F6: player1 receives documentsUpdated', 'timeout');
     }
@@ -851,6 +851,34 @@ async function main(): Promise<void> {
     assert(typeof docFile === 'string', 'F7-pre: document file is a string');
     const p1DocGet = await player1(`/api/campaigns/${campaignId}/files/assets/${docFile}`);
     assert(p1DocGet.status === 200, 'F7: player1 GET own pdf → 200');
+
+    // F7a: admin (even DM) cannot fetch the private doc → 403
+    const adminPrivGet = await admin(`/api/campaigns/${campaignId}/files/assets/${docFile}`);
+    assert(adminPrivGet.status === 403, 'F7a: dm GET private player doc → 403');
+
+    // F7b: player1 shares the doc with the table
+    send(p1Ws, { type: 'shareDocument', assetId: docId as string });
+    try {
+      const sharedMsg = await waitForMessage(adminMessages, (m) => m['type'] === 'documentShared', 3000);
+      const sharedAsset = sharedMsg['asset'] as { id?: string };
+      assert(sharedAsset?.id === docId, 'F7b: admin receives documentShared for the doc');
+    } catch {
+      fail('F7b: admin receives documentShared', 'timeout');
+    }
+
+    // F7c: after sharing, admin's documentsUpdated contains it and the file is fetchable
+    try {
+      const docsAfterShare = await waitForMessage(
+        adminMessages,
+        (m) => m['type'] === 'documentsUpdated' && (m['documents'] as Array<{ id?: string }>).some((d) => d.id === docId),
+        3000,
+      );
+      assert(!!docsAfterShare, 'F7c: admin documentsUpdated contains doc after sharing');
+    } catch {
+      fail('F7c: admin documentsUpdated contains doc after sharing', 'timeout');
+    }
+    const adminSharedGet = await admin(`/api/campaigns/${campaignId}/files/assets/${docFile}`);
+    assert(adminSharedGet.status === 200, 'F7d: dm GET shared doc → 200');
 
     // F8: player2 (non-owner) deletes player1's pdf → 403
     const p2DeleteDoc = await player2(`/api/campaigns/${campaignId}/assets/${docId}`, {

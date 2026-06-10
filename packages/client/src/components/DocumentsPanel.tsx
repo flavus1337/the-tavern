@@ -4,6 +4,7 @@ import { api, apiUpload, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
+import { Badge } from './ui/badge';
 import { useState } from 'react';
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
@@ -92,7 +93,7 @@ export function DocumentsPanel() {
         <div className="p-3 space-y-2">
           {documents.length === 0 ? (
             <p className="text-xs text-zinc-500 text-center py-8">
-              No documents yet. Upload a file (character sheet, handout, …) to share with the party.
+              No documents yet. Upload a file (character sheet, handout, …) — only you see it until you share it with the table.
             </p>
           ) : (
             documents.map((doc) => (
@@ -101,7 +102,8 @@ export function DocumentsPanel() {
                 doc={doc}
                 campaignId={campaignId ?? ''}
                 canDelete={isDm || doc.ownerUsername === self?.username}
-                canShare={connection === 'open'}
+                canShare={connection === 'open' && (isDm || doc.ownerUsername === self?.username)}
+                sharedByOther={doc.ownerUsername !== self?.username}
                 onDelete={() => { void handleDelete(doc.id); }}
                 onView={() => setViewingDocument(doc)}
                 onShare={() => shareDocument(doc.id)}
@@ -119,12 +121,13 @@ interface DocumentItemProps {
   campaignId: string;
   canDelete: boolean;
   canShare: boolean;
+  sharedByOther: boolean;
   onDelete: () => void;
   onView: () => void;
   onShare: () => void;
 }
 
-function DocumentItem({ doc, campaignId, canDelete, canShare, onDelete, onView, onShare }: DocumentItemProps) {
+function DocumentItem({ doc, campaignId, canDelete, canShare, sharedByOther, onDelete, onView, onShare }: DocumentItemProps) {
   return (
     <div className="flex items-center gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
       <button
@@ -140,7 +143,10 @@ function DocumentItem({ doc, campaignId, canDelete, canShare, onDelete, onView, 
           </svg>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm text-zinc-200 truncate hover:text-white transition-colors">{doc.title}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm text-zinc-200 truncate hover:text-white transition-colors">{doc.title}</p>
+            {sharedByOther && <Badge>shared</Badge>}
+          </div>
           {doc.ownerUsername && (
             <p className="text-xs text-zinc-500">by {doc.ownerUsername}</p>
           )}

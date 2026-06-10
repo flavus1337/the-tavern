@@ -3,6 +3,7 @@ import type { ClientMessage, ServerMessage, WsErrorCode } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import { send, broadcast, broadcastPresence } from './hub.js';
 import { buildSnapshot } from './snapshot.js';
+import { broadcastDocuments } from './documents.js';
 import { getCampaign } from '../campaign/registry.js';
 import { getRole } from '../auth/memberships.js';
 import { roll } from '../dice/roller.js';
@@ -200,7 +201,6 @@ async function handleShareDocument(
   session: WsSession,
   msg: { type: 'shareDocument'; assetId: string },
 ): Promise<void> {
-  // Any member may share a document with the table.
   const campaignId = session.campaignId!;
   const entry = getCampaign(campaignId);
   if (!entry) return;
@@ -211,7 +211,22 @@ async function handleShareDocument(
     return;
   }
 
-  // Transient push — not persisted; everyone's viewer opens it.
+  // Documents are private to their uploader; only the owner (or DM) may share.
+  if (manifest.ownerUsername !== session.username && session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', 'Only the uploader can share this document');
+    return;
+  }
+
+  // Sharing grants the whole table access until the document is deleted.
+  if (!entry.runtime.state.sharedDocumentIds.includes(manifest.id)) {
+    entry.runtime.state = {
+      ...entry.runtime.state,
+      sharedDocumentIds: [...entry.runtime.state.sharedDocumentIds, manifest.id],
+    };
+    await persistState(entry.runtime);
+    broadcastDocuments(campaignId, entry);
+  }
+
   broadcast(campaignId, { type: 'documentShared', asset: manifest, sharedBy: session.username });
 }
 

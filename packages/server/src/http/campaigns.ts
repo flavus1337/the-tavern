@@ -8,6 +8,7 @@ import { createCampaign } from '../campaign/create.js';
 import { addMembership, listForUser, getRole } from '../auth/memberships.js';
 import { createInvite, previewInvite, redeemInvite, listInvitesForCampaign, revokeInvite } from '../auth/invites.js';
 import { getCampaign, getAllCampaigns } from '../campaign/registry.js';
+import { broadcastDocuments } from '../ws/documents.js';
 import { persistState } from '../campaign/runtime.js';
 import { deleteAssetFiles } from '../campaign/writer.js';
 import { config } from '../config.js';
@@ -143,9 +144,13 @@ router.get('/:id/files/assets/:filename', requireMember(), async (req: Request, 
   const user = req.user!;
   const role = getRole(campaignId, user.id);
 
-  // Documents: any member can access.
+  // Documents: private to the uploader unless shared with the table.
   if (manifest.assetKind === 'document') {
-    // OK for all members.
+    const isShared = entry.runtime.state.sharedDocumentIds.includes(manifest.id);
+    if (!isShared && manifest.ownerUsername !== user.username) {
+      res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+      return;
+    }
   } else {
     // Images with dmOnly: only DM can access, UNLESS it's the current shared image.
     if (manifest.dmOnly) {
@@ -225,8 +230,15 @@ router.delete('/:id/assets/:assetId', requireMember(), async (req: Request, res:
 
   // Broadcast appropriate update.
   if (manifest.assetKind === 'document') {
-    const documents = [...entry.store.assets.values()].filter((a) => a.assetKind === 'document');
-    broadcast(campaignId, { type: 'documentsUpdated', documents });
+    // Revoke table access if it was shared, then push per-user lists.
+    if (entry.runtime.state.sharedDocumentIds.includes(assetId)) {
+      entry.runtime.state = {
+        ...entry.runtime.state,
+        sharedDocumentIds: entry.runtime.state.sharedDocumentIds.filter((id) => id !== assetId),
+      };
+      await persistState(entry.runtime);
+    }
+    broadcastDocuments(campaignId, entry);
   } else {
     const assets = [...entry.store.assets.values()].filter((a) => a.assetKind !== 'document');
     broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');

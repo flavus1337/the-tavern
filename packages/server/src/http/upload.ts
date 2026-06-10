@@ -9,6 +9,7 @@ import { requireMember } from '../auth/middleware.js';
 import { getCampaign } from '../campaign/registry.js';
 import { saveAssetManifest } from '../campaign/writer.js';
 import { broadcast } from '../ws/hub.js';
+import { broadcastDocuments } from '../ws/documents.js';
 import { randomId, slugify, SCHEMA_VERSIONS } from '@vtt/shared';
 import type { AssetManifest } from '@vtt/shared';
 import type { UploadAssetResponse } from '@vtt/shared';
@@ -186,9 +187,8 @@ router.post(
 
     await saveAssetManifest(entry.store, manifest);
 
-    // Broadcast documentsUpdated to ALL members.
-    const documents = [...entry.store.assets.values()].filter((a) => a.assetKind === 'document');
-    broadcast(campaignId, { type: 'documentsUpdated', documents });
+    // Documents are private to the uploader — push per-user filtered lists.
+    broadcastDocuments(campaignId, entry);
 
     const body: UploadAssetResponse = { asset: manifest };
     res.status(201).json(body);
