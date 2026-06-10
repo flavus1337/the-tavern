@@ -13,12 +13,14 @@ import { persistState } from '../campaign/runtime.js';
 import { deleteAssetFiles } from '../campaign/writer.js';
 import { config } from '../config.js';
 import { broadcast } from '../ws/hub.js';
+import { makeBoardItemView } from '../ws/snapshot.js';
 import type {
   CampaignListItem,
   CreateCampaignResponse,
   CreateInviteResponse,
   InviteSummary,
   RedeemInviteResponse,
+  BoardItemView,
 } from '@vtt/shared';
 
 const router = Router();
@@ -152,10 +154,10 @@ router.get('/:id/files/assets/:filename', requireMember(), async (req: Request, 
       return;
     }
   } else {
-    // Images with dmOnly: only DM can access, UNLESS it's the current shared image.
+    // Images with dmOnly: only DM can access, UNLESS a board item references it.
     if (manifest.dmOnly) {
-      const isCurrentImage = entry.runtime.state.currentImageAssetId === manifest.id;
-      if (!isCurrentImage && role !== 'dm') {
+      const isOnBoard = entry.runtime.state.board.some((item) => item.assetId === manifest.id);
+      if (!isOnBoard && role !== 'dm') {
         res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
         return;
       }
@@ -221,11 +223,17 @@ router.delete('/:id/assets/:assetId', requireMember(), async (req: Request, res:
 
   await deleteAssetFiles(entry.store, manifest);
 
-  // Clear current image if needed.
-  if (entry.runtime.state.currentImageAssetId === assetId) {
-    entry.runtime.state = { ...entry.runtime.state, currentImageAssetId: null };
+  // Remove board items referencing this asset, persist, and broadcast if any were removed.
+  const boardBefore = entry.runtime.state.board.length;
+  const boardAfter = entry.runtime.state.board.filter((item) => item.assetId !== assetId);
+  if (boardAfter.length !== boardBefore) {
+    entry.runtime.state = { ...entry.runtime.state, board: boardAfter };
     await persistState(entry.runtime);
-    broadcast(campaignId, { type: 'imageShared', asset: null });
+
+    const items: BoardItemView[] = boardAfter.map((item) =>
+      makeBoardItemView(campaignId, item, entry),
+    );
+    broadcast(campaignId, { type: 'boardUpdated', items });
   }
 
   // Broadcast appropriate update.

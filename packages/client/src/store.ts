@@ -3,7 +3,7 @@ import type {
   PublicUser,
   CampaignListItem,
   PresenceEntry,
-  AssetRef,
+  BoardItemView,
   RollLogEntry,
   AssetManifest,
   Note,
@@ -47,6 +47,15 @@ interface LobbySlice {
 }
 
 // ---------------------------------------------------------------------------
+// Board view transform (kept in store so AssetPicker can read viewport center)
+// ---------------------------------------------------------------------------
+export interface BoardView {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+// ---------------------------------------------------------------------------
 // Table slice
 // ---------------------------------------------------------------------------
 type ConnectionState = 'connecting' | 'open' | 'reconnecting' | 'closed';
@@ -62,7 +71,10 @@ interface TableSlice {
   self: SelfInfo | null;
   campaignName: string;
   presence: PresenceEntry[];
-  currentImage: AssetRef | null;
+  board: BoardItemView[];
+  uploadsLocked: boolean;
+  /** View transform shared across the whole board (pan + zoom). */
+  boardView: BoardView;
   rollLog: RollLogEntry[];
   assets: AssetManifest[] | null;
   documents: AssetManifest[];
@@ -79,7 +91,9 @@ interface TableSlice {
   setSelf: (self: SelfInfo) => void;
   applySnapshot: (snap: ServerSnapshotPayload) => void;
   setPresence: (entries: PresenceEntry[]) => void;
-  setCurrentImage: (image: AssetRef | null) => void;
+  setBoard: (items: BoardItemView[]) => void;
+  setUploadsLocked: (locked: boolean) => void;
+  setBoardView: (view: BoardView) => void;
   addRollEntry: (entry: RollLogEntry) => void;
   dismissRollToast: (id: string) => void;
   setAssets: (assets: AssetManifest[]) => void;
@@ -102,7 +116,9 @@ const tableDefaults = {
   self: null,
   campaignName: '',
   presence: [],
-  currentImage: null,
+  board: [] as BoardItemView[],
+  uploadsLocked: false,
+  boardView: { x: 0, y: 0, scale: 1 } as BoardView,
   rollLog: [],
   assets: null,
   documents: [],
@@ -160,7 +176,8 @@ export const useStore = create<StoreState>()((set) => ({
   applySnapshot: (snap) =>
     set({
       campaignName: snap.campaign.name,
-      currentImage: snap.currentImage,
+      board: snap.board,
+      uploadsLocked: snap.uploadsLocked,
       presence: snap.presence,
       rollLog: snap.rollLog.slice(0, ROLL_LOG_MAX),
       assets: snap.assets,
@@ -170,7 +187,9 @@ export const useStore = create<StoreState>()((set) => ({
     }),
 
   setPresence: (entries) => set({ presence: entries }),
-  setCurrentImage: (image) => set({ currentImage: image }),
+  setBoard: (items) => set({ board: items }),
+  setUploadsLocked: (locked) => set({ uploadsLocked: locked }),
+  setBoardView: (view) => set({ boardView: view }),
 
   addRollEntry: (entry) =>
     set((s) => ({

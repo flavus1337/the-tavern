@@ -1,5 +1,5 @@
 import { useState, useRef, type ChangeEvent } from 'react';
-import type { AssetManifest, UploadAssetResponse } from '@vtt/shared';
+import type { AssetManifest, UploadAssetResponse, ClientMessage } from '@vtt/shared';
 import { api, apiUpload, ApiRequestError } from '../../lib/api';
 import { useStore } from '../../store';
 import { Button } from '../ui/button';
@@ -9,6 +9,8 @@ import { Badge } from '../ui/badge';
 export function AssetPicker() {
   const campaignId = useStore((s) => s.activeCampaignId);
   const assets = useStore((s) => s.assets) ?? [];
+  const board = useStore((s) => s.board);
+  const boardView = useStore((s) => s.boardView);
   const connection = useStore((s) => s.connection);
 
   const [search, setSearch] = useState('');
@@ -18,22 +20,39 @@ export function AssetPicker() {
   const [dmOnly, setDmOnly] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const send = useStore(() => null); // accessed via connection
-  // Access connection instance via ref in TableLayout — here we use the WS send via store method
-  // We need a way to send WS messages from here. The TableConnection is mounted in TableLayout.
-  // We'll use a ref stored in a module-level variable exposed by the connection module.
-  // For now, use the store dispatch pattern.
+  function sendWs(msg: ClientMessage): void {
+    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
+    conn?.send(msg);
+  }
 
-  function sendWs(type: 'shareImage', assetId: string): void;
-  function sendWs(type: 'clearImage'): void;
-  function sendWs(type: string, assetId?: string): void {
-    // Access through the exposed connection ref
-    const conn = (window as unknown as { __vttConn?: { send: (msg: unknown) => void } }).__vttConn;
-    if (!conn) return;
-    if (type === 'shareImage' && assetId) {
-      conn.send({ type: 'shareImage', assetId });
-    } else if (type === 'clearImage') {
-      conn.send({ type: 'clearImage' });
+  /**
+   * Compute the center of the current viewport in board-space coordinates,
+   * so the new item is placed at the visible center.
+   */
+  function viewportCenter(): { x: number; y: number } {
+    // The board stage transform is: translate(x, y) scale(s), origin 0 0.
+    // The canvas area width/height — we approximate with window size here because
+    // we don't have a ref to the container. Acceptable for placement purposes.
+    const vw = window.innerWidth * 0.65; // rough canvas area (sidebar ~35%)
+    const vh = window.innerHeight - 48; // minus header
+    const { x, y, scale } = boardView;
+    // viewport center in board-space: (vw/2 - x) / scale, (vh/2 - y) / scale
+    return {
+      x: (vw / 2 - x) / scale,
+      y: (vh / 2 - y) / scale,
+    };
+  }
+
+  function pinToBoard(assetId: string) {
+    const center = viewportCenter();
+    sendWs({ type: 'boardAdd', assetId, x: center.x, y: center.y });
+  }
+
+  function clearBoard() {
+    if (board.length === 0) return;
+    if (!window.confirm('Remove all items from the board? This cannot be undone.')) return;
+    for (const item of board) {
+      sendWs({ type: 'boardRemove', itemId: item.id });
     }
   }
 
@@ -55,7 +74,7 @@ export function AssetPicker() {
     setDeleteError(null);
     try {
       await api.del(`/api/campaigns/${campaignId}/assets/${asset.id}`);
-      // The server pushes assetsUpdated (and clears the shared image if needed) via WebSocket
+      // The server pushes assetsUpdated (and boardUpdated if needed) via WebSocket
     } catch (err) {
       if (err instanceof ApiRequestError) setDeleteError(err.message);
       else setDeleteError('Delete failed');
@@ -79,8 +98,6 @@ export function AssetPicker() {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
-
-  const currentImage = useStore((s) => s.currentImage);
 
   return (
     <div className="flex flex-col h-full">
@@ -149,15 +166,15 @@ export function AssetPicker() {
           <p role="alert" className="text-xs text-red-400">{deleteError}</p>
         )}
 
-        {currentImage && (
+        {board.length > 0 && (
           <Button
             size="sm"
             variant="destructive"
             className="w-full"
-            onClick={() => sendWs('clearImage')}
+            onClick={clearBoard}
             disabled={connection !== 'open'}
           >
-            Clear Shared Image
+            Clear board
           </Button>
         )}
       </div>
@@ -175,7 +192,7 @@ export function AssetPicker() {
                 key={asset.id}
                 asset={asset}
                 campaignId={campaignId ?? ''}
-                onShare={() => sendWs('shareImage', asset.id)}
+                onPin={() => pinToBoard(asset.id)}
                 onDelete={() => { void handleDelete(asset); }}
                 disabled={connection !== 'open'}
               />
@@ -190,12 +207,12 @@ export function AssetPicker() {
 interface AssetThumbProps {
   asset: AssetManifest;
   campaignId: string;
-  onShare: () => void;
+  onPin: () => void;
   onDelete: () => void;
   disabled: boolean;
 }
 
-function AssetThumb({ asset, campaignId, onShare, onDelete, disabled }: AssetThumbProps) {
+function AssetThumb({ asset, campaignId, onPin, onDelete, disabled }: AssetThumbProps) {
   return (
     <div className="relative group bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden">
       <img
@@ -219,10 +236,10 @@ function AssetThumb({ asset, campaignId, onShare, onDelete, disabled }: AssetThu
           <Button
             size="sm"
             className="flex-1 text-xs py-1"
-            onClick={onShare}
+            onClick={onPin}
             disabled={disabled}
           >
-            Share
+            Pin to board
           </Button>
           <Button
             size="sm"

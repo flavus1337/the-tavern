@@ -1,24 +1,26 @@
-import type { ServerSnapshotPayload, AssetRef, Note } from '@vtt/shared';
+import type { ServerSnapshotPayload, BoardItemView, Note } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import type { CampaignEntry } from '../campaign/registry.js';
-import { config } from '../config.js';
 import { getPresenceEntries } from './hub.js';
 import { visibleDocuments } from './documents.js';
 
-function makeAssetRef(
+function makeBoardItemView(
   campaignId: string,
-  assetId: string,
+  item: { id: string; assetId: string; x: number; y: number; w: number; z: number },
   entry: CampaignEntry,
-): AssetRef | null {
-  const manifest = [...entry.store.assets.values()].find((a) => a.id === assetId);
-  if (!manifest) return null;
+): BoardItemView {
+  const manifest = entry.store.assets.get(item.assetId);
   return {
-    assetId: manifest.id,
-    url: `/api/campaigns/${campaignId}/files/assets/${manifest.file}`,
-    title: manifest.title,
-    width: manifest.width,
-    height: manifest.height,
-    sharedAt: new Date().toISOString(),
+    id: item.id,
+    assetId: item.assetId,
+    x: item.x,
+    y: item.y,
+    w: item.w,
+    z: item.z,
+    url: `/api/campaigns/${campaignId}/files/assets/${manifest?.file ?? ''}`,
+    title: manifest?.title ?? '',
+    naturalWidth: manifest?.width ?? null,
+    naturalHeight: manifest?.height ?? null,
   };
 }
 
@@ -28,14 +30,10 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
   const role = session.role!;
   const isDm = role === 'dm';
 
-  // Current image.
-  let currentImage: AssetRef | null = null;
-  if (runtime.state.currentImageAssetId) {
-    currentImage = makeAssetRef(campaignId, runtime.state.currentImageAssetId, entry);
-    if (currentImage) {
-      currentImage = { ...currentImage, sharedAt: new Date().toISOString() };
-    }
-  }
+  // Board items.
+  const board: BoardItemView[] = runtime.state.board.map((item) =>
+    makeBoardItemView(campaignId, item, entry),
+  );
 
   // Presence.
   const presence = getPresenceEntries(campaignId);
@@ -77,7 +75,8 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
       name: store.meta.name,
       description: store.meta.description,
     },
-    currentImage,
+    board,
+    uploadsLocked: runtime.state.uploadsLocked,
     presence,
     rollLog,
     assets,
@@ -85,6 +84,8 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     myNotes,
   };
 }
+
+export { makeBoardItemView };
 
 function noteToWire(note: {
   id: string;

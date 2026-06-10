@@ -1,8 +1,8 @@
 import { PROTOCOL_VERSION, randomId, SCHEMA_VERSIONS } from '@vtt/shared';
-import type { ClientMessage, ServerMessage, WsErrorCode } from '@vtt/shared';
+import type { ClientMessage, ServerMessage, WsErrorCode, BoardItemView } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import { send, broadcast, broadcastPresence } from './hub.js';
-import { buildSnapshot } from './snapshot.js';
+import { buildSnapshot, makeBoardItemView } from './snapshot.js';
 import { broadcastDocuments } from './documents.js';
 import { getCampaign } from '../campaign/registry.js';
 import { getRole } from '../auth/memberships.js';
@@ -10,8 +10,10 @@ import { roll } from '../dice/roller.js';
 import { appendRollLog, persistState } from '../campaign/runtime.js';
 import { saveNote, deleteNote } from '../campaign/writer.js';
 import { log } from '../log.js';
-import { config } from '../config.js';
 import type { NoteEntity } from '@vtt/shared';
+
+const BOARD_W_MIN = 40;
+const BOARD_W_MAX = 8000;
 
 function sendError(
   session: WsSession,
@@ -23,6 +25,13 @@ function sendError(
   if (fatal) {
     session.ws.close(1008, code);
   }
+}
+
+function broadcastBoardUpdated(campaignId: string, entry: { store: { meta: { id: string }; assets: Map<string, { id: string; file: string; title: string; width: number | null; height: number | null }> }; runtime: { state: { board: Array<{ id: string; assetId: string; x: number; y: number; w: number; z: number }> } } }): void {
+  const items: BoardItemView[] = entry.runtime.state.board.map((item) =>
+    makeBoardItemView(campaignId, item, entry as Parameters<typeof makeBoardItemView>[2]),
+  );
+  broadcast(campaignId, { type: 'boardUpdated', items });
 }
 
 export async function handleMessage(session: WsSession, raw: unknown): Promise<void> {
@@ -47,11 +56,17 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
       case 'roll':
         await handleRoll(session, msg);
         break;
-      case 'shareImage':
-        await handleShareImage(session, msg);
+      case 'boardAdd':
+        await handleBoardAdd(session, msg);
         break;
-      case 'clearImage':
-        await handleClearImage(session, msg);
+      case 'boardMove':
+        await handleBoardMove(session, msg);
+        break;
+      case 'boardRemove':
+        await handleBoardRemove(session, msg);
+        break;
+      case 'setUploadsLocked':
+        await handleSetUploadsLocked(session, msg);
         break;
       case 'shareDocument':
         await handleShareDocument(session, msg);
@@ -145,7 +160,6 @@ async function handleRoll(
       message: result.error,
       fatal: false,
     });
-    // Include requestId context in a separate message (the error above has no requestId field per spec).
     return;
   }
 
@@ -166,12 +180,12 @@ async function handleRoll(
   }
 }
 
-async function handleShareImage(
+async function handleBoardAdd(
   session: WsSession,
-  msg: { type: 'shareImage'; assetId: string },
+  msg: { type: 'boardAdd'; assetId: string; x: number; y: number },
 ): Promise<void> {
   if (session.role !== 'dm') {
-    sendError(session, 'FORBIDDEN', 'Only the DM can share images');
+    sendError(session, 'FORBIDDEN', 'Only the DM can add items to the board');
     return;
   }
 
@@ -180,24 +194,109 @@ async function handleShareImage(
   if (!entry) return;
 
   const manifest = entry.store.assets.get(msg.assetId);
-  if (!manifest) {
-    sendError(session, 'UNKNOWN_ASSET', `Asset "${msg.assetId}" not found`);
+  if (!manifest || manifest.assetKind === 'document') {
+    sendError(session, 'UNKNOWN_ASSET', `Asset "${msg.assetId}" not found or is not an image`);
     return;
   }
 
-  entry.runtime.state = { ...entry.runtime.state, currentImageAssetId: msg.assetId };
-  await persistState(entry.runtime);
+  // w defaults to min(naturalWidth ?? 800, 1200); z = max existing z + 1.
+  const naturalW = manifest.width ?? 800;
+  const w = Math.min(naturalW, 1200);
+  const maxZ = entry.runtime.state.board.reduce((acc, item) => Math.max(acc, item.z), 0);
 
-  const assetRef = {
-    assetId: manifest.id,
-    url: `/api/campaigns/${campaignId}/files/assets/${manifest.file}`,
-    title: manifest.title,
-    width: manifest.width,
-    height: manifest.height,
-    sharedAt: new Date().toISOString(),
+  const newItem = {
+    id: randomId('bi'),
+    assetId: msg.assetId,
+    x: msg.x,
+    y: msg.y,
+    w,
+    z: maxZ + 1,
   };
 
-  broadcast(campaignId, { type: 'imageShared', asset: assetRef });
+  entry.runtime.state = {
+    ...entry.runtime.state,
+    board: [...entry.runtime.state.board, newItem],
+  };
+  await persistState(entry.runtime);
+
+  broadcastBoardUpdated(campaignId, entry);
+}
+
+async function handleBoardMove(
+  session: WsSession,
+  msg: { type: 'boardMove'; itemId: string; x: number; y: number; w: number },
+): Promise<void> {
+  if (session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', 'Only the DM can move board items');
+    return;
+  }
+
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  const idx = entry.runtime.state.board.findIndex((item) => item.id === msg.itemId);
+  if (idx === -1) {
+    sendError(session, 'UNKNOWN_ITEM', `Board item "${msg.itemId}" not found`);
+    return;
+  }
+
+  // Clamp w to [40, 8000].
+  const w = Math.min(BOARD_W_MAX, Math.max(BOARD_W_MIN, msg.w));
+
+  const updated = [...entry.runtime.state.board];
+  updated[idx] = { ...updated[idx]!, x: msg.x, y: msg.y, w };
+  entry.runtime.state = { ...entry.runtime.state, board: updated };
+  await persistState(entry.runtime);
+
+  broadcastBoardUpdated(campaignId, entry);
+}
+
+async function handleBoardRemove(
+  session: WsSession,
+  msg: { type: 'boardRemove'; itemId: string },
+): Promise<void> {
+  if (session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', 'Only the DM can remove board items');
+    return;
+  }
+
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  const idx = entry.runtime.state.board.findIndex((item) => item.id === msg.itemId);
+  if (idx === -1) {
+    sendError(session, 'UNKNOWN_ITEM', `Board item "${msg.itemId}" not found`);
+    return;
+  }
+
+  entry.runtime.state = {
+    ...entry.runtime.state,
+    board: entry.runtime.state.board.filter((item) => item.id !== msg.itemId),
+  };
+  await persistState(entry.runtime);
+
+  broadcastBoardUpdated(campaignId, entry);
+}
+
+async function handleSetUploadsLocked(
+  session: WsSession,
+  msg: { type: 'setUploadsLocked'; locked: boolean },
+): Promise<void> {
+  if (session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', 'Only the DM can change upload lock');
+    return;
+  }
+
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  entry.runtime.state = { ...entry.runtime.state, uploadsLocked: msg.locked };
+  await persistState(entry.runtime);
+
+  broadcast(campaignId, { type: 'settingsUpdated', uploadsLocked: msg.locked });
 }
 
 async function handleShareDocument(
@@ -231,22 +330,6 @@ async function handleShareDocument(
   }
 
   broadcast(campaignId, { type: 'documentShared', asset: manifest, sharedBy: session.username });
-}
-
-async function handleClearImage(session: WsSession, _msg: { type: 'clearImage' }): Promise<void> {
-  if (session.role !== 'dm') {
-    sendError(session, 'FORBIDDEN', 'Only the DM can clear the image');
-    return;
-  }
-
-  const campaignId = session.campaignId!;
-  const entry = getCampaign(campaignId);
-  if (!entry) return;
-
-  entry.runtime.state = { ...entry.runtime.state, currentImageAssetId: null };
-  await persistState(entry.runtime);
-
-  broadcast(campaignId, { type: 'imageShared', asset: null });
 }
 
 async function handleSaveNote(

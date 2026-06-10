@@ -60,7 +60,7 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
   }
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-zinc-900 border-r border-zinc-800">
+    <div className="absolute inset-0 z-20 flex flex-col bg-zinc-900 border-r border-zinc-800 lg:inset-auto lg:right-4 lg:top-4 lg:bottom-4 lg:w-[55%] lg:max-w-3xl lg:rounded-xl lg:border lg:border-zinc-700 lg:shadow-2xl lg:overflow-hidden">
       {/* Viewer header */}
       <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-zinc-800 bg-zinc-950 shrink-0">
         <p className="flex-1 min-w-0 text-sm font-medium text-zinc-200 truncate">{doc.title}</p>

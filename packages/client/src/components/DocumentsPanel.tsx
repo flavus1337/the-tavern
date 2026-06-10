@@ -13,6 +13,7 @@ export function DocumentsPanel() {
   const campaignId = useStore((s) => s.activeCampaignId);
   const documents = useStore((s) => s.documents);
   const self = useStore((s) => s.self);
+  const uploadsLocked = useStore((s) => s.uploadsLocked);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +26,7 @@ export function DocumentsPanel() {
   }
 
   const isDm = self?.role === 'dm';
+  const uploadBlocked = !isDm && uploadsLocked;
 
   async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -69,14 +71,19 @@ export function DocumentsPanel() {
           size="sm"
           variant="secondary"
           loading={uploading}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => !uploadBlocked && fileInputRef.current?.click()}
+          disabled={uploadBlocked}
           className="w-full"
+          title={uploadBlocked ? 'The DM has locked uploads' : undefined}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
             <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4-4 4M12 8v8" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Upload File
+          {uploadBlocked ? 'Uploads locked' : 'Upload File'}
         </Button>
+        {uploadBlocked && (
+          <p className="text-xs text-zinc-500 text-center">The DM has locked uploads</p>
+        )}
         <input
           ref={fileInputRef}
           type="file"

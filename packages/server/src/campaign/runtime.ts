@@ -1,10 +1,21 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../log.js';
+import { randomId } from '@vtt/shared';
 import type { RollLogEntry } from '@vtt/shared';
 
+export interface BoardItem {
+  id: string;
+  assetId: string;
+  x: number;
+  y: number;
+  w: number;
+  z: number;
+}
+
 export interface RuntimeState {
-  currentImageAssetId: string | null;
+  board: BoardItem[];
+  uploadsLocked: boolean;
   /** documents explicitly shared with the table — visible/fetchable by all members */
   sharedDocumentIds: string[];
 }
@@ -22,14 +33,40 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
   await fs.mkdir(runtimeDir, { recursive: true });
 
   // Load state.json.
-  let state: RuntimeState = { currentImageAssetId: null, sharedDocumentIds: [] };
+  let state: RuntimeState = { board: [], uploadsLocked: false, sharedDocumentIds: [] };
   const statePath = path.join(runtimeDir, 'state.json');
   try {
     const raw = await fs.readFile(statePath, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<RuntimeState>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parsed = JSON.parse(raw) as Record<string, any>;
+
+    // Migration: legacy state.json with currentImageAssetId and no board.
+    let board: BoardItem[];
+    if (Array.isArray(parsed['board'])) {
+      board = parsed['board'] as BoardItem[];
+    } else if (typeof parsed['currentImageAssetId'] === 'string' && parsed['currentImageAssetId']) {
+      // Migrate single shared image to a board item at origin.
+      board = [
+        {
+          id: randomId('bi'),
+          assetId: parsed['currentImageAssetId'] as string,
+          x: 0,
+          y: 0,
+          w: 800,
+          z: 1,
+        },
+      ];
+      log.info(`Migrated legacy currentImageAssetId to board item`);
+    } else {
+      board = [];
+    }
+
     state = {
-      currentImageAssetId: parsed.currentImageAssetId ?? null,
-      sharedDocumentIds: Array.isArray(parsed.sharedDocumentIds) ? parsed.sharedDocumentIds : [],
+      board,
+      uploadsLocked: typeof parsed['uploadsLocked'] === 'boolean' ? parsed['uploadsLocked'] : false,
+      sharedDocumentIds: Array.isArray(parsed['sharedDocumentIds'])
+        ? (parsed['sharedDocumentIds'] as string[])
+        : [],
     };
   } catch {
     // Missing is fine.

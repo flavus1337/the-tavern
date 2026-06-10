@@ -696,7 +696,7 @@ async function main(): Promise<void> {
     // D4: player1 ws join demo-campaign → NOT_MEMBER fatal
     {
       const { ws, messages } = await openWs(wsUrl, player1Jar);
-      send(ws, { type: 'join', protocolVersion: 2, campaignId: 'demo-campaign' });
+      send(ws, { type: 'join', protocolVersion: 3, campaignId: 'demo-campaign' });
       try {
         const err = await waitForMessage(messages, (m) => m['type'] === 'error');
         assert(err['code'] === 'NOT_MEMBER', 'D4: player1 join demo-campaign → NOT_MEMBER');
@@ -723,9 +723,9 @@ async function main(): Promise<void> {
     }
 
     // =========================================================================
-    // E. Upload + files
+    // E. Upload + board flow
     // =========================================================================
-    process.stdout.write('\n--- E. Upload + files ---\n');
+    process.stdout.write('\n--- E. Upload + board ---\n');
 
     // Generate a 3000px PNG
     const pngBuf = await generatePng(3000, 3000);
@@ -749,64 +749,117 @@ async function main(): Promise<void> {
     assert(uploadBody?.asset?.mime === 'image/webp', 'E5: mime is image/webp');
     assert(uploadBody?.asset?.dmOnly === true, 'E6: dmOnly=true on uploaded asset');
 
-    // E7: player1 GET that file → 403
+    // E7: player1 GET that file → 403 (dmOnly, not on board yet)
     const p1FileGet = await player1(`/api/campaigns/${campaignId}/files/assets/${assetFile}`);
-    assert(p1FileGet.status === 403, 'E7: player1 GET dmOnly file → 403');
+    assert(p1FileGet.status === 403, 'E7: player1 GET dmOnly file before board pin → 403');
 
-    // E8-E9: Admin shares it (ws shareImage) → player1 receives imageShared AND can GET → 200
-    // Set up player1 WS connection first
+    // E8-E12: Admin pins it to board → all members receive boardUpdated AND player can GET file
     const { ws: adminWs, messages: adminMessages } = await openWs(wsUrl, adminJar);
     const { ws: p1Ws, messages: p1Messages } = await openWs(wsUrl, player1Jar);
 
-    // Join both
-    send(adminWs, { type: 'join', protocolVersion: 2, campaignId });
-    send(p1Ws, { type: 'join', protocolVersion: 2, campaignId });
+    // Join both (protocol version 3)
+    send(adminWs, { type: 'join', protocolVersion: 3, campaignId });
+    send(p1Ws, { type: 'join', protocolVersion: 3, campaignId });
 
     await waitForMessage(adminMessages, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1Messages, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(adminMessages, (m) => m['type'] === 'snapshot', 3000);
     await waitForMessage(p1Messages, (m) => m['type'] === 'snapshot', 3000);
 
-    // Admin shares image
-    send(adminWs, { type: 'shareImage', assetId });
+    // Admin pins the image to board
+    send(adminWs, { type: 'boardAdd', assetId, x: 0, y: 0 });
 
-    // player1 should receive imageShared
-    let sharedMsg: WsMessage | null = null;
+    // player1 should receive boardUpdated with the new item
+    let boardUpdatedMsg: WsMessage | null = null;
     try {
-      sharedMsg = await waitForMessage(p1Messages, (m) => m['type'] === 'imageShared', 3000);
-      assert(sharedMsg['type'] === 'imageShared', 'E8: player1 receives imageShared event');
-      const asset = sharedMsg['asset'] as { assetId?: string; url?: string } | null;
-      assert(asset !== null, 'E9: imageShared asset is not null');
-      assert(asset?.assetId === assetId, 'E10: imageShared assetId matches');
-      // Verify URL pattern
+      boardUpdatedMsg = await waitForMessage(
+        p1Messages,
+        (m) => m['type'] === 'boardUpdated' &&
+          Array.isArray(m['items']) &&
+          (m['items'] as Array<{ assetId?: string }>).some((it) => it.assetId === assetId),
+        3000,
+      );
+      assert(boardUpdatedMsg['type'] === 'boardUpdated', 'E8: player1 receives boardUpdated after boardAdd');
+      const items = boardUpdatedMsg['items'] as Array<{ assetId?: string; url?: string; id?: string }>;
+      assert(Array.isArray(items) && items.length > 0, 'E9: boardUpdated has items');
+      const boardItem = items.find((it) => it.assetId === assetId);
+      assert(boardItem !== undefined, 'E10: boardUpdated contains the pinned asset');
       assert(
-        typeof asset?.url === 'string' && asset.url.includes('/api/campaigns/') && asset.url.includes('/files/assets/'),
-        'E11: imageShared url has correct pattern',
+        typeof boardItem?.url === 'string' && boardItem.url.includes('/api/campaigns/') && boardItem.url.includes('/files/assets/'),
+        'E11: board item url has correct pattern',
       );
     } catch {
-      fail('E8: player1 receives imageShared', 'timeout');
+      fail('E8: player1 receives boardUpdated', 'timeout');
     }
 
-    // E12: player1 can now GET the file → 200
-    const p1FileGetAfterShare = await player1(`/api/campaigns/${campaignId}/files/assets/${assetFile}`);
-    assert(p1FileGetAfterShare.status === 200, 'E12: player1 can GET shared file after shareImage');
+    // E12: player1 can now GET the file → 200 (dmOnly but on board)
+    const p1FileGetAfterBoard = await player1(`/api/campaigns/${campaignId}/files/assets/${assetFile}`);
+    assert(p1FileGetAfterBoard.status === 200, 'E12: player1 can GET dmOnly file after board pin → 200');
 
-    // E13: Non-member GET → 404
-    const noMemberJar = new CookieJar();
-    // login as admin (has no membership — wait, admin is dm. Let's use a fresh user with no membership)
-    // Actually admin IS a member (dm). Let's test path traversal instead:
-    // Use non-auth request → 401 (requireMember redirects via 401 if unauthenticated)
-    // Actually requireMember calls requireAuth first → 401 for unauthenticated
-    // The spec says "non-member GET → 404" - let's test with unauthenticated
+    // E13: Non-member GET → 401 or 404
     const nonMemberGet = await makeClient(base, new CookieJar())(`/api/campaigns/${campaignId}/files/assets/${assetFile}`);
     assert(nonMemberGet.status === 401 || nonMemberGet.status === 404, 'E13: non-member GET → 401 or 404');
 
     // E14: Path traversal → 400/404, never file contents
     const traversalAttempt = await player1(`/api/campaigns/${campaignId}/files/assets/..%2F..%2Fcampaign.json`);
     assert(traversalAttempt.status === 400 || traversalAttempt.status === 404, 'E14: path traversal → 400/404');
-    // Make sure it didn't return campaign.json contents
     const traversalBody = String(traversalAttempt.body ?? '');
     assert(!traversalBody.includes('"type":"campaign"'), 'E15: path traversal never returns campaign.json contents');
+
+    // E16: player sending boardAdd → FORBIDDEN
+    send(p1Ws, { type: 'boardAdd', assetId, x: 10, y: 10 });
+    try {
+      const forbMsg = await waitForMessage(p1Messages, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forbMsg['code'] === 'FORBIDDEN', 'E16: player boardAdd → FORBIDDEN');
+    } catch {
+      fail('E16: player boardAdd → FORBIDDEN', 'timeout');
+    }
+
+    // E17: boardRemove the item → player receives boardUpdated with empty items → file back to 403
+    const pinnedItemId = (() => {
+      if (!boardUpdatedMsg) return null;
+      const items = boardUpdatedMsg['items'] as Array<{ assetId?: string; id?: string }>;
+      return items.find((it) => it.assetId === assetId)?.id ?? null;
+    })();
+    assert(typeof pinnedItemId === 'string', 'E17-pre: board item id available');
+
+    if (pinnedItemId) {
+      send(adminWs, { type: 'boardRemove', itemId: pinnedItemId });
+      try {
+        await waitForMessage(
+          p1Messages,
+          (m) => m['type'] === 'boardUpdated' &&
+            Array.isArray(m['items']) &&
+            !(m['items'] as Array<{ assetId?: string }>).some((it) => it.assetId === assetId),
+          3000,
+        );
+        pass('E17: player receives boardUpdated after boardRemove');
+      } catch {
+        fail('E17: player receives boardUpdated after boardRemove', 'timeout');
+      }
+
+      // After removal, file back to 403 for player
+      const p1FileGetAfterRemove = await player1(`/api/campaigns/${campaignId}/files/assets/${assetFile}`);
+      assert(p1FileGetAfterRemove.status === 403, 'E18: player GET dmOnly file after boardRemove → 403 again');
+    }
+
+    // Re-pin the asset for persistence tests later
+    send(adminWs, { type: 'boardAdd', assetId, x: 0, y: 0 });
+    let rePinnedItemId: string | null = null;
+    try {
+      const rePinMsg = await waitForMessage(
+        adminMessages,
+        (m) => m['type'] === 'boardUpdated' &&
+          Array.isArray(m['items']) &&
+          (m['items'] as Array<{ assetId?: string }>).some((it) => it.assetId === assetId),
+        3000,
+      );
+      const items = rePinMsg['items'] as Array<{ assetId?: string; id?: string }>;
+      rePinnedItemId = items.find((it) => it.assetId === assetId)?.id ?? null;
+      pass('E19: admin re-pins image for persistence tests');
+    } catch {
+      fail('E19: admin re-pins image', 'timeout');
+    }
 
     // =========================================================================
     // F. Documents (player PDFs)
@@ -912,15 +965,12 @@ async function main(): Promise<void> {
 
     // Set up player2 WS
     const { ws: p2Ws, messages: p2Messages } = await openWs(wsUrl, player2Jar);
-    send(p2Ws, { type: 'join', protocolVersion: 2, campaignId });
+    send(p2Ws, { type: 'join', protocolVersion: 3, campaignId });
     await waitForMessage(p2Messages, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p2Messages, (m) => m['type'] === 'snapshot', 3000);
 
     // G1: player1 rolls 2d6+3 → all sockets receive rollResult, 5≤total≤15
     const reqId = 'req-' + Date.now();
-    // Clear old roll messages
-    const prevRollCount = p1Messages.filter((m) => m['type'] === 'rollResult').length;
-    const prevAdminRollCount = adminMessages.filter((m) => m['type'] === 'rollResult').length;
 
     send(p1Ws, { type: 'roll', requestId: reqId, expression: '2d6+3', visibility: 'public' });
 
@@ -955,7 +1005,6 @@ async function main(): Promise<void> {
     const dmRollReqId = 'dm-roll-' + Date.now();
     const p1CountBefore = p1Messages.filter((m) => m['type'] === 'rollResult').length;
     send(adminWs, { type: 'roll', requestId: dmRollReqId, expression: '1d20', visibility: 'dm' });
-    // Admin receives it
     try {
       const adminDmRoll = await waitForMessage(
         adminMessages,
@@ -974,7 +1023,6 @@ async function main(): Promise<void> {
     const privRollReqId = 'priv-' + Date.now();
     const p2CountBefore = p2Messages.filter((m) => m['type'] === 'rollResult').length;
     send(p1Ws, { type: 'roll', requestId: privRollReqId, expression: '1d8', visibility: 'dm' });
-    // Admin (dm) should see it
     try {
       await waitForMessage(
         adminMessages,
@@ -1018,11 +1066,11 @@ async function main(): Promise<void> {
 
     // Admin joins second campaign
     const { ws: adminWs2, messages: adminMessages2 } = await openWs(wsUrl, adminJar);
-    send(adminWs2, { type: 'join', protocolVersion: 2, campaignId: camp2Id });
+    send(adminWs2, { type: 'join', protocolVersion: 3, campaignId: camp2Id });
     await waitForMessage(adminMessages2, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(adminMessages2, (m) => m['type'] === 'snapshot', 3000);
 
-    // Admin uploads to campaign 2 (need an asset for shareImage)
+    // Admin uploads to campaign 2
     const img2Buf = await generatePng(100, 100);
     const upload2Res = await uploadFile(
       base, adminJar,
@@ -1033,12 +1081,27 @@ async function main(): Promise<void> {
     const asset2Id = (upload2Res.body as { asset?: { id?: string } })?.asset?.id;
     assert(typeof asset2Id === 'string', 'H3: asset in campaign2 uploaded');
 
-    // Admin shares image in campaign 2 — player1 (in campaign 1) should NOT receive
-    const p1ImgCountBefore = p1Messages.filter((m) => m['type'] === 'imageShared').length;
-    send(adminWs2, { type: 'shareImage', assetId: asset2Id });
+    // Admin pins to board in campaign 2 — player1 (in campaign 1) should NOT receive boardUpdated
+    const p1BoardCountBefore = p1Messages.filter((m) => m['type'] === 'boardUpdated').length;
+    send(adminWs2, { type: 'boardAdd', assetId: asset2Id, x: 0, y: 0 });
+
+    // Wait for campaign2 admin to receive boardUpdated
+    try {
+      await waitForMessage(
+        adminMessages2,
+        (m) => m['type'] === 'boardUpdated' &&
+          Array.isArray(m['items']) &&
+          (m['items'] as Array<{ assetId?: string }>).some((it) => it.assetId === asset2Id),
+        3000,
+      );
+      pass('H4a: admin in campaign2 receives boardUpdated');
+    } catch {
+      fail('H4a: admin in campaign2 receives boardUpdated', 'timeout');
+    }
+
     await waitMs(500);
-    const p1ImgCountAfter = p1Messages.filter((m) => m['type'] === 'imageShared').length;
-    assert(p1ImgCountAfter === p1ImgCountBefore, 'H4: shareImage in campaign2 does NOT reach player1 in campaign1');
+    const p1BoardCountAfter = p1Messages.filter((m) => m['type'] === 'boardUpdated').length;
+    assert(p1BoardCountAfter === p1BoardCountBefore, 'H4: boardUpdated in campaign2 does NOT reach player1 in campaign1');
     adminWs2.close();
 
     // =========================================================================
@@ -1067,18 +1130,19 @@ async function main(): Promise<void> {
 
     // Reopen with same cookie + join
     const { ws: p1WsNew, messages: p1MessagesNew } = await openWs(wsUrl, player1Jar);
-    send(p1WsNew, { type: 'join', protocolVersion: 2, campaignId });
+    send(p1WsNew, { type: 'join', protocolVersion: 3, campaignId });
     await waitForMessage(p1MessagesNew, (m) => m['type'] === 'joined', 3000);
 
-    // Snapshot contains current image (shared earlier) + prior rolls
+    // Snapshot contains board items (re-pinned earlier) + prior rolls
     try {
       const snapMsg = await waitForMessage(p1MessagesNew, (m) => m['type'] === 'snapshot', 3000);
       const snap = snapMsg as {
         type: string;
-        currentImage?: { assetId?: string } | null;
+        board?: Array<{ assetId?: string }>;
         rollLog?: unknown[];
       };
-      assert(snap.currentImage !== null && snap.currentImage?.assetId === assetId, 'I2: snapshot contains shared image');
+      const boardHasItem = Array.isArray(snap.board) && snap.board.some((it) => it.assetId === assetId);
+      assert(boardHasItem, 'I2: snapshot contains board item (re-pinned asset)');
       assert(Array.isArray(snap.rollLog) && (snap.rollLog?.length ?? 0) > 0, 'I3: snapshot contains prior rolls');
     } catch {
       fail('I2: snapshot after reconnect', 'timeout');
@@ -1095,8 +1159,6 @@ async function main(): Promise<void> {
         3000,
       );
       const entries = presenceMsg['entries'] as Array<{ userId?: string }>;
-      const player1Entries = entries.filter((e) => e.userId !== undefined);
-      // Count entries for player1 specifically
       const p1Entries = entries.filter(
         (e) => e.userId === (reg1Body as { user?: { id?: string } })?.user?.id,
       );
@@ -1106,7 +1168,7 @@ async function main(): Promise<void> {
       fail('I4: presence dedup check', 'timeout');
     }
 
-    // I6-I7: Kill server (SIGTERM), restart same dirs → admin cookie still valid + snapshot intact
+    // I6-I8: Kill server (SIGTERM), restart same dirs → admin cookie still valid + board intact
     killServer();
     await waitMs(500);
 
@@ -1124,7 +1186,6 @@ async function main(): Promise<void> {
           CAMPAIGNS_DIR: campaignsDir,
           ADMIN_PASSWORD: 'test-admin-pw',
           ADMIN_USER: 'admin',
-    ADMIN_USER: 'admin',
           COOKIE_SECURE: 'false',
           PUBLIC_ORIGIN: `http://localhost:${port2}`,
         },
@@ -1139,14 +1200,15 @@ async function main(): Promise<void> {
     const meAfterRestart = await admin2('/api/auth/me');
     assert(meAfterRestart.status === 200, 'I6: admin cookie still valid after server restart');
 
-    // Snapshot still has shared image + roll history
+    // Snapshot still has board items + roll history
     const { ws: adminWsRestart, messages: adminMsgsRestart } = await openWs(wsUrl2, adminJar);
-    send(adminWsRestart, { type: 'join', protocolVersion: 2, campaignId });
+    send(adminWsRestart, { type: 'join', protocolVersion: 3, campaignId });
     await waitForMessage(adminMsgsRestart, (m) => m['type'] === 'joined', 3000);
     try {
       const snapRestart = await waitForMessage(adminMsgsRestart, (m) => m['type'] === 'snapshot', 3000);
-      const snap = snapRestart as { currentImage?: { assetId?: string } | null; rollLog?: unknown[] };
-      assert(snap.currentImage?.assetId === assetId, 'I7: snapshot after restart has shared image');
+      const snap = snapRestart as { board?: Array<{ assetId?: string }>; rollLog?: unknown[] };
+      const boardHasItem = Array.isArray(snap.board) && snap.board.some((it) => it.assetId === assetId);
+      assert(boardHasItem, 'I7: snapshot after restart has board item');
       assert(Array.isArray(snap.rollLog) && (snap.rollLog?.length ?? 0) > 0, 'I8: snapshot after restart has roll history');
     } catch {
       fail('I7: snapshot after restart', 'timeout');
@@ -1161,7 +1223,7 @@ async function main(): Promise<void> {
 
     // Reopen p1WsNew connection on port2
     const { ws: p1WsPort2, messages: p1MsgsPort2 } = await openWs(wsUrl2, player1Jar);
-    send(p1WsPort2, { type: 'join', protocolVersion: 2, campaignId });
+    send(p1WsPort2, { type: 'join', protocolVersion: 3, campaignId });
     await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'snapshot', 3000);
 
@@ -1211,7 +1273,7 @@ async function main(): Promise<void> {
 
     // J7: dm can save dm notes
     const { ws: adminWsPort2Notes, messages: adminMsgsPort2Notes } = await openWs(wsUrl2, adminJar);
-    send(adminWsPort2Notes, { type: 'join', protocolVersion: 2, campaignId });
+    send(adminWsPort2Notes, { type: 'join', protocolVersion: 3, campaignId });
     await waitForMessage(adminMsgsPort2Notes, (m) => m['type'] === 'joined', 3000);
     send(adminWsPort2Notes, {
       type: 'saveNote',
@@ -1229,6 +1291,78 @@ async function main(): Promise<void> {
 
     adminWsPort2Notes.close();
     p1WsPort2.close();
+
+    // =========================================================================
+    // L. Upload lock
+    // =========================================================================
+    process.stdout.write('\n--- L. Upload lock ---\n');
+
+    // Open fresh WS connections on port2
+    const { ws: adminWsLock, messages: adminMsgsLock } = await openWs(wsUrl2, adminJar);
+    const { ws: p1WsLock, messages: p1MsgsLock } = await openWs(wsUrl2, player1Jar);
+    send(adminWsLock, { type: 'join', protocolVersion: 3, campaignId });
+    send(p1WsLock, { type: 'join', protocolVersion: 3, campaignId });
+    await waitForMessage(adminMsgsLock, (m) => m['type'] === 'joined', 3000);
+    await waitForMessage(p1MsgsLock, (m) => m['type'] === 'joined', 3000);
+    await waitForMessage(adminMsgsLock, (m) => m['type'] === 'snapshot', 3000);
+    await waitForMessage(p1MsgsLock, (m) => m['type'] === 'snapshot', 3000);
+
+    // L1: player trying setUploadsLocked → FORBIDDEN
+    send(p1WsLock, { type: 'setUploadsLocked', locked: true });
+    try {
+      const forbMsg = await waitForMessage(p1MsgsLock, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forbMsg['code'] === 'FORBIDDEN', 'L1: player setUploadsLocked → FORBIDDEN');
+    } catch {
+      fail('L1: player setUploadsLocked → FORBIDDEN', 'timeout');
+    }
+
+    // L2: DM locks uploads → player receives settingsUpdated
+    send(adminWsLock, { type: 'setUploadsLocked', locked: true });
+    try {
+      const settingsMsg = await waitForMessage(p1MsgsLock, (m) => m['type'] === 'settingsUpdated', 3000);
+      assert(settingsMsg['uploadsLocked'] === true, 'L2: player receives settingsUpdated with uploadsLocked=true');
+    } catch {
+      fail('L2: player receives settingsUpdated', 'timeout');
+    }
+
+    // L3: player POST documents → 403 UPLOADS_LOCKED
+    const pdfBuf2 = minimalPdf('locked-test.pdf');
+    const lockedUpload = await uploadFile(
+      base2, player1Jar,
+      `/api/campaigns/${campaignId}/documents`,
+      pdfBuf2, 'locked-test.pdf', 'application/pdf',
+    );
+    assert(lockedUpload.status === 403, 'L3: player upload while locked → 403');
+    const lockedBody = lockedUpload.body as { code?: string };
+    assert(lockedBody?.code === 'UPLOADS_LOCKED', 'L4: locked upload returns UPLOADS_LOCKED code');
+
+    // L5: DM POST documents still 201 while locked
+    const dmLockedUpload = await uploadFile(
+      base2, adminJar,
+      `/api/campaigns/${campaignId}/documents`,
+      pdfBuf2, 'dm-upload.pdf', 'application/pdf',
+    );
+    assert(dmLockedUpload.status === 201, 'L5: DM upload while locked → 201');
+
+    // L6: DM unlocks → player receives settingsUpdated with false
+    send(adminWsLock, { type: 'setUploadsLocked', locked: false });
+    try {
+      const unlockMsg = await waitForMessage(p1MsgsLock, (m) => m['type'] === 'settingsUpdated' && m['uploadsLocked'] === false, 3000);
+      assert(unlockMsg['uploadsLocked'] === false, 'L6: player receives settingsUpdated with uploadsLocked=false');
+    } catch {
+      fail('L6: player receives unlock settingsUpdated', 'timeout');
+    }
+
+    // L7: player POST documents now → 201
+    const unlockedUpload = await uploadFile(
+      base2, player1Jar,
+      `/api/campaigns/${campaignId}/documents`,
+      pdfBuf2, 'unlocked-test.pdf', 'application/pdf',
+    );
+    assert(unlockedUpload.status === 201, 'L7: player upload after unlock → 201');
+
+    adminWsLock.close();
+    p1WsLock.close();
 
     // =========================================================================
     // K. Production path
@@ -1255,8 +1389,6 @@ async function main(): Promise<void> {
             CAMPAIGNS_DIR: campaignsDir,
             ADMIN_PASSWORD: 'test-admin-pw',
             ADMIN_USER: 'admin',
-          ADMIN_USER: 'admin',
-    ADMIN_USER: 'admin',
             COOKIE_SECURE: 'false',
             PUBLIC_ORIGIN: `http://localhost:${port3}`,
             CLIENT_DIST: clientDist,

@@ -124,8 +124,12 @@ export class TableConnection {
         store.setPresence(msg.entries);
         break;
 
-      case 'imageShared':
-        store.setCurrentImage(msg.asset);
+      case 'boardUpdated':
+        store.setBoard(msg.items);
+        break;
+
+      case 'settingsUpdated':
+        store.setUploadsLocked(msg.uploadsLocked);
         break;
 
       case 'rollResult':

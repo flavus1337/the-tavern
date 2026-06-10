@@ -1,7 +1,7 @@
 // WebSocket protocol types — the wire contract between server and client.
 import type { AssetManifest } from './campaign.js';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type Role = 'dm' | 'player';
 
@@ -12,13 +12,17 @@ export interface PresenceEntry {
   connected: boolean;
 }
 
-export interface AssetRef {
+export interface BoardItemView {
+  id: string;
   assetId: string;
+  x: number;
+  y: number;
+  w: number;
+  z: number;
   url: string;
   title: string;
-  width: number | null;
-  height: number | null;
-  sharedAt: string;
+  naturalWidth: number | null;
+  naturalHeight: number | null;
 }
 
 export type RollVisibility = 'public' | 'dm';
@@ -69,13 +73,31 @@ export interface ClientRollPayload {
   visibility: RollVisibility;
 }
 
-export interface ClientShareImagePayload {
-  type: 'shareImage';
+export interface ClientBoardAddPayload {
+  type: 'boardAdd';
+  /** Must reference an assetKind that is an image (not 'document'). */
   assetId: string;
+  x: number;
+  y: number;
 }
 
-export interface ClientClearImagePayload {
-  type: 'clearImage';
+export interface ClientBoardMovePayload {
+  type: 'boardMove';
+  itemId: string;
+  x: number;
+  y: number;
+  /** Also used for resize; clamped to [40, 8000] server-side. */
+  w: number;
+}
+
+export interface ClientBoardRemovePayload {
+  type: 'boardRemove';
+  itemId: string;
+}
+
+export interface ClientSetUploadsLockedPayload {
+  type: 'setUploadsLocked';
+  locked: boolean;
 }
 
 export interface ClientShareDocumentPayload {
@@ -105,8 +127,10 @@ export interface ClientPingPayload {
 export type ClientMessage =
   | ClientJoinPayload
   | ClientRollPayload
-  | ClientShareImagePayload
-  | ClientClearImagePayload
+  | ClientBoardAddPayload
+  | ClientBoardMovePayload
+  | ClientBoardRemovePayload
+  | ClientSetUploadsLockedPayload
   | ClientShareDocumentPayload
   | ClientSaveNotePayload
   | ClientDeleteNotePayload
@@ -134,7 +158,9 @@ export interface SnapshotCampaignInfo {
 export interface ServerSnapshotPayload {
   type: 'snapshot';
   campaign: SnapshotCampaignInfo;
-  currentImage: AssetRef | null;
+  /** Board items currently pinned. */
+  board: BoardItemView[];
+  uploadsLocked: boolean;
   presence: PresenceEntry[];
   /** Last 200 entries, visibility-filtered for role. */
   rollLog: RollLogEntry[];
@@ -150,10 +176,14 @@ export interface ServerPresencePayload {
   entries: PresenceEntry[];
 }
 
-export interface ServerImageSharedPayload {
-  type: 'imageShared';
-  /** null = cleared */
-  asset: AssetRef | null;
+export interface ServerBoardUpdatedPayload {
+  type: 'boardUpdated';
+  items: BoardItemView[];
+}
+
+export interface ServerSettingsUpdatedPayload {
+  type: 'settingsUpdated';
+  uploadsLocked: boolean;
 }
 
 export interface ServerRollResultPayload {
@@ -200,6 +230,8 @@ export type WsErrorCode =
   | 'UNKNOWN_CAMPAIGN'
   | 'UNKNOWN_ASSET'
   | 'UNKNOWN_NOTE'
+  | 'UNKNOWN_ITEM'
+  | 'UPLOADS_LOCKED'
   | 'INTERNAL';
 
 export interface ServerErrorPayload {
@@ -218,7 +250,8 @@ export type ServerMessage =
   | ServerJoinedPayload
   | ServerSnapshotPayload
   | ServerPresencePayload
-  | ServerImageSharedPayload
+  | ServerBoardUpdatedPayload
+  | ServerSettingsUpdatedPayload
   | ServerRollResultPayload
   | ServerAssetsUpdatedPayload
   | ServerDocumentsUpdatedPayload

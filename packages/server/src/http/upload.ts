@@ -134,6 +134,12 @@ router.post(
       return;
     }
 
+    // Upload lock: non-DM members cannot upload while locked.
+    if (entry.runtime.state.uploadsLocked && req.campaignRole !== 'dm') {
+      res.status(403).json({ error: 'Uploads are locked by the DM', code: 'UPLOADS_LOCKED' });
+      return;
+    }
+
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: 'No file uploaded' });
