@@ -334,7 +334,7 @@ async function handleShareDocument(
 
 async function handleSaveNote(
   session: WsSession,
-  msg: { type: 'saveNote'; noteId?: string; title: string; body: string; visibility: 'dm' | 'player' },
+  msg: { type: 'saveNote'; noteId?: string; title: string; body: string; visibility: 'dm' | 'player' | 'shared' },
 ): Promise<void> {
   const campaignId = session.campaignId!;
   const entry = getCampaign(campaignId);
@@ -342,15 +342,16 @@ async function handleSaveNote(
 
   const isDm = session.role === 'dm';
 
-  // Players may only save visibility='player' notes owned by themselves.
-  if (!isDm) {
-    if (msg.visibility !== 'player') {
-      sendError(session, 'FORBIDDEN', 'Players can only create player-visibility notes');
-      return;
-    }
+  // Players may keep notes private ('player') or share them with the table
+  // ('shared'); only DMs may use the 'dm' visibility.
+  if (!isDm && msg.visibility === 'dm') {
+    sendError(session, 'FORBIDDEN', 'Players cannot create DM-visibility notes');
+    return;
   }
+  const visibility = msg.visibility;
 
   let note: NoteEntity;
+  let previousVisibility: NoteEntity['visibility'] | null = null;
   const now = new Date().toISOString();
 
   if (msg.noteId) {
@@ -361,11 +362,12 @@ async function handleSaveNote(
         sendError(session, 'FORBIDDEN', 'You can only edit your own notes');
         return;
       }
+      previousVisibility = existing.visibility;
       note = {
         ...existing,
         title: msg.title,
         body: msg.body,
-        visibility: isDm ? msg.visibility : 'player',
+        visibility,
         updatedAt: now,
       };
     } else {
@@ -376,7 +378,7 @@ async function handleSaveNote(
         id: msg.noteId,
         title: msg.title,
         body: msg.body,
-        visibility: isDm ? msg.visibility : 'player',
+        visibility,
         ownerUsername: session.username,
         createdAt: now,
         updatedAt: now,
@@ -389,7 +391,7 @@ async function handleSaveNote(
       id: randomId('note'),
       title: msg.title,
       body: msg.body,
-      visibility: isDm ? msg.visibility : 'player',
+      visibility,
       ownerUsername: session.username,
       createdAt: now,
       updatedAt: now,
@@ -398,19 +400,30 @@ async function handleSaveNote(
 
   await saveNote(entry.store, note);
 
-  // Send noteSaved only to the author.
-  send(session.ws, {
-    type: 'noteSaved',
-    note: {
-      id: note.id,
-      title: note.title,
-      body: note.body,
-      visibility: note.visibility,
-      ownerUsername: note.ownerUsername,
-      createdAt: note.createdAt,
-      updatedAt: note.updatedAt,
-    },
-  });
+  const wireNote = {
+    id: note.id,
+    title: note.title,
+    body: note.body,
+    visibility: note.visibility,
+    ownerUsername: note.ownerUsername,
+    createdAt: note.createdAt,
+    updatedAt: note.updatedAt,
+  };
+
+  if (note.visibility === 'shared') {
+    // Visible to everyone — push the saved note to the whole room.
+    broadcast(campaignId, { type: 'noteSaved', note: wireNote });
+  } else {
+    send(session.ws, { type: 'noteSaved', note: wireNote });
+    if (previousVisibility === 'shared') {
+      // Unshared — everyone else drops it from their list.
+      broadcast(
+        campaignId,
+        { type: 'noteDeleted', noteId: note.id },
+        (s) => s.username !== session.username,
+      );
+    }
+  }
 }
 
 async function handleDeleteNote(

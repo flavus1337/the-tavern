@@ -17,10 +17,13 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
 
   const existing = noteId ? myNotes.find((n) => n.id === noteId) : undefined;
   const isDm = self?.role === 'dm';
+  // Recipients of a shared note can read it but not edit/delete/unshare.
+  const isOwner = !existing || existing.ownerUsername === self?.username;
+  const canModify = isOwner || isDm;
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [body, setBody] = useState(existing?.body ?? '');
-  const [visibility, setVisibility] = useState<'dm' | 'player'>(
+  const [visibility, setVisibility] = useState<'dm' | 'player' | 'shared'>(
     existing?.visibility ?? (isDm ? 'dm' : 'player'),
   );
   const [mode, setMode] = useState<'write' | 'preview'>('write');
@@ -29,6 +32,20 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const canSave = connection === 'open' && title.trim() !== '';
+
+  function toggleShared() {
+    if (!existing || !canModify || connection !== 'open') return;
+    const next = existing.visibility === 'shared' ? (isDm ? 'dm' : 'player') : 'shared';
+    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
+    conn?.send({
+      type: 'saveNote',
+      noteId: existing.id,
+      title: existing.title,
+      body: existing.body,
+      visibility: next,
+    });
+    setVisibility(next);
+  }
 
   function save() {
     if (!canSave) return;
@@ -150,24 +167,51 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
             </>
           ) : (
             <>
-              <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={deleteThisNote}
-                disabled={connection !== 'open'}
-                aria-label="Delete note"
-                title="Delete note"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                  <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </Button>
+              {canModify && existing && (
+                existing.visibility === 'shared' ? (
+                  <button
+                    type="button"
+                    onClick={toggleShared}
+                    disabled={connection !== 'open'}
+                    style={{ fontSize: 12, fontWeight: 600, color: 'var(--low)', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', padding: '6px 11px', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    title="Stop sharing with the table"
+                  >
+                    ✓ Shared with table
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleShared}
+                    disabled={connection !== 'open'}
+                    style={{ fontSize: 12, fontWeight: 600, color: 'var(--teal)', background: '#69b7a615', border: '1px solid #69b7a63a', padding: '6px 11px', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    title="Make this note visible to everyone at the table"
+                  >
+                    Share with table
+                  </button>
+                )
+              )}
+              {canModify && (
+                <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Edit
+                </Button>
+              )}
+              {canModify && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={deleteThisNote}
+                  disabled={connection !== 'open'}
+                  aria-label="Delete note"
+                  title="Delete note"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                    <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </Button>
+              )}
             </>
           )}
           <button
@@ -204,6 +248,19 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
                   style={{ background: 'var(--raised)', color: 'var(--mid)' }}
                 >
                   DM
+                </span>
+              )}
+              {(existing?.visibility ?? visibility) === 'shared' && (
+                <span
+                  className="text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5"
+                  style={{ background: '#69b7a61a', color: 'var(--teal)' }}
+                >
+                  shared
+                </span>
+              )}
+              {existing && !isOwner && existing.ownerUsername && (
+                <span className="text-xs" style={{ color: 'var(--faint)', fontFamily: 'var(--mono)' }}>
+                  by {existing.ownerUsername}
                 </span>
               )}
             </div>

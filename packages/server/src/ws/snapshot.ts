@@ -54,17 +54,13 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
   // Documents: all members.
   const documents = visibleDocuments(entry, session.username);
 
-  // Notes: DM sees all dm-visibility + own; players see own only.
+  // Notes: everyone sees own + table-shared; DMs additionally see dm-visibility.
   const myNotes: Note[] = [];
   for (const note of store.notes.values()) {
-    if (isDm) {
-      if (note.visibility === 'dm' || note.ownerUsername === session.username) {
-        myNotes.push(noteToWire(note));
-      }
-    } else {
-      if (note.ownerUsername === session.username) {
-        myNotes.push(noteToWire(note));
-      }
+    const own = note.ownerUsername === session.username;
+    const shared = note.visibility === 'shared';
+    if (own || shared || (isDm && note.visibility === 'dm')) {
+      myNotes.push(noteToWire(note));
     }
   }
 
@@ -91,7 +87,7 @@ function noteToWire(note: {
   id: string;
   title: string;
   body: string;
-  visibility: 'dm' | 'player';
+  visibility: 'dm' | 'player' | 'shared';
   ownerUsername: string | null;
   createdAt: string;
   updatedAt: string;

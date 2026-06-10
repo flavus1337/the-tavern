@@ -57,7 +57,8 @@ export interface Note {
   id: string;
   title: string;
   body: string;
-  visibility: 'dm' | 'player';
+  /** 'dm' = all DMs · 'player' = owner only · 'shared' = the whole table */
+  visibility: 'dm' | 'player' | 'shared';
   ownerUsername: string | null;
   createdAt: string;
   updatedAt: string;
@@ -119,7 +120,8 @@ export interface ClientSaveNotePayload {
   noteId?: string;
   title: string;
   body: string;
-  visibility: 'dm' | 'player';
+  /** players may use 'player' | 'shared'; only DMs may set 'dm' */
+  visibility: 'dm' | 'player' | 'shared';
 }
 
 export interface ClientDeleteNotePayload {

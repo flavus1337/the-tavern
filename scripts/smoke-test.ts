@@ -1317,6 +1317,68 @@ async function main(): Promise<void> {
       fail('J7: dm can save dm-visibility notes', 'timeout');
     }
 
+    // J8–J11: shared notes — player1 shares a note with the table
+    send(p1WsPort2, {
+      type: 'saveNote',
+      title: 'Party plan',
+      body: 'We attack at dawn',
+      visibility: 'shared',
+    });
+    let sharedNoteId: string | undefined;
+    try {
+      const sharedSaved = await waitForMessage(
+        adminMsgsPort2Notes,
+        (m) => m['type'] === 'noteSaved' && (m['note'] as { title?: string })?.title === 'Party plan',
+        3000,
+      );
+      const note = sharedSaved['note'] as { id?: string; visibility?: string; ownerUsername?: string };
+      sharedNoteId = note?.id;
+      assert(note?.visibility === 'shared', 'J8: shared note broadcast to other members');
+      assert(note?.ownerUsername === 'player1', 'J9: shared note keeps owner');
+    } catch {
+      fail('J8: shared note broadcast to other members', 'timeout');
+    }
+
+    // J10: non-owner non-dm cannot edit a shared note
+    if (sharedNoteId) {
+      const { ws: p2WsNotes, messages: p2MsgsNotes } = await openWs(wsUrl2, player2Jar);
+      send(p2WsNotes, { type: 'join', protocolVersion: 3, campaignId });
+      await waitForMessage(p2MsgsNotes, (m) => m['type'] === 'joined', 3000);
+      send(p2WsNotes, {
+        type: 'saveNote',
+        noteId: sharedNoteId,
+        title: 'Hijacked',
+        body: 'rewritten',
+        visibility: 'shared',
+      });
+      try {
+        const forb = await waitForMessage(p2MsgsNotes, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(forb['code'] === 'FORBIDDEN', 'J10: non-owner cannot edit shared note');
+      } catch {
+        fail('J10: non-owner cannot edit shared note', 'timeout');
+      }
+      p2WsNotes.close();
+
+      // J11: unsharing removes it from other members
+      send(p1WsPort2, {
+        type: 'saveNote',
+        noteId: sharedNoteId,
+        title: 'Party plan',
+        body: 'We attack at dawn',
+        visibility: 'player',
+      });
+      try {
+        const removed = await waitForMessage(
+          adminMsgsPort2Notes,
+          (m) => m['type'] === 'noteDeleted' && m['noteId'] === sharedNoteId,
+          3000,
+        );
+        assert(removed['noteId'] === sharedNoteId, 'J11: unsharing sends noteDeleted to others');
+      } catch {
+        fail('J11: unsharing sends noteDeleted to others', 'timeout');
+      }
+    }
+
     adminWsPort2Notes.close();
     p1WsPort2.close();
 

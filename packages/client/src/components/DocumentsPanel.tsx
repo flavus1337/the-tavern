@@ -114,7 +114,7 @@ export function DocumentsPanel() {
         )}
       </div>
 
-      {/* Document list */}
+      {/* Document list — sectioned: yours vs shared with you */}
       <ScrollArea className="flex-1">
         <div style={{ padding: '12px 14px' }}>
           {documents.length === 0 ? (
@@ -124,8 +124,21 @@ export function DocumentsPanel() {
               <em style={{ fontStyle: 'italic' }}>share it with the table.</em>
             </p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {documents.map((doc) => (
+            (() => {
+              const mine = documents.filter((d) => d.ownerUsername === self?.username);
+              const sharedWithMe = documents.filter((d) => d.ownerUsername !== self?.username);
+              const sectionLabel = (text: string) => (
+                <p
+                  style={{
+                    fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em',
+                    textTransform: 'uppercase', color: 'var(--faint)', fontWeight: 500,
+                    margin: '4px 0 8px',
+                  }}
+                >
+                  {text}
+                </p>
+              );
+              const renderDoc = (doc: AssetManifest) => (
                 <DocumentItem
                   key={doc.id}
                   doc={doc}
@@ -138,8 +151,24 @@ export function DocumentsPanel() {
                   onView={() => setViewingDocument(doc)}
                   onShare={() => shareDocument(doc.id)}
                 />
-              ))}
-            </div>
+              );
+              return (
+                <>
+                  {mine.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {sectionLabel('Your files')}
+                      {mine.map(renderDoc)}
+                    </div>
+                  )}
+                  {sharedWithMe.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: mine.length > 0 ? 18 : 0 }}>
+                      {sectionLabel('Shared with you')}
+                      {sharedWithMe.map(renderDoc)}
+                    </div>
+                  )}
+                </>
+              );
+            })()
           )}
         </div>
       </ScrollArea>

@@ -95,13 +95,16 @@ export interface Character {
   body?: string;
 }
 
+/** 'dm' = all DMs · 'player' = owner only · 'shared' = the whole table */
+export type NoteVisibility = 'dm' | 'player' | 'shared';
+
 export interface NoteEntity {
   type: 'note';
   schemaVersion: number;
   id: string;
   title: string;
   body: string;
-  visibility: 'dm' | 'player';
+  visibility: NoteVisibility;
   ownerUsername: string | null;
   createdAt: string;
   updatedAt: string;
@@ -223,8 +226,8 @@ function applyDefaults(expectedType: EntityType, raw: Record<string, unknown>): 
         title: typeof raw['title'] === 'string' ? raw['title'] : '',
         body: typeof raw['body'] === 'string' ? raw['body'] : '',
         visibility:
-          raw['visibility'] === 'dm' || raw['visibility'] === 'player'
-            ? (raw['visibility'] as 'dm' | 'player')
+          raw['visibility'] === 'dm' || raw['visibility'] === 'player' || raw['visibility'] === 'shared'
+            ? (raw['visibility'] as NoteVisibility)
             : 'dm',
         ownerUsername:
           typeof raw['ownerUsername'] === 'string' ? raw['ownerUsername'] : null,

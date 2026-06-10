@@ -17,6 +17,72 @@ export function NotesPanel() {
 
   const isDm = self?.role === 'dm';
   const sorted = [...myNotes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const mine = sorted.filter((n) => n.ownerUsername === self?.username);
+  const sharedWithMe = sorted.filter((n) => n.ownerUsername !== self?.username);
+
+  function NoteRow({ note }: { note: Note }) {
+    const isOpen = noteEditor?.noteId === note.id;
+    const ownNote = note.ownerUsername === self?.username;
+    return (
+      <button
+        type="button"
+        onClick={() => setNoteEditor({ noteId: note.id })}
+        className="w-full text-left p-2.5 rounded-lg transition-colors"
+        style={{
+          background: 'var(--surface2)',
+          border: `1px solid ${isOpen ? 'var(--ember)' : 'var(--border)'}`,
+          ...(isOpen ? { background: '#e08a4b0a' } : {}),
+        }}
+        onMouseEnter={(e) => {
+          if (!isOpen) (e.currentTarget as HTMLElement).style.borderColor = '#473b34';
+        }}
+        onMouseLeave={(e) => {
+          if (!isOpen) (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+        }}
+        title={ownNote ? 'Open note' : `Shared by ${note.ownerUsername ?? 'unknown'}`}
+      >
+        <div className="flex items-center gap-2">
+          <p
+            className="truncate flex-1"
+            style={{ fontFamily: 'var(--serif)', fontSize: 15, fontWeight: 600, color: 'var(--hi)' }}
+          >
+            {note.title}
+          </p>
+          {isDm && note.visibility === 'dm' && <Badge>DM</Badge>}
+          {note.visibility === 'shared' && (
+            <span
+              className="text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 shrink-0"
+              style={{ fontFamily: 'var(--mono)', background: '#69b7a61a', color: 'var(--teal)' }}
+            >
+              shared
+            </span>
+          )}
+        </div>
+        {!ownNote && note.ownerUsername && (
+          <p className="mt-0.5" style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--faint)' }}>
+            by {note.ownerUsername}
+          </p>
+        )}
+        {note.body && (
+          <p className="mt-1 truncate" style={{ fontSize: 12, color: 'var(--low)' }}>
+            {note.body}
+          </p>
+        )}
+      </button>
+    );
+  }
+
+  const sectionLabel = (text: string) => (
+    <p
+      style={{
+        fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em',
+        textTransform: 'uppercase', color: 'var(--faint)', fontWeight: 500,
+        margin: '4px 0 8px',
+      }}
+    >
+      {text}
+    </p>
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -33,50 +99,23 @@ export function NotesPanel() {
         <div className="p-3 space-y-2">
           {sorted.length === 0 ? (
             <p className="text-xs text-center py-8" style={{ color: 'var(--faint)' }}>
-              No notes yet. Create one — it opens in the main area and only you can see it.
+              No notes yet. Create one — only you see it until you share it with the table.
             </p>
           ) : (
-            sorted.map((note: Note) => {
-              const isOpen = noteEditor?.noteId === note.id;
-              return (
-                <button
-                  key={note.id}
-                  type="button"
-                  onClick={() => setNoteEditor({ noteId: note.id })}
-                  className="w-full text-left p-2.5 rounded-lg transition-colors"
-                  style={{
-                    background: 'var(--surface2)',
-                    border: `1px solid ${isOpen ? 'var(--ember)' : 'var(--border)'}`,
-                    ...(isOpen ? { background: '#e08a4b0a' } : {}),
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isOpen) (e.currentTarget as HTMLElement).style.borderColor = '#473b34';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isOpen) (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
-                  }}
-                  title="Edit note"
-                >
-                  <div className="flex items-center gap-2">
-                    <p
-                      className="truncate flex-1"
-                      style={{ fontFamily: 'var(--serif)', fontSize: 15, fontWeight: 600, color: 'var(--hi)' }}
-                    >
-                      {note.title}
-                    </p>
-                    {isDm && note.visibility === 'dm' && <Badge>DM</Badge>}
-                  </div>
-                  {note.body && (
-                    <p
-                      className="mt-1 truncate"
-                      style={{ fontSize: 12, color: 'var(--low)' }}
-                    >
-                      {note.body}
-                    </p>
-                  )}
-                </button>
-              );
-            })
+            <>
+              {mine.length > 0 && (
+                <div className="space-y-2">
+                  {sectionLabel('Your notes')}
+                  {mine.map((note) => <NoteRow key={note.id} note={note} />)}
+                </div>
+              )}
+              {sharedWithMe.length > 0 && (
+                <div className="space-y-2" style={{ marginTop: mine.length > 0 ? 18 : 0 }}>
+                  {sectionLabel('Shared with you')}
+                  {sharedWithMe.map((note) => <NoteRow key={note.id} note={note} />)}
+                </div>
+              )}
+            </>
           )}
         </div>
       </ScrollArea>
