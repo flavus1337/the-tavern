@@ -1,4 +1,5 @@
 import { Component, useEffect, type ReactNode } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { MeResponse, CampaignListItem, RedeemInviteResponse } from '@vtt/shared';
 import { api, ApiRequestError } from './lib/api';
 import { useStore } from './store';
@@ -66,15 +67,17 @@ function AppContent() {
     clearInviteToken,
     setCampaigns,
     setActiveCampaignId,
-  } = useStore((s) => ({
-    setUser: s.setUser,
-    setAuthChecked: s.setAuthChecked,
-    setRoute: s.setRoute,
-    setInviteToken: s.setInviteToken,
-    clearInviteToken: s.clearInviteToken,
-    setCampaigns: s.setCampaigns,
-    setActiveCampaignId: s.setActiveCampaignId,
-  }));
+  } = useStore(
+    useShallow((s) => ({
+      setUser: s.setUser,
+      setAuthChecked: s.setAuthChecked,
+      setRoute: s.setRoute,
+      setInviteToken: s.setInviteToken,
+      clearInviteToken: s.clearInviteToken,
+      setCampaigns: s.setCampaigns,
+      setActiveCampaignId: s.setActiveCampaignId,
+    })),
+  );
 
   useEffect(() => {
     async function bootstrap() {

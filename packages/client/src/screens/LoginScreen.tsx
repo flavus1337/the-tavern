@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { LoginRequest, LoginResponse } from '@vtt/shared';
 import { api, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
@@ -7,13 +8,15 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 
 export function LoginScreen() {
-  const { inviteToken, setRoute, setUser, setCampaigns } = useStore((s) => ({
-    inviteToken: s.inviteToken,
-    setRoute: s.setRoute,
-    setUser: s.setUser,
-    setCampaigns: s.setCampaigns,
-    clearInviteToken: s.clearInviteToken,
-  }));
+  const { inviteToken, setRoute, setUser, setCampaigns } = useStore(
+    useShallow((s) => ({
+      inviteToken: s.inviteToken,
+      setRoute: s.setRoute,
+      setUser: s.setUser,
+      setCampaigns: s.setCampaigns,
+      clearInviteToken: s.clearInviteToken,
+    })),
+  );
   const clearInviteToken = useStore((s) => s.clearInviteToken);
 
   const [username, setUsername] = useState('');

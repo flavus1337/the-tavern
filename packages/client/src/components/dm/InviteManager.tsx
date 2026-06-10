@@ -24,8 +24,8 @@ export function InviteManager() {
     if (!campaignId) return;
     setLoading(true);
     try {
-      const list = await api.get<InviteSummary[]>(`/api/campaigns/${campaignId}/invites`);
-      setInvites(list);
+      const res = await api.get<{ invites: InviteSummary[] }>(`/api/campaigns/${campaignId}/invites`);
+      setInvites(res.invites);
     } catch (err) {
       if (err instanceof ApiRequestError) setError(err.message);
     } finally {
