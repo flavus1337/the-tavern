@@ -4,7 +4,7 @@ import { api, apiUpload, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { ScrollArea } from './ui/scroll-area';
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB (videos)
 
 export function DocumentsPanel() {
   const campaignId = useStore((s) => s.activeCampaignId);
@@ -31,7 +31,7 @@ export function DocumentsPanel() {
     if (!file || !campaignId) return;
 
     if (file.size > MAX_FILE_SIZE) {
-      setError('File too large. Maximum 25MB.');
+      setError('File too large. Maximum 100MB.');
       return;
     }
 
@@ -190,6 +190,7 @@ interface DocumentItemProps {
 
 function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedByOther, onDelete, onView, onShare }: DocumentItemProps) {
   const extLabel = doc.mime === 'application/pdf' ? 'PDF'
+    : doc.mime.startsWith('video/') ? 'Video'
     : doc.mime.startsWith('image/') ? 'Image'
     : doc.mime.startsWith('text/') ? 'Text'
     : 'File';

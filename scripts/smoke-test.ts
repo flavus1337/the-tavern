@@ -986,6 +986,37 @@ async function main(): Promise<void> {
     const adminSharedGet = await admin(`/api/campaigns/${campaignId}/files/assets/${docFile}`);
     assert(adminSharedGet.status === 200, 'F7d: dm GET shared doc → 200');
 
+    // F7e–F7h: audio documents — upload, inline serving, synced playback control
+    const mp3Buf = Buffer.from('fake-mp3-bytes-for-smoke-test');
+    const audioUploadRes = await uploadFile(
+      base, player1Jar,
+      `/api/campaigns/${campaignId}/documents`,
+      mp3Buf, 'tavern-ambience.mp3', 'audio/mpeg',
+    );
+    assert(audioUploadRes.status === 201, 'F7e: player1 upload mp3 → 201');
+    const audioAsset = (audioUploadRes.body as { asset?: { id?: string; file?: string; mime?: string } })?.asset;
+    assert(audioAsset?.mime === 'audio/mpeg', 'F7f: audio manifest keeps audio/mpeg mime');
+
+    if (audioAsset?.id && audioAsset.file) {
+      const audioGet = await player1(`/api/campaigns/${campaignId}/files/assets/${audioAsset.file}`);
+      const ct = String(audioGet.headers?.['content-type'] ?? '');
+      const disp = String(audioGet.headers?.['content-disposition'] ?? '');
+      assert(audioGet.status === 200 && ct.includes('audio/mpeg') && !disp.includes('attachment'), 'F7g: audio served inline as audio/mpeg');
+
+      // Owner's mediaControl reaches other members
+      send(p1Ws, { type: 'mediaControl', assetId: audioAsset.id, action: 'play', time: 12.5 });
+      try {
+        const ctrl = await waitForMessage(
+          adminMessages,
+          (m) => m['type'] === 'mediaControl' && m['assetId'] === audioAsset.id,
+          3000,
+        );
+        assert(ctrl['action'] === 'play' && ctrl['by'] === 'player1', 'F7h: owner mediaControl broadcast to members');
+      } catch {
+        fail('F7h: owner mediaControl broadcast to members', 'timeout');
+      }
+    }
+
     // F8: player2 (non-owner) deletes player1's pdf → 403
     const p2DeleteDoc = await player2(`/api/campaigns/${campaignId}/assets/${docId}`, {
       method: 'DELETE',

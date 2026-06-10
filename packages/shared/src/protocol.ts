@@ -138,6 +138,15 @@ export interface ClientDeleteNotePayload {
   noteId: string;
 }
 
+export interface ClientMediaControlPayload {
+  type: 'mediaControl';
+  /** asset id of an audio document; sender must be its owner or the DM */
+  assetId: string;
+  action: 'play' | 'pause';
+  /** current playback position in seconds */
+  time: number;
+}
+
 export interface ClientPingPayload {
   type: 'ping';
   sentAt: number;
@@ -154,6 +163,7 @@ export type ClientMessage =
   | ClientShareDocumentPayload
   | ClientSaveNotePayload
   | ClientDeleteNotePayload
+  | ClientMediaControlPayload
   | ClientPingPayload;
 
 // ---------------------------------------------------------------------------
@@ -241,6 +251,14 @@ export interface ServerNoteDeletedPayload {
   noteId: string;
 }
 
+export interface ServerMediaControlPayload {
+  type: 'mediaControl';
+  assetId: string;
+  action: 'play' | 'pause';
+  time: number;
+  by: string;
+}
+
 export type WsErrorCode =
   | 'NOT_MEMBER'
   | 'FORBIDDEN'
@@ -278,5 +296,6 @@ export type ServerMessage =
   | ServerDocumentSharedPayload
   | ServerNoteSavedPayload
   | ServerNoteDeletedPayload
+  | ServerMediaControlPayload
   | ServerErrorPayload
   | ServerPongPayload;

@@ -184,6 +184,14 @@ router.get('/:id/files/assets/:filename', requireMember(), async (req: Request, 
     'image/webp',
     'image/gif',
     'text/plain',
+    // audio elements need inline serving (sendFile handles Range for seeking)
+    'audio/mpeg',
+    'audio/mp4',
+    'audio/ogg',
+    'audio/wav',
+    'audio/webm',
+    'audio/aac',
+    'audio/flac',
   ]);
   const inlineMime = manifest.mime === 'text/markdown' ? 'text/plain' : manifest.mime;
   if (INLINE_SAFE_MIMES.has(inlineMime)) {

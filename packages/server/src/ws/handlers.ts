@@ -80,6 +80,9 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
       case 'deleteNote':
         await handleDeleteNote(session, msg);
         break;
+      case 'mediaControl':
+        handleMediaControl(session, msg);
+        break;
       case 'ping':
         send(session.ws, { type: 'pong', sentAt: msg.sentAt });
         break;
@@ -455,6 +458,34 @@ async function handleSaveNote(
       );
     }
   }
+}
+
+function handleMediaControl(
+  session: WsSession,
+  msg: { type: 'mediaControl'; assetId: string; action: 'play' | 'pause'; time: number },
+): void {
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  const manifest = entry.store.assets.get(msg.assetId);
+  if (!manifest || !manifest.mime.startsWith('audio/')) {
+    sendError(session, 'UNKNOWN_ASSET', `Audio "${msg.assetId}" not found`);
+    return;
+  }
+
+  // Driving everyone's player is reserved for the track's owner or the DM.
+  if (manifest.ownerUsername !== session.username && session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', 'Only the uploader or DM can control playback for the table');
+    return;
+  }
+
+  const time = Number.isFinite(msg.time) ? Math.max(0, msg.time) : 0;
+  broadcast(
+    campaignId,
+    { type: 'mediaControl', assetId: msg.assetId, action: msg.action, time, by: session.username },
+    (s) => s !== session,
+  );
 }
 
 async function handleDeleteNote(

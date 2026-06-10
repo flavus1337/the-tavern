@@ -156,6 +156,11 @@ export class TableConnection {
         store.removeNote(msg.noteId);
         break;
 
+      case 'mediaControl':
+        // Audio panels listen for this and follow the sender's playback.
+        window.dispatchEvent(new CustomEvent('vtt:media-control', { detail: msg }));
+        break;
+
       case 'error': {
         const authCodes: string[] = ['NOT_MEMBER', 'FORBIDDEN', 'PROTOCOL_MISMATCH'];
         if (msg.fatal) {

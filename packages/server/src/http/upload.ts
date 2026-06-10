@@ -16,7 +16,7 @@ import type { UploadAssetResponse } from '@vtt/shared';
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB (videos; images get resized anyway)
 });
 
 const router = Router();

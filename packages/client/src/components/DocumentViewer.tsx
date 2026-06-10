@@ -8,6 +8,77 @@ const INLINE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'im
 const INLINE_TEXT_MIMES = new Set(['text/plain', 'text/markdown']);
 
 /**
+ * Audio on the mat with table-synced playback: the owner/DM's play, pause and
+ * seek drive everyone else's player via mediaControl messages.
+ */
+function AudioBody({ url, assetId, canDrive }: { url: string; assetId: string; canDrive: boolean }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  // Set while applying a remote command so the resulting events don't re-emit.
+  const applyingRemote = useRef(false);
+
+  function emit(action: 'play' | 'pause') {
+    if (!canDrive || applyingRemote.current) return;
+    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
+    conn?.send({ type: 'mediaControl', assetId, action, time: audioRef.current?.currentTime ?? 0 });
+  }
+
+  useEffect(() => {
+    function onRemote(e: Event) {
+      const msg = (e as CustomEvent<{ assetId: string; action: 'play' | 'pause'; time: number }>).detail;
+      const audio = audioRef.current;
+      if (!audio || msg.assetId !== assetId) return;
+      applyingRemote.current = true;
+      if (Math.abs(audio.currentTime - msg.time) > 1.5) audio.currentTime = msg.time;
+      const done = () => setTimeout(() => { applyingRemote.current = false; }, 150);
+      if (msg.action === 'play') {
+        // Autoplay policies can reject before any user interaction — the
+        // panel then just stays paused at the synced position.
+        audio.play().catch(() => undefined).finally(done);
+      } else {
+        audio.pause();
+        done();
+      }
+    }
+    window.addEventListener('vtt:media-control', onRemote);
+    return () => window.removeEventListener('vtt:media-control', onRemote);
+  }, [assetId]);
+
+  return (
+    <div
+      style={{
+        background: 'var(--surface2)',
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        overflow: 'hidden',
+        boxShadow: '0 14px 40px -8px #000b',
+        maxWidth: 520,
+        margin: '0 auto',
+        padding: '18px 16px 4px',
+      }}
+    >
+      <audio
+        ref={audioRef}
+        src={url}
+        controls
+        preload="metadata"
+        style={{ display: 'block', width: '100%' }}
+        onPlay={() => emit('play')}
+        onPause={() => emit('pause')}
+        onSeeked={() => {
+          const a = audioRef.current;
+          if (a) emit(a.paused ? 'pause' : 'play');
+        }}
+      />
+      {canDrive && (
+        <p style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--faint)', padding: '6px 10px', margin: 0 }}>
+          Your play/pause controls the whole table.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * Floating document panel, 520px wide, draggable by title bar, clamped within
  * the board area. Restyled to the Tavern "framed on a warm mat" design.
  */
@@ -73,12 +144,21 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
 
   // Ext type label
   const extLabel = doc.mime === 'application/pdf' ? 'PDF'
+    : doc.mime.startsWith('audio/') ? 'Audio'
     : INLINE_IMAGE_MIMES.has(doc.mime) ? 'Image'
     : INLINE_TEXT_MIMES.has(doc.mime) ? 'Text'
     : 'File';
 
   let body;
-  if (doc.mime === 'application/pdf') {
+  if (doc.mime.startsWith('audio/')) {
+    body = (
+      <AudioBody
+        url={url}
+        assetId={doc.id}
+        canDrive={self?.role === 'dm' || doc.ownerUsername === self?.username}
+      />
+    );
+  } else if (doc.mime === 'application/pdf') {
     body = (
       <Suspense
         fallback={
