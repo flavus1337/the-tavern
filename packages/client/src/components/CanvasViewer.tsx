@@ -122,14 +122,24 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
     dragRef.current = null;
     setIsDragging(false);
 
+    // Keep the optimistic local position/size after release — clearing it here
+    // would snap the item back to the stale server position for a frame or two
+    // until boardUpdated echoes the move. The effect below clears the overrides
+    // once the item props change.
     if (mode === 'move' && localPos) {
       sendWs({ type: 'boardMove', itemId: item.id, x: localPos.x, y: localPos.y, w: localW ?? item.w });
-      setLocalPos(null);
     } else if (mode === 'resize' && localW !== null) {
       sendWs({ type: 'boardMove', itemId: item.id, x: item.x, y: item.y, w: localW });
-      setLocalW(null);
     }
   }
+
+  // Server confirmed (or someone else moved the item) — drop local overrides,
+  // but never mid-drag.
+  useEffect(() => {
+    if (dragRef.current) return;
+    setLocalPos(null);
+    setLocalW(null);
+  }, [item.x, item.y, item.w]);
 
   const shadowLifted = isDragging
     ? '0 40px 80px -16px #000f'
