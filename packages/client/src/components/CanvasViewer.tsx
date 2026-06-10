@@ -340,7 +340,9 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    // Proportional to scroll delta: trackpads (many small deltas) zoom gently,
+    // a mouse-wheel notch (~±100) gives ~10%. Clamped so no single event jumps.
+    const factor = Math.min(1.25, Math.max(0.8, Math.exp(-e.deltaY * 0.001)));
     setView((v) => {
       const newScale = clampScale(v.scale * factor);
       const scaleDelta = newScale / v.scale;
