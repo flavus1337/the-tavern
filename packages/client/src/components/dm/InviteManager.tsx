@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import type { CreateInviteRequest, CreateInviteResponse, InviteSummary } from '@vtt/shared';
 import { api, ApiRequestError } from '../../lib/api';
 import { useStore } from '../../store';
@@ -19,6 +19,8 @@ export function InviteManager() {
   const [creating, setCreating] = useState(false);
   const [newInviteUrl, setNewInviteUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyHint, setCopyHint] = useState<string | null>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
 
   async function fetchInvites() {
     if (!campaignId) return;
@@ -70,25 +72,38 @@ export function InviteManager() {
     }
   }
 
-  async function copyUrl(url: string) {
+  async function copyUrl() {
+    const input = urlInputRef.current;
+    setCopyHint(null);
+
+    // 1. Modern clipboard API (works in regular browsers on HTTPS/localhost).
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-      } else {
-        // Fallback for contexts without the async clipboard API
-        const ta = document.createElement('textarea');
-        ta.value = url;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+      if (navigator.clipboard?.writeText && newInviteUrl) {
+        await navigator.clipboard.writeText(newInviteUrl);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
       }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {
-      setError('Could not copy — select the link text and copy manually.');
+      // Permission denied (e.g. embedded webviews) — try the legacy path.
+    }
+
+    // 2. Legacy execCommand on the visible input (returns false when blocked).
+    if (input) {
+      input.focus();
+      input.select();
+      try {
+        if (document.execCommand('copy')) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+          return;
+        }
+      } catch {
+        // fall through to manual hint
+      }
+      // 3. No clipboard access at all — leave the text selected for the user.
+      const isMac = navigator.platform.toLowerCase().includes('mac');
+      setCopyHint(`Link selected — press ${isMac ? '⌘C' : 'Ctrl+C'} to copy.`);
     }
   }
 
@@ -131,16 +146,25 @@ export function InviteManager() {
         <div className="bg-zinc-950 border border-zinc-700 rounded-lg p-3 space-y-2">
           <p className="text-xs text-zinc-400">Invite link (share this):</p>
           <div className="flex gap-2">
-            <code className="flex-1 text-xs text-indigo-300 break-all">{newInviteUrl}</code>
+            <input
+              ref={urlInputRef}
+              readOnly
+              value={newInviteUrl}
+              onFocus={(e) => e.currentTarget.select()}
+              onClick={(e) => e.currentTarget.select()}
+              aria-label="Invite link"
+              className="flex-1 min-w-0 text-xs font-mono text-indigo-300 bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 focus:outline-none focus-visible:border-indigo-500 select-all"
+            />
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => { void copyUrl(newInviteUrl); }}
+              onClick={() => { void copyUrl(); }}
               className="shrink-0"
             >
               {copied ? 'Copied!' : 'Copy'}
             </Button>
           </div>
+          {copyHint && <p className="text-xs text-zinc-400">{copyHint}</p>}
         </div>
       )}
 
