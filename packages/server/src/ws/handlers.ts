@@ -8,7 +8,7 @@ import { getCampaign } from '../campaign/registry.js';
 import { getRole } from '../auth/memberships.js';
 import { roll } from '../dice/roller.js';
 import { appendRollLog, persistState } from '../campaign/runtime.js';
-import { saveNote } from '../campaign/writer.js';
+import { saveNote, deleteNote } from '../campaign/writer.js';
 import { log } from '../log.js';
 import { config } from '../config.js';
 import type { NoteEntity } from '@vtt/shared';
@@ -58,6 +58,9 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
         break;
       case 'saveNote':
         await handleSaveNote(session, msg);
+        break;
+      case 'deleteNote':
+        await handleDeleteNote(session, msg);
         break;
       case 'ping':
         send(session.ws, { type: 'pong', sentAt: msg.sentAt });
@@ -325,4 +328,31 @@ async function handleSaveNote(
       updatedAt: note.updatedAt,
     },
   });
+}
+
+async function handleDeleteNote(
+  session: WsSession,
+  msg: { type: 'deleteNote'; noteId: string },
+): Promise<void> {
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  const existing = entry.store.notes.get(msg.noteId);
+  if (!existing) {
+    sendError(session, 'UNKNOWN_NOTE', `Note "${msg.noteId}" not found`);
+    return;
+  }
+
+  // Same ownership rule as editing: owner, or the DM.
+  if (session.role !== 'dm' && existing.ownerUsername !== session.username) {
+    sendError(session, 'FORBIDDEN', 'You can only delete your own notes');
+    return;
+  }
+
+  await deleteNote(entry.store, msg.noteId);
+
+  // Broadcast to the room — anyone whose list contains the note drops it;
+  // clients simply ignore ids they don't have.
+  broadcast(campaignId, { type: 'noteDeleted', noteId: msg.noteId });
 }

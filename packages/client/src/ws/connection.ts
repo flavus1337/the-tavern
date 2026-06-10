@@ -148,6 +148,10 @@ export class TableConnection {
         store.upsertNote(msg.note);
         break;
 
+      case 'noteDeleted':
+        store.removeNote(msg.noteId);
+        break;
+
       case 'error': {
         const authCodes: string[] = ['NOT_MEMBER', 'FORBIDDEN', 'PROTOCOL_MISMATCH'];
         if (msg.fatal) {

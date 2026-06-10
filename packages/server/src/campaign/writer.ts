@@ -16,6 +16,16 @@ export async function saveNote(store: CampaignStore, note: NoteEntity): Promise<
   store.notes.set(note.id, note);
 }
 
+export async function deleteNote(store: CampaignStore, noteId: string): Promise<void> {
+  const filePath = path.join(store.dir, 'notes', `${noteId}.json`);
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Best-effort — the in-memory removal below is authoritative for the session.
+  }
+  store.notes.delete(noteId);
+}
+
 export async function saveAssetManifest(
   store: CampaignStore,
   manifest: AssetManifest,

@@ -84,6 +84,7 @@ interface TableSlice {
   setViewingDocument: (doc: AssetManifest | null) => void;
   setNoteEditor: (editor: { noteId: string | null } | null) => void;
   upsertNote: (note: Note) => void;
+  removeNote: (noteId: string) => void;
   setLastErrorMessage: (msg: string | null) => void;
   resetTable: () => void;
 }
@@ -197,6 +198,13 @@ export const useStore = create<StoreState>()((set) => ({
       }
       return { myNotes: [...s.myNotes, note] };
     }),
+
+  removeNote: (noteId) =>
+    set((s) => ({
+      myNotes: s.myNotes.filter((n) => n.id !== noteId),
+      // Close the editor if the deleted note is open.
+      noteEditor: s.noteEditor?.noteId === noteId ? null : s.noteEditor,
+    })),
 
   setLastErrorMessage: (msg) => set({ lastErrorMessage: msg }),
 

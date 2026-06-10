@@ -50,6 +50,14 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     }
   }
 
+  function deleteThisNote() {
+    if (!noteId) return;
+    if (!window.confirm(`Delete "${title || 'this note'}"? This cannot be undone.`)) return;
+    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
+    conn?.send({ type: 'deleteNote', noteId });
+    // The noteDeleted broadcast removes it from the list and closes this editor.
+  }
+
   function cancelEdit() {
     if (noteId && existing) {
       setTitle(existing.title);
@@ -134,12 +142,26 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
               </Button>
             </>
           ) : (
-            <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Edit
-            </Button>
+            <>
+              <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={deleteThisNote}
+                disabled={connection !== 'open'}
+                aria-label="Delete note"
+                title="Delete note"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                  <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14M10 11v6M14 11v6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Button>
+            </>
           )}
           <button
             type="button"

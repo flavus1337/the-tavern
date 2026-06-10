@@ -92,6 +92,11 @@ export interface ClientSaveNotePayload {
   visibility: 'dm' | 'player';
 }
 
+export interface ClientDeleteNotePayload {
+  type: 'deleteNote';
+  noteId: string;
+}
+
 export interface ClientPingPayload {
   type: 'ping';
   sentAt: number;
@@ -104,6 +109,7 @@ export type ClientMessage =
   | ClientClearImagePayload
   | ClientShareDocumentPayload
   | ClientSaveNotePayload
+  | ClientDeleteNotePayload
   | ClientPingPayload;
 
 // ---------------------------------------------------------------------------
@@ -180,6 +186,11 @@ export interface ServerNoteSavedPayload {
   note: Note;
 }
 
+export interface ServerNoteDeletedPayload {
+  type: 'noteDeleted';
+  noteId: string;
+}
+
 export type WsErrorCode =
   | 'NOT_MEMBER'
   | 'FORBIDDEN'
@@ -188,6 +199,7 @@ export type WsErrorCode =
   | 'PROTOCOL_MISMATCH'
   | 'UNKNOWN_CAMPAIGN'
   | 'UNKNOWN_ASSET'
+  | 'UNKNOWN_NOTE'
   | 'INTERNAL';
 
 export interface ServerErrorPayload {
@@ -212,5 +224,6 @@ export type ServerMessage =
   | ServerDocumentsUpdatedPayload
   | ServerDocumentSharedPayload
   | ServerNoteSavedPayload
+  | ServerNoteDeletedPayload
   | ServerErrorPayload
   | ServerPongPayload;
