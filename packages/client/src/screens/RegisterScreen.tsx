@@ -8,6 +8,55 @@ import { Label } from '../components/ui/label';
 import { D20Logo } from '../components/D20Logo';
 import loginHero from '../assets/login-hero.png';
 
+// Shared hero/card layout wrapper. Defined at module scope — defining it inside
+// the screen would create a new component type on every render, remounting the
+// subtree and dropping input focus on each keystroke.
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="relative min-h-screen w-full overflow-hidden flex items-center"
+      style={{ background: 'var(--bg)' }}
+    >
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 z-0"
+        style={{ backgroundImage: `url(${loginHero})`, backgroundPosition: 'center 38%', backgroundSize: 'cover' }}
+        aria-hidden="true"
+      />
+      {/* Scrim */}
+      <div
+        className="absolute inset-0 z-[1] pointer-events-none"
+        style={{
+          background: `
+            linear-gradient(90deg, #0c0a09f2 0%, #0c0a09cc 20%, #0c0a0955 40%, transparent 60%),
+            linear-gradient(0deg, #0c0a09d9, transparent 32%),
+            radial-gradient(55% 65% at 74% 42%, #e0824c16, transparent 70%),
+            radial-gradient(125% 105% at 50% 50%, transparent 58%, #0c0a09 100%)
+          `,
+        }}
+        aria-hidden="true"
+      />
+      <div className="relative z-[3] w-full max-w-[1240px] mx-auto px-[6vw] py-12">
+        <div className="max-w-[392px]">
+          {/* Brand */}
+          <div className="flex items-center gap-[11px] mb-6" style={{ color: 'var(--ember)' }}>
+            <D20Logo size={40} />
+            <div>
+              <div style={{ fontFamily: 'var(--serif)', fontSize: 30, fontWeight: 600, color: 'var(--hi)', letterSpacing: '-0.01em', lineHeight: 1.1 }}>
+                The Tavern
+              </div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--low)', marginTop: 4 }}>
+                GATHER · ROLL · ADVENTURE
+              </div>
+            </div>
+          </div>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function RegisterScreen() {
   const inviteToken = useStore((s) => s.inviteToken);
   const setRoute = useStore((s) => s.setRoute);
@@ -82,51 +131,6 @@ export function RegisterScreen() {
 
   const campaignName = preview?.valid ? preview.campaignName : null;
   const dmName = preview?.valid && 'dmUsername' in preview ? (preview as { dmUsername?: string }).dmUsername : null;
-
-  // Shared hero/card layout wrapper
-  const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div
-      className="relative min-h-screen w-full overflow-hidden flex items-center"
-      style={{ background: 'var(--bg)' }}
-    >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 z-0"
-        style={{ backgroundImage: `url(${loginHero})`, backgroundPosition: 'center 38%', backgroundSize: 'cover' }}
-        aria-hidden="true"
-      />
-      {/* Scrim */}
-      <div
-        className="absolute inset-0 z-[1] pointer-events-none"
-        style={{
-          background: `
-            linear-gradient(90deg, #0c0a09f2 0%, #0c0a09cc 20%, #0c0a0955 40%, transparent 60%),
-            linear-gradient(0deg, #0c0a09d9, transparent 32%),
-            radial-gradient(55% 65% at 74% 42%, #e0824c16, transparent 70%),
-            radial-gradient(125% 105% at 50% 50%, transparent 58%, #0c0a09 100%)
-          `,
-        }}
-        aria-hidden="true"
-      />
-      <div className="relative z-[3] w-full max-w-[1240px] mx-auto px-[6vw] py-12">
-        <div className="max-w-[392px]">
-          {/* Brand */}
-          <div className="flex items-center gap-[11px] mb-6" style={{ color: 'var(--ember)' }}>
-            <D20Logo size={40} />
-            <div>
-              <div style={{ fontFamily: 'var(--serif)', fontSize: 30, fontWeight: 600, color: 'var(--hi)', letterSpacing: '-0.01em', lineHeight: 1.1 }}>
-                The Tavern
-              </div>
-              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--low)', marginTop: 4 }}>
-                GATHER · ROLL · ADVENTURE
-              </div>
-            </div>
-          </div>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
 
   if (!inviteToken) {
     return (
