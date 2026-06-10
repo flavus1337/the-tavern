@@ -156,10 +156,16 @@ export class TableConnection {
         store.removeNote(msg.noteId);
         break;
 
-      case 'mediaControl':
-        // Audio panels listen for this and follow the sender's playback.
-        window.dispatchEvent(new CustomEvent('vtt:media-control', { detail: msg }));
+      case 'mediaControl': {
+        // Record the table-playback state — audio panels follow it (including
+        // panels that mount later, e.g. via the auto-open below).
+        store.setMediaSync(msg.assetId, { action: msg.action, time: msg.time, atMs: Date.now() });
+        if (msg.action === 'play') {
+          const doc = store.documents.find((d) => d.id === msg.assetId);
+          if (doc) store.openDocPanel(doc);
+        }
         break;
+      }
 
       case 'error': {
         const authCodes: string[] = ['NOT_MEMBER', 'FORBIDDEN', 'PROTOCOL_MISMATCH'];

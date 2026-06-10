@@ -102,6 +102,8 @@ interface TableSlice {
   documents: AssetManifest[];
   /** open floating panels over the board (docs + notes), render order = z-order */
   openPanels: TablePanel[];
+  /** latest table-playback command per audio asset (drives synced players) */
+  mediaSync: Record<string, { action: 'play' | 'pause'; time: number; atMs: number }>;
   /** transient roll-result popups shown over the canvas */
   rollToasts: RollLogEntry[];
   /** transient presence-join popups */
@@ -134,6 +136,7 @@ interface TableSlice {
   openNotePanel: (noteId: string | null) => void;
   closePanel: (panelId: string) => void;
   bringPanelToFront: (panelId: string) => void;
+  setMediaSync: (assetId: string, cmd: { action: 'play' | 'pause'; time: number; atMs: number }) => void;
   upsertNote: (note: Note) => void;
   removeNote: (noteId: string) => void;
   setLastErrorMessage: (msg: string | null) => void;
@@ -157,6 +160,7 @@ const tableDefaults = {
   assets: null,
   documents: [],
   openPanels: [],
+  mediaSync: {},
   rollToasts: [],
   joinToasts: [] as JoinToast[],
   boardMoments: [] as string[],
@@ -306,6 +310,9 @@ export const useStore = create<StoreState>()((set) => ({
       if (!panel || s.openPanels[s.openPanels.length - 1] === panel) return s;
       return { openPanels: [...s.openPanels.filter((p) => p.panelId !== panelId), panel] };
     }),
+
+  setMediaSync: (assetId, cmd) =>
+    set((s) => ({ mediaSync: { ...s.mediaSync, [assetId]: cmd } })),
 
   upsertNote: (note) =>
     set((s) => {

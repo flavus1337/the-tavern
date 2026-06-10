@@ -15,6 +15,10 @@ function AudioBody({ url, assetId, canDrive }: { url: string; assetId: string; c
   const audioRef = useRef<HTMLAudioElement>(null);
   // Set while applying a remote command so the resulting events don't re-emit.
   const applyingRemote = useRef(false);
+  const sync = useStore((s) => s.mediaSync[assetId]);
+  // True when the browser's autoplay policy rejected a remote play — the user
+  // joins playback with one real click.
+  const [needsGesture, setNeedsGesture] = useState(false);
 
   function emit(action: 'play' | 'pause') {
     if (!canDrive || applyingRemote.current) return;
@@ -22,26 +26,47 @@ function AudioBody({ url, assetId, canDrive }: { url: string; assetId: string; c
     conn?.send({ type: 'mediaControl', assetId, action, time: audioRef.current?.currentTime ?? 0 });
   }
 
+  /** Target position right now: command time + elapsed wall-clock while playing. */
+  function syncedTime(cmd: { action: 'play' | 'pause'; time: number; atMs: number }): number {
+    return cmd.action === 'play' ? cmd.time + (Date.now() - cmd.atMs) / 1000 : cmd.time;
+  }
+
+  // Follow the table-playback state (covers panels mounted after the command).
   useEffect(() => {
-    function onRemote(e: Event) {
-      const msg = (e as CustomEvent<{ assetId: string; action: 'play' | 'pause'; time: number }>).detail;
-      const audio = audioRef.current;
-      if (!audio || msg.assetId !== assetId) return;
-      applyingRemote.current = true;
-      if (Math.abs(audio.currentTime - msg.time) > 1.5) audio.currentTime = msg.time;
-      const done = () => setTimeout(() => { applyingRemote.current = false; }, 150);
-      if (msg.action === 'play') {
-        // Autoplay policies can reject before any user interaction — the
-        // panel then just stays paused at the synced position.
-        audio.play().catch(() => undefined).finally(done);
-      } else {
-        audio.pause();
+    const audio = audioRef.current;
+    if (!audio || !sync) return;
+    applyingRemote.current = true;
+    const target = syncedTime(sync);
+    if (Math.abs(audio.currentTime - target) > 1.5) audio.currentTime = target;
+    const done = () => setTimeout(() => { applyingRemote.current = false; }, 150);
+    if (sync.action === 'play') {
+      audio.play().then(() => {
+        setNeedsGesture(false);
         done();
-      }
+      }).catch(() => {
+        // Autoplay blocked — offer a one-click join instead.
+        setNeedsGesture(true);
+        done();
+      });
+    } else {
+      audio.pause();
+      setNeedsGesture(false);
+      done();
     }
-    window.addEventListener('vtt:media-control', onRemote);
-    return () => window.removeEventListener('vtt:media-control', onRemote);
-  }, [assetId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync, assetId]);
+
+  function joinPlayback() {
+    const audio = audioRef.current;
+    if (!audio || !sync) return;
+    applyingRemote.current = true;
+    audio.currentTime = syncedTime(sync);
+    // Called from a click handler — a real user gesture, so play() is allowed.
+    audio.play().catch(() => undefined).finally(() => {
+      setTimeout(() => { applyingRemote.current = false; }, 150);
+    });
+    setNeedsGesture(false);
+  }
 
   return (
     <div
@@ -69,6 +94,21 @@ function AudioBody({ url, assetId, canDrive }: { url: string; assetId: string; c
           if (a) emit(a.paused ? 'pause' : 'play');
         }}
       />
+      {needsGesture && (
+        <button
+          type="button"
+          onClick={joinPlayback}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            width: 'calc(100% - 0px)', margin: '8px 0 6px', padding: '10px 12px',
+            fontSize: 13, fontWeight: 600,
+            background: 'var(--ember)', color: 'var(--ink)',
+            border: 'none', borderRadius: 9, cursor: 'pointer',
+          }}
+        >
+          ▶ Join playback
+        </button>
+      )}
       {canDrive && (
         <p style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--faint)', padding: '6px 10px', margin: 0 }}>
           Your play/pause controls the whole table.
