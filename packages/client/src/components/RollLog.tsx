@@ -194,6 +194,9 @@ function PartPips({ part }: { part: RollPart }) {
 
   // Dice part
   const droppedSet = new Set(part.dropped ?? []);
+  // Advantage-style roll: some dice were dropped — the kept one gets an
+  // explicit highlight so both throws read at a glance.
+  const hasDropped = droppedSet.size > 0;
 
   return (
     <>
@@ -201,6 +204,13 @@ function PartPips({ part }: { part: RollPart }) {
         const isDropped = droppedSet.has(i);
         const isMax = roll === part.sides;
         const isMin = roll === 1;
+        const isKeptOfPair = hasDropped && !isDropped;
+
+        // Crit colors win; otherwise the kept die of an advantage pair is ember.
+        const tone = !isDropped && isMax ? 'gold' : !isDropped && isMin ? 'garnet' : isKeptOfPair ? 'ember' : 'plain';
+        const bg = tone === 'gold' ? '#e8b76524' : tone === 'garnet' ? '#b6485a22' : tone === 'ember' ? '#e08a4b1f' : 'rgba(255,255,255,0.05)';
+        const border = tone === 'gold' ? '#e8b76577' : tone === 'garnet' ? '#b6485a66' : tone === 'ember' ? '#e08a4b88' : 'rgba(255,255,255,0.08)';
+        const color = tone === 'gold' ? 'var(--gold)' : tone === 'garnet' ? '#e08a8a' : tone === 'ember' ? 'var(--ember)' : 'var(--hi)';
 
         return (
           <span
@@ -216,20 +226,13 @@ function PartPips({ part }: { part: RollPart }) {
               fontSize: 12,
               fontWeight: 600,
               opacity: isDropped ? 0.35 : 1,
-              // Max = gold, min = garnet, dropped stays neutral
-              background: !isDropped && isMax
-                ? '#e8b76524'
-                : !isDropped && isMin
-                ? '#b6485a22'
-                : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${!isDropped && isMax ? '#e8b76577' : !isDropped && isMin ? '#b6485a66' : 'rgba(255,255,255,0.08)'}`,
-              color: !isDropped && isMax
-                ? 'var(--gold)'
-                : !isDropped && isMin
-                ? '#e08a8a'
-                : 'var(--hi)',
+              textDecoration: isDropped ? 'line-through' : undefined,
+              background: bg,
+              border: `1px solid ${border}`,
+              boxShadow: isKeptOfPair && tone === 'ember' ? '0 0 0 1px #e08a4b33' : undefined,
+              color,
             }}
-            title={`d${part.sides}${isDropped ? ' (dropped)' : ''}`}
+            title={`d${part.sides}${isDropped ? ' — dropped' : hasDropped ? ' — kept' : ''}`}
           >
             {roll}
           </span>
