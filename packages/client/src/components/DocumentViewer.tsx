@@ -1,6 +1,10 @@
+import { lazy, Suspense } from 'react';
 import type { AssetManifest, ClientMessage } from '@vtt/shared';
 import { useStore } from '../store';
 import { Button } from './ui/button';
+
+// pdf.js is heavy — load it only when a PDF is actually opened.
+const PdfView = lazy(() => import('./PdfView').then((m) => ({ default: m.PdfView })));
 
 const INLINE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const INLINE_TEXT_MIMES = new Set(['text/plain', 'text/markdown']);
@@ -23,7 +27,13 @@ export function DocumentViewer({ doc }: { doc: AssetManifest }) {
 
   let body;
   if (doc.mime === 'application/pdf') {
-    body = <iframe src={url} title={doc.title} className="flex-1 w-full bg-zinc-950" />;
+    body = (
+      <Suspense
+        fallback={<p className="flex-1 text-sm text-zinc-500 text-center py-16 animate-pulse bg-zinc-950">Loading PDF…</p>}
+      >
+        <PdfView url={url} title={doc.title} />
+      </Suspense>
+    );
   } else if (INLINE_IMAGE_MIMES.has(doc.mime)) {
     body = (
       <div className="flex-1 min-h-0 flex items-center justify-center p-4 overflow-auto bg-zinc-950">

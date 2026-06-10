@@ -6,6 +6,7 @@ import { DocumentViewer } from './DocumentViewer';
 import { DiceRoller } from './DiceRoller';
 import { RollLog } from './RollLog';
 import { DocumentsPanel } from './DocumentsPanel';
+import { NotesPanel } from './NotesPanel';
 import { PresenceBar } from './PresenceBar';
 import { DmPanel } from './dm/DmPanel';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
@@ -39,7 +40,7 @@ export function TableLayout() {
   const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
 
   const connRef = useRef<TableConnection | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<'dice' | 'docs' | 'dm'>('dice');
+  const [sidebarTab, setSidebarTab] = useState<'dice' | 'docs' | 'notes' | 'dm'>('dice');
 
   const isDm = self?.role === 'dm';
 
@@ -142,6 +143,7 @@ export function TableLayout() {
               <TabsList className="w-full">
                 <TabsTrigger value="dice">Dice</TabsTrigger>
                 <TabsTrigger value="docs">Docs</TabsTrigger>
+                <TabsTrigger value="notes">Notes</TabsTrigger>
                 {isDm && <TabsTrigger value="dm">DM</TabsTrigger>}
               </TabsList>
             </div>
@@ -160,6 +162,10 @@ export function TableLayout() {
 
             <TabsContent value="docs" className="flex flex-col h-full overflow-hidden">
               <DocumentsPanel />
+            </TabsContent>
+
+            <TabsContent value="notes" className="flex flex-col h-full overflow-hidden">
+              <NotesPanel />
             </TabsContent>
 
             {isDm && (
