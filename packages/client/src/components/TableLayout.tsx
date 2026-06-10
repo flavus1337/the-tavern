@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { TableConnection } from '../ws/connection';
 import { CanvasViewer } from './CanvasViewer';
 import { DocumentViewer } from './DocumentViewer';
+import { NoteEditor } from './NoteEditor';
 import { DiceRoller } from './DiceRoller';
 import { RollLog } from './RollLog';
 import { DocumentsPanel } from './DocumentsPanel';
@@ -35,6 +36,7 @@ export function TableLayout() {
   const self = useStore((s) => s.self);
   const lastErrorMessage = useStore((s) => s.lastErrorMessage);
   const viewingDocument = useStore((s) => s.viewingDocument);
+  const noteEditor = useStore((s) => s.noteEditor);
   const setRoute = useStore((s) => s.setRoute);
   const resetTable = useStore((s) => s.resetTable);
   const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
@@ -130,6 +132,7 @@ export function TableLayout() {
         <div className="flex-1 min-w-0 relative flex">
           <CanvasViewer />
           {viewingDocument && <DocumentViewer doc={viewingDocument} />}
+          {noteEditor && <NoteEditor key={noteEditor.noteId ?? 'new'} noteId={noteEditor.noteId} />}
         </div>
 
         {/* Right sidebar */}

@@ -20,7 +20,7 @@ interface UsersFile {
   users: UserRecord[];
 }
 
-const USERNAME_RE = /^[a-z0-9_.-]{3,30}$/;
+const USERNAME_RE = /^[a-z0-9_.-]{2,30}$/;
 
 // Login attempt limiter: in-memory (resets on restart which is intentional).
 interface LimitEntry {
@@ -59,7 +59,7 @@ export function validateUsername(username: string): { ok: true } | { ok: false; 
     return {
       ok: false,
       reason:
-        'Username must be 3-30 characters and contain only a-z, 0-9, _, ., or - (lowercased)',
+        'Username must be 2-30 characters and contain only letters, digits, _, ., or -',
     };
   }
   return { ok: true };
@@ -105,7 +105,8 @@ export async function createUser(
     }
     inserted = {
       id: randomId('usr'),
-      username: norm,
+      // Preserve display case ("DM"); uniqueness and login are case-insensitive.
+      username: username.trim(),
       passwordHash,
       isAdmin,
       createdAt: new Date().toISOString(),
@@ -160,7 +161,7 @@ export async function login(
     return { ok: false, reason: 'locked', lockedForSeconds: remaining };
   }
 
-  const user = store.get().users.find((u) => u.username === norm);
+  const user = store.get().users.find((u) => u.username.toLowerCase() === norm);
   if (!user) {
     recordFail(norm);
     return { ok: false, reason: 'invalid' };
@@ -192,5 +193,5 @@ export function findUserById(id: string): UserRecord | undefined {
 
 export function findUserByUsername(username: string): UserRecord | undefined {
   const norm = normalizeUsername(username);
-  return store.get().users.find((u) => u.username === norm);
+  return store.get().users.find((u) => u.username.toLowerCase() === norm);
 }

@@ -14,7 +14,7 @@ export const config = {
   PORT: parseInt(process.env['PORT'] ?? '8080', 10),
   DATA_DIR: resolveDir(process.env['DATA_DIR'], './data'),
   CAMPAIGNS_DIR: resolveDir(process.env['CAMPAIGNS_DIR'], './campaigns'),
-  ADMIN_USER: process.env['ADMIN_USER'] ?? 'admin',
+  ADMIN_USER: process.env['ADMIN_USER'] ?? 'DM',
   ADMIN_PASSWORD: process.env['ADMIN_PASSWORD'] ?? null,
   COOKIE_SECURE: (process.env['COOKIE_SECURE'] ?? 'false') === 'true',
   PUBLIC_ORIGIN: process.env['PUBLIC_ORIGIN'] ?? 'http://localhost:8080',

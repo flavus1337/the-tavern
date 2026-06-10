@@ -36,10 +36,10 @@ Environment=COOKIE_SECURE=true
 Environment=PUBLIC_ORIGIN=https://vtt.example.com
 
 # --- Admin credentials ---
-# ADMIN_USER defaults to "admin" if not set.
+# ADMIN_USER defaults to "DM" if not set.
 # ADMIN_PASSWORD: if unset, a random password is generated on first run and printed to the journal.
 # Once users.json exists, this variable has no effect (password is stored hashed in users.json).
-#Environment=ADMIN_USER=admin
+#Environment=ADMIN_USER=DM
 #Environment=ADMIN_PASSWORD=change-me-before-first-start
 
 # --- Process management ---

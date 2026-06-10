@@ -79,7 +79,7 @@ node packages/server/dist/index.js
 | `PORT` | `8080` | HTTP + WebSocket port. |
 | `DATA_DIR` | `./data` | Server-owned data directory (users, sessions, invites, memberships). Created automatically. |
 | `CAMPAIGNS_DIR` | `./campaigns` | Path to campaign content folders. |
-| `ADMIN_USER` | `admin` | Username for the initial admin account. |
+| `ADMIN_USER` | `DM` | Username for the initial admin account. |
 | `ADMIN_PASSWORD` | *(generated)* | If unset on first run, a random password is generated and printed once to stdout. |
 | `COOKIE_SECURE` | *(unset)* | Set to `true` in production when running behind HTTPS (Cloudflare Tunnel or reverse proxy). |
 | `PUBLIC_ORIGIN` | *(unset)* | Full origin URL, e.g. `https://vtt.example.com`. Used to generate invite link URLs. |

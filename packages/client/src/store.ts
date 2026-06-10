@@ -68,6 +68,8 @@ interface TableSlice {
   documents: AssetManifest[];
   /** document currently open in the in-table viewer (local; also set by documentShared pushes) */
   viewingDocument: AssetManifest | null;
+  /** note editor open over the canvas area; noteId null = new note */
+  noteEditor: { noteId: string | null } | null;
   myNotes: Note[];
   lastErrorMessage: string | null;
 
@@ -80,6 +82,7 @@ interface TableSlice {
   setAssets: (assets: AssetManifest[]) => void;
   setDocuments: (documents: AssetManifest[]) => void;
   setViewingDocument: (doc: AssetManifest | null) => void;
+  setNoteEditor: (editor: { noteId: string | null } | null) => void;
   upsertNote: (note: Note) => void;
   setLastErrorMessage: (msg: string | null) => void;
   resetTable: () => void;
@@ -100,6 +103,7 @@ const tableDefaults = {
   assets: null,
   documents: [],
   viewingDocument: null,
+  noteEditor: null,
   myNotes: [],
   lastErrorMessage: null,
 };
@@ -178,7 +182,10 @@ export const useStore = create<StoreState>()((set) => ({
           ? null
           : s.viewingDocument,
     })),
-  setViewingDocument: (doc) => set({ viewingDocument: doc }),
+  // Document viewer and note editor share the canvas overlay — opening one
+  // closes the other.
+  setViewingDocument: (doc) => set(doc ? { viewingDocument: doc, noteEditor: null } : { viewingDocument: null }),
+  setNoteEditor: (editor) => set(editor ? { noteEditor: editor, viewingDocument: null } : { noteEditor: null }),
 
   upsertNote: (note) =>
     set((s) => {
