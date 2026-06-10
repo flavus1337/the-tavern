@@ -24,6 +24,8 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
     existing?.visibility ?? (isDm ? 'dm' : 'player'),
   );
   const [mode, setMode] = useState<'write' | 'preview'>('write');
+  // Existing notes open in read mode; new notes go straight to editing.
+  const [editing, setEditing] = useState(noteId === null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const canSave = connection === 'open' && title.trim() !== '';
@@ -38,7 +40,26 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       body,
       visibility,
     });
-    setNoteEditor(null);
+    if (noteId) {
+      // Back to reading the (locally up-to-date) note.
+      setEditing(false);
+      setMode('write');
+    } else {
+      // New note gets its id server-side; close — it appears in the list.
+      setNoteEditor(null);
+    }
+  }
+
+  function cancelEdit() {
+    if (noteId && existing) {
+      setTitle(existing.title);
+      setBody(existing.body);
+      setVisibility(existing.visibility);
+      setEditing(false);
+      setMode('write');
+    } else {
+      setNoteEditor(null);
+    }
   }
 
   // --- toolbar actions operate on the textarea selection -------------------
@@ -89,23 +110,37 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
       {/* Header */}
       <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-zinc-800 bg-zinc-950 shrink-0">
         <p className="text-sm font-medium text-zinc-200 truncate">
-          {noteId ? 'Edit note' : 'New note'}
+          {noteId ? (editing ? 'Edit note' : 'Note') : 'New note'}
         </p>
         <div className="flex items-center gap-2 shrink-0">
-          {isDm && (
-            <label className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={visibility === 'dm'}
-                onChange={(e) => setVisibility(e.target.checked ? 'dm' : 'player')}
-                className="rounded"
-              />
-              DM-only
-            </label>
+          {editing ? (
+            <>
+              {isDm && (
+                <label className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={visibility === 'dm'}
+                    onChange={(e) => setVisibility(e.target.checked ? 'dm' : 'player')}
+                    className="rounded"
+                  />
+                  DM-only
+                </label>
+              )}
+              <Button size="sm" variant="ghost" onClick={cancelEdit}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={save} disabled={!canSave}>
+                Save
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Edit
+            </Button>
           )}
-          <Button size="sm" onClick={save} disabled={!canSave}>
-            Save
-          </Button>
           <button
             type="button"
             onClick={() => setNoteEditor(null)}
@@ -120,7 +155,27 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
         </div>
       </div>
 
+      {/* Read mode */}
+      {!editing && (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="max-w-3xl w-full mx-auto p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <h1 className="text-2xl font-bold text-zinc-100">{title}</h1>
+              {isDm && visibility === 'dm' && (
+                <span className="text-[10px] uppercase tracking-wider bg-zinc-800 text-zinc-400 rounded px-1.5 py-0.5">DM</span>
+              )}
+            </div>
+            {body.trim() === '' ? (
+              <p className="text-sm text-zinc-600 italic">This note is empty — hit Edit to write something.</p>
+            ) : (
+              renderMarkdown(body)
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Editor */}
+      {editing && (
       <div className="flex-1 min-h-0 flex flex-col p-4 gap-2 max-w-3xl w-full mx-auto">
         <Input
           placeholder="Title"
@@ -181,6 +236,7 @@ export function NoteEditor({ noteId }: { noteId: string | null }) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
