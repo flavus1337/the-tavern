@@ -59,17 +59,26 @@ A complete playable demo campaign (*Shards of the Ashen Throne*) ships in [`camp
 
 ## Host a session for your group
 
-Your players need a URL, not your LAN. The included scripts put The Tavern behind a free Cloudflare quick tunnel — no port forwarding, no static IP, no Cloudflare account:
+Your players need a URL, not your LAN. The launcher puts The Tavern behind a free Cloudflare quick tunnel — no port forwarding, no static IP, no Cloudflare account. The host can be a **Linux, macOS, or Windows** machine; the only extra dependency is `cloudflared`:
+
+| Host OS | Install cloudflared |
+|---|---|
+| Ubuntu/Debian | `./deploy/setup-ubuntu.sh` (installs everything, incl. Node + build) |
+| macOS | `brew install cloudflared` |
+| Windows | `winget install Cloudflare.cloudflared` |
+
+Then (any OS, after `pnpm install && pnpm -r build`):
 
 ```bash
-./deploy/setup-ubuntu.sh                          # one-time on Ubuntu: Node, pnpm, cloudflared, build
-ADMIN_PASSWORD='choose-a-password' ./deploy/start.sh
+node deploy/start.mjs
 ```
 
-`start.sh` prints a public `https://….trycloudflare.com` URL — share it (the URL changes on every restart). Run it inside `tmux` to keep the session alive after you disconnect:
+Set `ADMIN_PASSWORD` in the environment before the first start to choose the DM password (e.g. `ADMIN_PASSWORD='…' node deploy/start.mjs` on Linux/macOS, `$env:ADMIN_PASSWORD='…'; node deploy/start.mjs` in PowerShell).
+
+The launcher prints a public `https://….trycloudflare.com` URL — share it (the URL changes on every restart). On Linux/macOS, run it inside `tmux` to keep the session alive after you disconnect:
 
 ```bash
-tmux new -d -s tavern "ADMIN_PASSWORD='…' ./deploy/start.sh"
+tmux new -d -s tavern "ADMIN_PASSWORD='…' node deploy/start.mjs"
 tmux attach -t tavern        # view / copy the URL, detach with Ctrl-b d
 ```
 

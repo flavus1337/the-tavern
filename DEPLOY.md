@@ -14,7 +14,7 @@ git clone git@github.com:PYannik/the-tavern.git && cd the-tavern
 ADMIN_PASSWORD='choose-a-password' ./deploy/start.sh
 ```
 
-`start.sh` launches a Cloudflare **quick tunnel** (new random URL each start — printed in a banner), then the server with `PUBLIC_ORIGIN` wired so invite links point at the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before the first start to migrate a world. Ctrl-C stops both.
+`start.sh` is a thin wrapper around the cross-platform launcher `deploy/start.mjs` — on macOS (`brew install cloudflared`) or Windows (`winget install Cloudflare.cloudflared`) run `node deploy/start.mjs` directly after `pnpm install && pnpm -r build`. It launches a Cloudflare **quick tunnel** (new random URL each start — printed in a banner), then the server with `PUBLIC_ORIGIN` wired so invite links point at the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before the first start to migrate a world. Ctrl-C stops both.
 
 For a **permanent URL** and autostart on boot, follow the named-tunnel + systemd sections below instead of `start.sh`.
 
