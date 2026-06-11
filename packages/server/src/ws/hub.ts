@@ -5,6 +5,7 @@ import { resolveSessionFromCookieHeader } from '../auth/sessions.js';
 import { findUserById } from '../auth/users.js';
 import { getCampaign } from '../campaign/registry.js';
 import { log } from '../log.js';
+import { handleMessage } from './handlers.js';
 import type { Role, ServerMessage, PresenceEntry } from '@vtt/shared';
 
 export interface WsSession {
@@ -17,8 +18,9 @@ export interface WsSession {
   isAlive: boolean;
 }
 
-// Singleton WSS.
-export const wss = new WebSocketServer({ noServer: true });
+// Singleton WSS. maxPayload bounds a single frame (default is 100 MiB) so a
+// member cannot spike memory with a giant message.
+export const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 const sessions = new Map<string, WsSession>();
 
 let sessionCounter = 0;
@@ -99,21 +101,19 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
       }
     });
 
-    // Import handler lazily to avoid circular dep issues.
-    import('../ws/handlers.js').then(({ handleMessage }) => {
-      ws.on('message', (data) => {
-        try {
-          const text = data.toString();
-          const msg = JSON.parse(text) as unknown;
-          handleMessage(wsSession, msg).catch((err: unknown) => {
-            log.error(`Unhandled ws handler error: ${String(err)}`);
-          });
-        } catch {
-          log.warn(`WS received non-JSON message from ${wsSession.username}`);
-        }
-      });
-    }).catch((err: unknown) => {
-      log.error(`Failed to import ws handlers: ${String(err)}`);
+    // Registered synchronously so a message sent immediately after connect is
+    // not missed. (Circular import is safe: handleMessage is only called here,
+    // after module init, and handlers reference hub helpers at call time too.)
+    ws.on('message', (data) => {
+      try {
+        const text = data.toString();
+        const msg = JSON.parse(text) as unknown;
+        handleMessage(wsSession, msg).catch((err: unknown) => {
+          log.error(`Unhandled ws handler error: ${String(err)}`);
+        });
+      } catch {
+        log.warn(`WS received non-JSON message from ${wsSession.username}`);
+      }
     });
   });
 }
@@ -125,9 +125,16 @@ export function send(ws: WebSocket, msg: ServerMessage): void {
 }
 
 export function getSessionsInRoom(campaignId: string): WsSession[] {
-  return [...sessions.values()].filter(
-    (s) => s.campaignId === campaignId && s.ws.readyState === WebSocket.OPEN,
-  );
+  // Use the campaign's room set (O(room) lookups) instead of scanning every
+  // session across all campaigns on each broadcast.
+  const entry = getCampaign(campaignId);
+  if (!entry) return [];
+  const out: WsSession[] = [];
+  for (const sessId of entry.room) {
+    const sess = sessions.get(sessId);
+    if (sess && sess.ws.readyState === WebSocket.OPEN) out.push(sess);
+  }
+  return out;
 }
 
 export function broadcast(

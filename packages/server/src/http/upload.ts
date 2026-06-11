@@ -23,6 +23,9 @@ const router = Router();
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_DIMENSION = 2560;
+// Cap assets per campaign so a member can't flood the disk with files. Generous
+// for any real campaign; combined with the 100 MB per-file limit it bounds disk.
+const MAX_ASSETS_PER_CAMPAIGN = 1000;
 
 // Never accept files a browser could execute as same-origin markup/script.
 const BLOCKED_DOC_MIMES = new Set([
@@ -55,6 +58,11 @@ router.post(
 
     if (!IMAGE_MIMES.has(file.mimetype)) {
       res.status(400).json({ error: 'Only image files are allowed (png, jpg, webp, gif)', code: 'INVALID_FILE_TYPE' });
+      return;
+    }
+
+    if (entry.store.assets.size >= MAX_ASSETS_PER_CAMPAIGN) {
+      res.status(413).json({ error: 'Campaign asset limit reached', code: 'ASSET_LIMIT' });
       return;
     }
 
@@ -146,6 +154,11 @@ router.post(
       return;
     }
 
+    if (entry.store.assets.size >= MAX_ASSETS_PER_CAMPAIGN) {
+      res.status(413).json({ error: 'Campaign asset limit reached', code: 'ASSET_LIMIT' });
+      return;
+    }
+
     const originalName = file.originalname;
     const rawExt = path.extname(originalName).slice(1).toLowerCase();
     const ext = /^[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : 'bin';
@@ -174,7 +187,14 @@ router.post(
     const outputFilename = `${slug}-${shortId}.${ext}`;
     const outputPath = path.join(entry.store.dir, 'assets', outputFilename);
 
-    await fs.writeFile(outputPath, file.buffer);
+    try {
+      await fs.writeFile(outputPath, file.buffer);
+    } catch (err) {
+      // Disk full / permissions — respond cleanly rather than letting the
+      // rejection bubble up.
+      res.status(500).json({ error: `Could not save file: ${String(err)}` });
+      return;
+    }
 
     const manifest: AssetManifest = {
       type: 'asset',

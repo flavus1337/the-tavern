@@ -1,8 +1,9 @@
 import express from 'express';
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import { log } from '../log.js';
 import { requireAuth } from '../auth/middleware.js';
 import { previewInvite, redeemInvite } from '../auth/invites.js';
 import { param } from './params.js';
@@ -15,7 +16,8 @@ export function createApp(): express.Application {
   const app = express();
 
   app.set('trust proxy', 1);
-  app.use(express.json());
+  // Bound JSON bodies (uploads use multipart, not JSON, so 1 MB is generous).
+  app.use(express.json({ limit: '1mb' }));
 
   // Health check.
   app.get('/api/health', (_req: Request, res: Response) => {
@@ -71,6 +73,24 @@ export function createApp(): express.Application {
       res.sendFile(indexPath);
     });
   }
+
+  // Final error handler — turns thrown/rejected errors in routes into a 500
+  // instead of an unhandled rejection (which would crash the single process).
+  // (Express forwards errors from sync throws and from `next(err)`.)
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    // Map known client errors (oversized body, multer file-size) to their real
+    // status; everything else is a 500. Either way the process keeps running.
+    const code = (err as { type?: string; code?: string } | null)?.type ?? (err as { code?: string } | null)?.code;
+    const tooLarge = code === 'entity.too.large' || code === 'LIMIT_FILE_SIZE';
+    if (!tooLarge) {
+      log.error(`Unhandled route error: ${err instanceof Error ? err.stack : String(err)}`);
+    }
+    if (!res.headersSent) {
+      res
+        .status(tooLarge ? 413 : 500)
+        .json({ error: tooLarge ? 'Payload too large' : 'Internal server error' });
+    }
+  });
 
   return app;
 }

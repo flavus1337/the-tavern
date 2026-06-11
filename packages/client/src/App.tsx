@@ -17,6 +17,18 @@ interface ErrorBoundaryState {
   message: string;
 }
 
+/**
+ * A failed dynamic import almost always means the server was rebuilt/restarted
+ * while this tab held a stale bundle: the old hashed chunk (e.g. the lazy PDF
+ * viewer or its pdf.js worker) no longer exists. The fix is to load the new
+ * bundle, so we reload once automatically.
+ */
+function isChunkLoadError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /dynamically imported module|Loading chunk|Importing a module script failed|Failed to fetch/i.test(msg);
+}
+const RELOAD_FLAG = 'vtt_chunk_reload';
+
 class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
   constructor(props: { children: ReactNode }) {
     super(props);
@@ -24,6 +36,12 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryS
   }
 
   static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
+    // Auto-recover from a stale-bundle chunk error, but only once per tab so a
+    // genuinely broken chunk can't cause a reload loop.
+    if (isChunkLoadError(error) && !sessionStorage.getItem(RELOAD_FLAG)) {
+      sessionStorage.setItem(RELOAD_FLAG, '1');
+      window.location.reload();
+    }
     return {
       hasError: true,
       message: error instanceof Error ? error.message : String(error),
@@ -81,6 +99,10 @@ function AppContent() {
   );
 
   useEffect(() => {
+    // The app mounted, so the bundle is good — reset the chunk-reload guard so a
+    // future restart can auto-recover again.
+    sessionStorage.removeItem('vtt_chunk_reload');
+
     async function bootstrap() {
       // 1. Parse ?invite= from URL
       const params = new URLSearchParams(window.location.search);

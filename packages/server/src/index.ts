@@ -65,6 +65,16 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
 }
 
+// Single-process server: a stray rejection or throw must NOT take down everyone's
+// session. Log and keep running. (Node would otherwise terminate on an
+// unhandled rejection by default.)
+process.on('unhandledRejection', (reason: unknown) => {
+  log.error(`Unhandled promise rejection: ${reason instanceof Error ? reason.stack : String(reason)}`);
+});
+process.on('uncaughtException', (err: unknown) => {
+  log.error(`Uncaught exception: ${err instanceof Error ? err.stack : String(err)}`);
+});
+
 main().catch((err: unknown) => {
   log.error(`Fatal startup error: ${String(err)}`);
   process.exit(1);

@@ -26,9 +26,16 @@ export interface CampaignRuntime {
   state: RuntimeState;
   rollLog: RollLogEntry[];
   dir: string; // .runtime/ dir
+  /** serializes state.json writes so concurrent saves never interleave */
+  stateWriteQueue: Promise<void>;
+  /** rolls appended since the last compaction (drives jsonl rewrite) */
+  rollsAppendedSinceCompaction: number;
 }
 
 const MAX_ROLL_LOG = 200;
+// Rewrite rolls.jsonl down to the last MAX_ROLL_LOG after this many appends,
+// so the file cannot grow without bound across a long campaign.
+const ROLLS_COMPACTION_THRESHOLD = 500;
 
 export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime> {
   const runtimeDir = path.join(campaignDir, '.runtime');
@@ -93,14 +100,28 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     // Missing is fine.
   }
 
-  return { state, rollLog, dir: runtimeDir };
+  return {
+    state,
+    rollLog,
+    dir: runtimeDir,
+    stateWriteQueue: Promise.resolve(),
+    rollsAppendedSinceCompaction: 0,
+  };
 }
 
-export async function persistState(runtime: CampaignRuntime): Promise<void> {
-  const statePath = path.join(runtime.dir, 'state.json');
-  const tmpPath = statePath + '.tmp';
-  await fs.writeFile(tmpPath, JSON.stringify(runtime.state, null, 2), 'utf8');
-  await fs.rename(tmpPath, statePath);
+export function persistState(runtime: CampaignRuntime): Promise<void> {
+  // Serialize writes through a per-runtime queue so two near-simultaneous saves
+  // never write the shared tmp file concurrently (which could corrupt it). Each
+  // write snapshots the latest in-memory state at write time.
+  runtime.stateWriteQueue = runtime.stateWriteQueue.then(async () => {
+    const statePath = path.join(runtime.dir, 'state.json');
+    const tmpPath = statePath + '.tmp';
+    await fs.writeFile(tmpPath, JSON.stringify(runtime.state, null, 2), 'utf8');
+    await fs.rename(tmpPath, statePath);
+  }).catch((err: unknown) => {
+    log.error(`Failed to persist state for ${runtime.dir}: ${String(err)}`);
+  });
+  return runtime.stateWriteQueue;
 }
 
 export async function appendRollLog(
@@ -113,5 +134,18 @@ export async function appendRollLog(
   }
 
   const rollsPath = path.join(runtime.dir, 'rolls.jsonl');
+
+  // Periodically compact the append-only log down to the last MAX_ROLL_LOG
+  // entries so the file cannot grow without bound.
+  runtime.rollsAppendedSinceCompaction += 1;
+  if (runtime.rollsAppendedSinceCompaction >= ROLLS_COMPACTION_THRESHOLD) {
+    runtime.rollsAppendedSinceCompaction = 0;
+    const tmpPath = rollsPath + '.tmp';
+    const content = runtime.rollLog.map((e) => JSON.stringify(e)).join('\n') + '\n';
+    await fs.writeFile(tmpPath, content, 'utf8');
+    await fs.rename(tmpPath, rollsPath);
+    return;
+  }
+
   await fs.appendFile(rollsPath, JSON.stringify(entry) + '\n', 'utf8');
 }
