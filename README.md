@@ -1,18 +1,95 @@
-# VTT — Browser-Based Virtual Tabletop
+# 🎲 The Tavern
 
-A lightweight, self-hosted virtual tabletop for running tabletop RPG sessions in a browser. No subscription, no account with a third party, no proprietary format. You own your data.
+**A self-hosted virtual tabletop for D&D nights with your friends — warm, fast, and entirely yours.**
+
+The Tavern is a browser-based VTT you run on your own machine. Your players click one invite link and they're at the table — no installs, no accounts with a third party, no subscription, no proprietary cloud holding your campaign hostage. Everything lives in plain files on your disk.
+
+It's built for the way small groups actually play: one DM, a handful of friends, a map on the table, dice that matter, music in the background, and a candlelit look that feels like a session — not like a dev tool.
 
 ---
 
 ## Features
 
-- **Live shared canvas** — the DM shares a map or art image and every player sees it instantly via WebSocket.
-- **Dice roller + roll log** — roll any standard polyhedral expression (e.g. `4d6kh3`, `1d20+5`). Results appear in a live log, visible to all or DM-only depending on roll visibility.
-- **Accounts + invite links** — registration is invite-only. The DM generates a link; the player opens it to register and automatically joins the campaign. No open sign-up.
-- **Campaign lobby** — players see all campaigns they belong to and can jump into a session from the lobby.
-- **Player PDF uploads** — players can upload their character sheet PDF in-app; it's stored in the campaign's `assets/` folder and linked to their character.
-- **LLM-friendly campaign folders** — campaign content (chapters, characters, notes, assets) lives in plain JSON files inside `campaigns/<id>/`. A language model can write or update content offline; the server loads it at startup. See [Campaign Format Specification](campaigns/demo-campaign/README.md).
-- **Per-campaign roles** — each campaign member is either DM (full access, can share images, manage invites, see all assets) or player (can roll, upload their own PDF, see shared canvas).
+🗺️ **A real table.** Pin multiple maps, handouts, and character art onto a shared board. Drag, resize, and layer them live for everyone. Unlock individual items so players can move their own token art themselves. Pan and zoom are per-player — everyone looks at the same table from their own seat.
+
+🎲 **Dice that feel like dice.** Quick-roll d4–d100, full expressions (`2d6+3`, `2d20kh`), one-click **Advantage / Disadvantage** with both throws shown and the kept die highlighted. Server-side rolls (no cheating), a shared roll log, private DM rolls, and natural 20s that make the whole board flash gold.
+
+📜 **Documents — private until shared.** Players upload character sheets, handouts, anything (PDF, images, text…). Only the uploader sees a file until they share it with the table — then it opens on everyone's screen in a floating, draggable panel. PDFs render in-app on every browser.
+
+🎵 **A bard in a box.** Upload ambience or battle music and play it **for the whole table, synchronized**. The DM controls playback; players control only their own volume. Late joiners drop into the track at the right position. Minimisable bottom dock keeps the music out of the way.
+
+📝 **Notes with markdown.** Personal session notes with a formatting toolbar and live preview, DM-only prep notes, and one-click sharing of any note with the party. All saved as part of the campaign.
+
+🔑 **Invite-link onboarding.** No open signup. Generate a link, send it to a friend, they pick a name and password, and they're in your campaign — with role-based visibility enforced server-side everywhere (players never see DM-only content, non-members never see anything).
+
+🤖 **LLM-friendly campaign format.** Campaign content — chapters, NPCs with stat blocks, notes, assets — is plain JSON + Markdown in a documented folder structure. Write it by hand, or let a language model draft your campaign and drop the files in. [Format specification →](campaigns/demo-campaign/README.md)
+
+🕯️ **The Candlelight theme.** Warm charcoal, ember accents, a display serif for the things that matter, gold reserved for critical hits. Dark mode isn't a setting — it's the point.
+
+---
+
+## Quick start (try it locally)
+
+**Requirements:** Node 22+, pnpm 9 (`corepack enable` gets you pnpm).
+
+```bash
+git clone https://github.com/PYannik/the-tavern.git
+cd the-tavern
+pnpm install
+pnpm dev
+```
+
+Open **http://localhost:5173**. On first run the server creates the DM account and prints the credentials **once**:
+
+```
+╔══════════════════════════════════════════════════════════╗
+║           ADMIN ACCOUNT CREATED                           ║
+║  Username: DM                                             ║
+║  Password: <generated — copy it now>                      ║
+╚══════════════════════════════════════════════════════════╝
+```
+
+(Set `ADMIN_PASSWORD=your-password` before the first start to choose your own.)
+
+Log in, create a campaign, pin a map from the DM tab, generate an invite link — and open it in a second browser window to see the player side.
+
+A complete playable demo campaign (*Shards of the Ashen Throne*) ships in [`campaigns/demo-campaign/`](campaigns/demo-campaign/).
+
+---
+
+## Host a session for your group
+
+Your players need a URL, not your LAN. The included scripts put The Tavern behind a free Cloudflare quick tunnel — no port forwarding, no static IP, no Cloudflare account:
+
+```bash
+./deploy/setup-ubuntu.sh                          # one-time on Ubuntu: Node, pnpm, cloudflared, build
+ADMIN_PASSWORD='choose-a-password' ./deploy/start.sh
+```
+
+`start.sh` prints a public `https://….trycloudflare.com` URL — share it (the URL changes on every restart). Run it inside `tmux` to keep the session alive after you disconnect:
+
+```bash
+tmux new -d -s tavern "ADMIN_PASSWORD='…' ./deploy/start.sh"
+tmux attach -t tavern        # view / copy the URL, detach with Ctrl-b d
+```
+
+For a **permanent URL** and start-on-boot (named Cloudflare tunnel + systemd), follow [DEPLOY.md](DEPLOY.md).
+
+Your world — accounts, campaigns, uploads — lives in `./live/` (gitignored). Back up that folder and you've backed up everything.
+
+---
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `8080` | HTTP + WebSocket port (single process, single port). |
+| `DATA_DIR` | `./data` | Server data: users, sessions, invites, memberships (JSON files). |
+| `CAMPAIGNS_DIR` | `./campaigns` | Campaign content folders. |
+| `ADMIN_USER` | `DM` | Username for the seeded admin/DM account. |
+| `ADMIN_PASSWORD` | *(generated)* | Set before first run to choose the DM password; otherwise printed once. |
+| `COOKIE_SECURE` | `false` | Set `true` behind HTTPS (tunnel / reverse proxy). |
+| `PUBLIC_ORIGIN` | `http://localhost:8080` | Origin used when generating invite links. |
 
 ---
 
@@ -20,95 +97,32 @@ A lightweight, self-hosted virtual tabletop for running tabletop RPG sessions in
 
 ```
 packages/
-  shared/   — TypeScript types and helpers (campaign entities, WebSocket protocol, API DTOs, dice).
-              Source-only package consumed by server and client.
-  server/   — Node.js + Express + WebSocket server. Serves the built client and all API/WS endpoints.
-  client/   — Browser SPA (Vite). Communicates over REST + WebSocket.
+  shared/   TypeScript contract: campaign entities, WebSocket protocol, dice parser
+  server/   Node + Express + ws — one process serves the client, REST API, and /ws
+  client/   React + Vite + Tailwind v4 SPA
 
-campaigns/  — Campaign content folders. One subfolder per campaign.
-data/       — Server-owned runtime data: users, sessions, invites, memberships (JSON files).
-              Created automatically on first run. Not the same as campaign content.
-deploy/     — Deployment helpers: systemd unit file.
+campaigns/  Campaign content (one folder per campaign, plain JSON + Markdown + assets)
+deploy/     setup-ubuntu.sh, start.sh, systemd unit
+scripts/    smoke-test.ts — 147-assertion end-to-end test against a real server
 ```
 
-The server is a **single Node process** on one port (default `8080`). It serves the built client bundle, the REST API under `/api/`, and a WebSocket endpoint at `/ws`. No separate backend/frontend processes.
-
----
-
-## Quickstart (development)
-
-**Requirements:** Node 22, pnpm 9.
+Single Node process, JSON files for persistence, WebSockets for live sync, scrypt + httpOnly-cookie sessions for auth. No database, no Docker required, no external services at game time.
 
 ```bash
-git clone <repo-url> vtt
-cd vtt
-pnpm install
-pnpm dev
-```
-
-Open [http://localhost:8080](http://localhost:8080).
-
-On first run the server generates a random admin password and **prints it once to the terminal**. Copy it — you'll need it to log in as `admin`.
-
-```
-[vtt] First run: admin password set to: Xk3mP9rQv7nL
-[vtt] Store it securely — it will not be printed again.
-```
-
-After logging in as admin, create a campaign via the UI, generate an invite link, and share it with players.
-
-For development against live-reloaded code:
-
-```bash
-pnpm dev        # starts server + client with hot reload
-```
-
-For a production-style build:
-
-```bash
-pnpm install && pnpm build
-node packages/server/dist/index.js
+pnpm -r typecheck && pnpm -r build && pnpm smoke   # the full verification suite
 ```
 
 ---
 
-## Configuration (environment variables)
+## Roadmap
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `PORT` | `8080` | HTTP + WebSocket port. |
-| `DATA_DIR` | `./data` | Server-owned data directory (users, sessions, invites, memberships). Created automatically. |
-| `CAMPAIGNS_DIR` | `./campaigns` | Path to campaign content folders. |
-| `ADMIN_USER` | `DM` | Username for the initial admin account. |
-| `ADMIN_PASSWORD` | *(generated)* | If unset on first run, a random password is generated and printed once to stdout. |
-| `COOKIE_SECURE` | *(unset)* | Set to `true` in production when running behind HTTPS (Cloudflare Tunnel or reverse proxy). |
-| `PUBLIC_ORIGIN` | *(unset)* | Full origin URL, e.g. `https://vtt.example.com`. Used to generate invite link URLs. |
+- Fog of war — DM-controlled vision masking
+- Initiative & condition tracker
+- PDF campaign auto-import — feed a campaign PDF to an LLM pipeline that writes the campaign folder
+- Grid snapping and measurement tools
 
 ---
 
-## Demo Campaign
+## License
 
-A complete playable demo campaign — *Shards of the Ashen Throne* — is included in `campaigns/demo-campaign/`. It contains chapters, NPC and PC characters, DM notes, and generated map/art images. Use it as a starting point or as an example when writing your own campaign content.
-
-The campaign folder format is fully documented in [campaigns/demo-campaign/README.md](campaigns/demo-campaign/README.md). That document is the authoritative specification for anyone (or any language model) writing campaign content.
-
----
-
-## Production Deployment
-
-See [DEPLOY.md](DEPLOY.md) for a step-by-step guide covering:
-
-- Ubuntu 24 server setup
-- Node 22 + pnpm installation
-- Cloudflare Tunnel configuration (free, no port forwarding required)
-- systemd service setup and first-run admin password recovery
-- Updating the server and resetting passwords
-
----
-
-## Roadmap (v2)
-
-- Token layer — drag-and-drop creature tokens on the shared map with position sync.
-- Fog of war — DM-controlled vision masking per scene.
-- PDF auto-import — upload a campaign PDF and let an LLM pipeline generate the campaign folder structure automatically.
-- Condition tracker — track HP, conditions, and initiative order in a live sidebar.
+[MIT](LICENSE) — do whatever makes your table happy.
