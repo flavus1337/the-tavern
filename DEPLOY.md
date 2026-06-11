@@ -9,7 +9,7 @@ This guide covers deploying VTT on an always-on Ubuntu 24 machine (laptop, mini 
 The cross-platform launcher handles everything after a clone — install, build, cloudflared download, tunnel, server, credentials:
 
 ```bash
-git clone git@github.com:PYannik/the-tavern.git && cd the-tavern
+git clone git@github.com:flavus1337/the-tavern.git && cd the-tavern
 node deploy/start.mjs
 ```
 
@@ -55,7 +55,7 @@ pnpm --version   # should print 9.x.x
 ```bash
 sudo mkdir -p /opt/vtt
 sudo chown $USER:$USER /opt/vtt
-git clone <repo-url> /opt/vtt
+git clone git@github.com:flavus1337/the-tavern.git /opt/vtt
 cd /opt/vtt
 ```
 

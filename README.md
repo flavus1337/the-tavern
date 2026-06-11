@@ -29,7 +29,7 @@ It is built for small groups: one DM, a few players, shared maps, dice, handouts
 The only requirement is **Node 22+** ([nodejs.org](https://nodejs.org)). Same flow on Linux, macOS, and Windows:
 
 ```bash
-git clone https://github.com/PYannik/the-tavern.git
+git clone https://github.com/flavus1337/the-tavern.git
 cd the-tavern
 node deploy/start.mjs
 ```
