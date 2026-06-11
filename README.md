@@ -24,61 +24,44 @@ It is built for small groups: one DM, a few players, shared maps, dice, handouts
 
 🕯️ **Candlelight theme.** Warm charcoal, ember accents, a serif for names and dice totals, gold reserved for crits. Dark only.
 
-## Quick start (local)
+## Quick start
 
-Requirements: Node 22+, pnpm 9 (`corepack enable` gets you pnpm). Works on Linux, macOS, and Windows.
+The only requirement is **Node 22+** ([nodejs.org](https://nodejs.org)). Same flow on Linux, macOS, and Windows:
 
 ```bash
 git clone https://github.com/PYannik/the-tavern.git
 cd the-tavern
-pnpm install
-pnpm dev
-```
-
-Open **http://localhost:5173**. On first run the server creates the DM account and prints the credentials once:
-
-```
-╔══════════════════════════════════════════════════════════╗
-║           ADMIN ACCOUNT CREATED                           ║
-║  Username: DM                                             ║
-║  Password: <generated, copy it now>                       ║
-╚══════════════════════════════════════════════════════════╝
-```
-
-Set `ADMIN_PASSWORD=your-password` before the first start to choose your own.
-
-Log in, create a campaign, pin a map from the DM tab, generate an invite link, and open it in a second browser window to see the player side.
-
-A playable demo campaign (*Shards of the Ashen Throne*) ships in [`campaigns/demo-campaign/`](campaigns/demo-campaign/).
-
-## Host a session for your group
-
-Your players need a URL, not your LAN. The launcher puts The Tavern behind a free Cloudflare quick tunnel: no port forwarding, no static IP, no Cloudflare account. The host can be a Linux, macOS, or Windows machine; the only extra dependency is `cloudflared`:
-
-| Host OS | Install cloudflared |
-|---|---|
-| Ubuntu/Debian | `./deploy/setup-ubuntu.sh` (installs everything, incl. Node and build) |
-| macOS | `brew install cloudflared` |
-| Windows | `winget install Cloudflare.cloudflared` |
-
-Then, on any OS, after `pnpm install && pnpm -r build`:
-
-```bash
 node deploy/start.mjs
 ```
 
-Set `ADMIN_PASSWORD` in the environment before the first start (`ADMIN_PASSWORD='…' node deploy/start.mjs` on Linux/macOS, `$env:ADMIN_PASSWORD='…'; node deploy/start.mjs` in PowerShell).
+The launcher checks dependencies, installs and builds on first run (this takes a minute), downloads `cloudflared` if it is not installed, starts everything, and prints what you need:
 
-The launcher prints a public `https://….trycloudflare.com` URL. Share it with your players. The URL changes on every restart. On Linux/macOS, run it inside `tmux` to keep the session alive after you disconnect:
+```
+╔══════════════════════════════════════════════════════════════╗
+  The Tavern is reachable at:
+  https://your-random-words.trycloudflare.com
 
-```bash
-tmux new -d -s tavern "ADMIN_PASSWORD='…' node deploy/start.mjs"
-tmux attach -t tavern        # view / copy the URL, detach with Ctrl-b d
+  DM login:  DM / <generated password>   (first run, save this!)
+╚══════════════════════════════════════════════════════════════╝
 ```
 
-For a permanent URL and start-on-boot (named Cloudflare tunnel plus systemd), follow [DEPLOY.md](DEPLOY.md).
+Share the URL with your players. Log in as DM, create a campaign, pin a map from the DM tab, and generate invite links for your group. To pick your own password, set `ADMIN_PASSWORD` before the first start.
 
-Your world (accounts, campaigns, uploads) lives in `./live/`, which is gitignored. Back up that folder and you have backed up everything.
+Notes:
+
+- The tunnel URL changes on every restart (free Cloudflare quick tunnel: no account, no port forwarding). For a permanent URL and start-on-boot, follow [DEPLOY.md](DEPLOY.md).
+- On a remote Linux box, run the launcher inside `tmux` so it survives disconnects: `tmux new -d -s tavern "node deploy/start.mjs"`, then `tmux attach -t tavern` to read the banner.
+- Your world (accounts, campaigns, uploads) lives in `./live/`, which is gitignored. Back up that folder and you have backed up everything.
+- A playable demo campaign (*Shards of the Ashen Throne*) ships in [`campaigns/demo-campaign/`](campaigns/demo-campaign/).
+
+## Development
+
+```bash
+pnpm install
+pnpm dev          # server on :8080 + client with hot reload on :5173
+```
+
+Open http://localhost:5173. The same first-run credential rules apply (the server prints generated credentials once).
 
 ## Configuration
 

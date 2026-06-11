@@ -8,3 +8,6 @@ campaigns/*/.runtime/
 
 # Live local world (accounts, campaigns with uploads) — personal data, never commit
 /live/
+
+# launcher-downloaded cloudflared
+deploy/.bin/

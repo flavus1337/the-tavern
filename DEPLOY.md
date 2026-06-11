@@ -4,19 +4,18 @@ This guide covers deploying VTT on an always-on Ubuntu 24 machine (laptop, mini 
 
 ---
 
-## Quick start (scripts)
+## Quick start (one command)
 
-The two scripts in `deploy/` automate the common path:
+The cross-platform launcher handles everything after a clone — install, build, cloudflared download, tunnel, server, credentials:
 
 ```bash
 git clone git@github.com:PYannik/the-tavern.git && cd the-tavern
-./deploy/setup-ubuntu.sh        # one-time: Node 22, pnpm, cloudflared, build
-ADMIN_PASSWORD='choose-a-password' ./deploy/start.sh
+node deploy/start.mjs
 ```
 
-`start.sh` is a thin wrapper around the cross-platform launcher `deploy/start.mjs` — on macOS (`brew install cloudflared`) or Windows (`winget install Cloudflare.cloudflared`) run `node deploy/start.mjs` directly after `pnpm install && pnpm -r build`. It launches a Cloudflare **quick tunnel** (new random URL each start — printed in a banner), then the server with `PUBLIC_ORIGIN` wired so invite links point at the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before the first start to migrate a world. Ctrl-C stops both.
+Only prerequisite: Node 22+. The launcher starts a Cloudflare **quick tunnel** (new random URL each start, printed in a banner together with the first-run DM credentials), then the server with `PUBLIC_ORIGIN` wired so invite links point at the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before the first start to migrate a world. Ctrl-C stops both.
 
-For a **permanent URL** and autostart on boot, follow the named-tunnel + systemd sections below instead of `start.sh`.
+`deploy/setup-ubuntu.sh` remains available for system-wide installs (Node via apt, cloudflared via dpkg). For a **permanent URL** and autostart on boot, follow the named-tunnel + systemd sections below instead of the launcher.
 
 ---
 
