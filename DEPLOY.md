@@ -15,7 +15,7 @@ node deploy/start.mjs
 
 Only prerequisite: Node 22+. The launcher starts a Cloudflare **quick tunnel** (new random URL each start, printed in a banner together with the first-run DM credentials), then the server with `PUBLIC_ORIGIN` wired so invite links point at the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before the first start to migrate a world. Ctrl-C stops both.
 
-`deploy/setup-ubuntu.sh` remains available for system-wide installs (Node via apt, cloudflared via dpkg). For a **permanent URL** and autostart on boot, follow the named-tunnel + systemd sections below instead of the launcher.
+For a **permanent URL** and autostart on boot, follow the named-tunnel + systemd sections below instead of the launcher.
 
 ---
 

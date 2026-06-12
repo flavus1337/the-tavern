@@ -5,20 +5,8 @@ import { useStore } from '../store';
 import { Button } from '../components/ui/button';
 import { D20Logo } from '../components/D20Logo';
 import { CreateCampaignDialog } from '../components/dm/CreateCampaignDialog';
+import { avatarGradient } from '../lib/avatar';
 import lobbyBg from '../assets/lobby-tavern.png';
-
-// Avatar gradient assignments (stable by index)
-const PLAYER_GRADIENTS = [
-  'linear-gradient(135deg,#5b86c2,#41609c)',
-  'linear-gradient(135deg,#5bb3a3,#3f8c7f)',
-  'linear-gradient(135deg,#c79a4b,#a07a32)',
-];
-const DM_GRADIENT = 'linear-gradient(135deg,#c2596a,#9c4150)';
-
-function avatarGradient(role: string, index: number): string {
-  if (role === 'dm') return DM_GRADIENT;
-  return PLAYER_GRADIENTS[index % PLAYER_GRADIENTS.length] ?? DM_GRADIENT;
-}
 
 export function CampaignLobby() {
   const user = useStore((s) => s.user);

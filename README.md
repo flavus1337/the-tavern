@@ -84,7 +84,7 @@ packages/
   client/   React + Vite + Tailwind v4 SPA
 
 campaigns/  Campaign content (one folder per campaign, plain JSON + Markdown + assets)
-deploy/     start.mjs (cross-platform launcher), setup-ubuntu.sh, systemd unit
+deploy/     start.mjs (cross-platform launcher), systemd unit
 scripts/    smoke-test.ts, an end-to-end test against a real server instance
 ```
 

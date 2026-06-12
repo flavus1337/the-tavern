@@ -65,7 +65,7 @@ export function DiceRoller() {
 
       {/* Quick Roll */}
       <div>
-        <p style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--faint)', marginBottom: 12, fontWeight: 500 }}>
+        <p className="eyebrow" style={{ marginBottom: 12 }}>
           Quick Roll
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
@@ -181,7 +181,7 @@ export function DiceRoller() {
 
       {/* Expression roller */}
       <div className="space-y-3">
-        <p style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--faint)', fontWeight: 500 }}>
+        <p className="eyebrow">
           Expression
         </p>
 

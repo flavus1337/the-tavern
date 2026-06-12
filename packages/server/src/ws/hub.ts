@@ -148,76 +148,33 @@ export function broadcast(
   }
 }
 
-export function broadcastPresence(campaignId: string): void {
-  const roomSessions = getSessionsInRoom(campaignId);
-
-  // Deduplicate by userId: connected=true if any open socket.
-  const presenceMap = new Map<string, PresenceEntry>();
-  for (const sess of roomSessions) {
-    if (!presenceMap.has(sess.userId) && sess.role) {
-      presenceMap.set(sess.userId, {
-        userId: sess.userId,
-        username: sess.username,
-        role: sess.role,
-        connected: true,
-      });
-    }
-  }
-
-  const entries = [...presenceMap.values()];
-  broadcast(campaignId, { type: 'presence', entries });
-}
-
-/**
- * Broadcast presence after a disconnect: includes the disconnecting user with
- * connected=false unless another socket for that user is still open.
- */
-export function broadcastPresenceWithDisconnected(
+// Deduplicate connected sockets by userId (connected=true if any open socket).
+// `extra` adds an offline entry (a just-disconnected user) if no socket covers them.
+export function getPresenceEntries(
   campaignId: string,
-  disconnectedUserId: string,
-  disconnectedUsername: string,
-  disconnectedRole: Role | null,
-): void {
-  const roomSessions = getSessionsInRoom(campaignId);
-
+  extra?: { userId: string; username: string; role: Role | null },
+): PresenceEntry[] {
   const presenceMap = new Map<string, PresenceEntry>();
-  for (const sess of roomSessions) {
+  for (const sess of getSessionsInRoom(campaignId)) {
     if (!presenceMap.has(sess.userId) && sess.role) {
-      presenceMap.set(sess.userId, {
-        userId: sess.userId,
-        username: sess.username,
-        role: sess.role,
-        connected: true,
-      });
+      presenceMap.set(sess.userId, { userId: sess.userId, username: sess.username, role: sess.role, connected: true });
     }
   }
-
-  // Add the disconnected user if no remaining socket covers them and they had a role.
-  if (!presenceMap.has(disconnectedUserId) && disconnectedRole) {
-    presenceMap.set(disconnectedUserId, {
-      userId: disconnectedUserId,
-      username: disconnectedUsername,
-      role: disconnectedRole,
-      connected: false,
-    });
-  }
-
-  const entries = [...presenceMap.values()];
-  broadcast(campaignId, { type: 'presence', entries });
-}
-
-export function getPresenceEntries(campaignId: string): PresenceEntry[] {
-  const roomSessions = getSessionsInRoom(campaignId);
-  const presenceMap = new Map<string, PresenceEntry>();
-  for (const sess of roomSessions) {
-    if (!presenceMap.has(sess.userId) && sess.role) {
-      presenceMap.set(sess.userId, {
-        userId: sess.userId,
-        username: sess.username,
-        role: sess.role,
-        connected: true,
-      });
-    }
+  if (extra && extra.role && !presenceMap.has(extra.userId)) {
+    presenceMap.set(extra.userId, { userId: extra.userId, username: extra.username, role: extra.role, connected: false });
   }
   return [...presenceMap.values()];
+}
+
+export function broadcastPresence(campaignId: string): void {
+  broadcast(campaignId, { type: 'presence', entries: getPresenceEntries(campaignId) });
+}
+
+export function broadcastPresenceWithDisconnected(
+  campaignId: string,
+  userId: string,
+  username: string,
+  role: Role | null,
+): void {
+  broadcast(campaignId, { type: 'presence', entries: getPresenceEntries(campaignId, { userId, username, role }) });
 }

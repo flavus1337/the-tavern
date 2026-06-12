@@ -17,17 +17,6 @@ declare global {
   }
 }
 
-function getCookieToken(req: Request): string | null {
-  const header = req.headers.cookie;
-  if (!header) return null;
-  for (const pair of header.split(';')) {
-    const [rawName, ...rest] = pair.split('=');
-    if (!rawName) continue;
-    if (rawName.trim() === 'vtt_session') return rest.join('=').trim();
-  }
-  return null;
-}
-
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const session = resolveSessionFromCookieHeader(req.headers.cookie);
   if (!session) {

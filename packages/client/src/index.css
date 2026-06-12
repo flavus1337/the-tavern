@@ -104,6 +104,16 @@ body {
   outline-offset: 2px;
 }
 
+/* Section eyebrow label (QUICK ROLL, ROLL LOG, YOUR FILES, …). */
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 500;
+}
+
 /* ---- Animations ---- */
 
 @keyframes toast-in {

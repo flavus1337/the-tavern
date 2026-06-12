@@ -256,7 +256,7 @@ export function TableLayout() {
               <TabsContent value="dice" className="flex flex-col overflow-y-auto">
                 <DiceRoller />
                 <div style={{ borderTop: '1px solid var(--border)', flex: 1, minHeight: 176, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <p style={{ fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--faint)', padding: '10px 14px 6px', fontWeight: 500 }}>
+                  <p className="eyebrow" style={{ padding: '10px 14px 6px' }}>
                     Roll Log
                   </p>
                   <div className="flex-1 min-h-0 overflow-y-auto">

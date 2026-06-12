@@ -73,15 +73,7 @@ export function NotesPanel() {
   }
 
   const sectionLabel = (text: string) => (
-    <p
-      style={{
-        fontFamily: 'var(--mono)', fontSize: 11, letterSpacing: '0.14em',
-        textTransform: 'uppercase', color: 'var(--faint)', fontWeight: 500,
-        margin: '4px 0 8px',
-      }}
-    >
-      {text}
-    </p>
+    <p className="eyebrow" style={{ margin: '4px 0 8px' }}>{text}</p>
   );
 
   return (

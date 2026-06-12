@@ -62,7 +62,6 @@ function RollEntry({ entry }: { entry: RollLogEntry }) {
   const isNat20 = keptD20 === 20;
   const isNat1 = keptD20 === 1;
   const isPrivate = entry.visibility === 'dm';
-  const showBoardMoment = useRef(false);
 
   // Fire board moment once on first render for nat 20
   const hasFiredRef = useRef(false);
@@ -74,8 +73,6 @@ function RollEntry({ entry }: { entry: RollLogEntry }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  void showBoardMoment;
 
   const borderColor = isNat20
     ? '#e8b76555'
