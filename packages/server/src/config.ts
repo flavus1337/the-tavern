@@ -21,6 +21,8 @@ export const config = {
   // Image generation (Map Creation, Gemini). When LLM_API_KEY is unset,
   // generation is disabled and the UI falls back to upload-only.
   LLM_API_KEY: process.env['LLM_API_KEY'] ?? null,
+  // Bundled style-reference images for image generation.
+  SERVER_ASSETS_DIR: path.join(REPO_ROOT, 'packages', 'server', 'assets'),
   CLIENT_DIST: resolveDir(
     process.env['CLIENT_DIST'],
     path.join(REPO_ROOT, 'packages', 'client', 'dist'),

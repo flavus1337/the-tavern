@@ -1,7 +1,26 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { config } from '../config.js';
 import { log } from '../log.js';
 
 export type GenKind = 'background' | 'prop';
+
+// A bundled reference image per kind, fed to the model so every generation
+// matches the same house style. Loaded once; missing files degrade gracefully
+// to prompt-only.
+const refCache = new Map<GenKind, string | null>();
+function styleRef(kind: GenKind): string | null {
+  if (refCache.has(kind)) return refCache.get(kind)!;
+  const file = kind === 'background' ? 'style-ref-bg.png' : 'style-ref-prop.png';
+  let b64: string | null = null;
+  try {
+    b64 = readFileSync(path.join(config.SERVER_ASSETS_DIR, file)).toString('base64');
+  } catch {
+    log.warn(`style reference ${file} not found — generating with prompt only`);
+  }
+  refCache.set(kind, b64);
+  return b64;
+}
 
 export interface GeneratedImage {
   /** base64-encoded image bytes (no data: prefix) */
@@ -38,9 +57,10 @@ export async function generateImages(kind: GenKind, subject: string, n: number):
     throw Object.assign(new Error('Image generation is not configured (LLM_API_KEY unset)'), { code: 'GEN_DISABLED' });
   }
   const prompt = stylePrompt(kind, subject.slice(0, 600));
+  const ref = styleRef(kind);
   // N independent calls — the image model returns one image per call.
   const results = await Promise.all(
-    Array.from({ length: n }, (_, i) => geminiGenerateOne(prompt).catch((e: unknown) => {
+    Array.from({ length: n }, (_, i) => geminiGenerateOne(prompt, ref).catch((e: unknown) => {
       log.warn(`imagegen take ${i} failed: ${String(e)}`);
       return null;
     })),
@@ -56,13 +76,20 @@ export async function generateImages(kind: GenKind, subject: string, n: number):
 // image data in candidates[].content.parts[].inlineData.
 const GEMINI_MODEL = process.env['LLM_IMAGE_MODEL'] ?? 'gemini-2.5-flash-image';
 
-async function geminiGenerateOne(prompt: string): Promise<GeneratedImage> {
+async function geminiGenerateOne(prompt: string, ref: string | null): Promise<GeneratedImage> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${config.LLM_API_KEY}`;
+  // With a reference, copy its art style (not its content); otherwise prompt-only.
+  const parts = ref
+    ? [
+        { inlineData: { mimeType: 'image/png', data: ref } },
+        { text: `Copy the ART STYLE of the reference image EXACTLY — the same ink linework, flat colours, top-down view and palette — but draw the NEW subject described below, not the reference's content. ${prompt}` },
+      ]
+    : [{ text: prompt }];
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts }],
       generationConfig: { responseModalities: ['IMAGE'] },
     }),
   });
