@@ -11,23 +11,22 @@ export interface GeneratedImage {
 
 /**
  * The platform owns the style & format — the user supplies only the subject.
- * These system prompts encode the inked battlemap house look.
+ * This is the fixed "inked battlemap" house style, written concretely so every
+ * generation lands in the same look (perspective, ink, palette).
  */
+const HOUSE_STYLE = [
+  'ART STYLE — keep it identical every time:',
+  'hand-illustrated "inked battlemap" look; STRICT orthographic top-down (straight bird\'s-eye) view with no perspective, tilt, or horizon;',
+  'bold dark hand-inked outlines (~2–3px, slightly wobbly), flat bright daylight colours, light scribble/hatch shading, a few small highlight dots, and soft offset ground shadows with the light coming from the upper-left;',
+  'palette: grass greens (#8bb551), dirt/sand browns (#b09665), water teal-blue (#4f9fb0), wood (#7a5532), stone grey (#a59b8c), dark ink outlines (#26431a / #3a3833);',
+  'clean and readable; NO text, labels, lettering, UI, watermark, characters, creatures, or tokens; not photorealistic, not 3D-rendered.',
+].join(' ');
+
 function stylePrompt(kind: GenKind, subject: string): string {
   if (kind === 'background') {
-    return [
-      'Top-down tabletop RPG battlemap, viewed straight from above.',
-      'Hand-inked illustrated style: bold dark ink outlines, flat-ish bright daylight colours, light scribble/hatch shading, soft cast shadows.',
-      'Grid-ready and readable for play. No text, no labels, no UI, no characters, tokens, or creatures.',
-      `The place: ${subject}.`,
-    ].join(' ');
+    return `A top-down tabletop RPG battlemap that fills the whole frame, grid-ready with a thin faint grid. Scale it for a battle grid of roughly 20–26 five-foot squares across — keep the scale generous and uncluttered so a single creature token comfortably fills about one square (do NOT cram in tiny detail). ${HOUSE_STYLE} Depict this place: ${subject}.`;
   }
-  return [
-    'A single top-down tabletop RPG map prop/object, viewed straight from above, centered.',
-    'Hand-inked illustrated style: bold dark ink outline, flat bright colours, light shading.',
-    'Fully TRANSPARENT background (PNG cut-out with alpha) — no scene, no ground, no grid, no text.',
-    `The object: ${subject}.`,
-  ].join(' ');
+  return `A single tabletop RPG map prop/object, centered, on a FULLY TRANSPARENT background (PNG cut-out with alpha) — no ground, no scene, no grid. ${HOUSE_STYLE} The object: ${subject}.`;
 }
 
 /**

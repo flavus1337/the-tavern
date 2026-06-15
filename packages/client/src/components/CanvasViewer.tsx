@@ -1046,16 +1046,20 @@ function MeasureOverlay({
     const b = toScreen(r.x2, r.y2);
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const cls = isShared ? 'shared' : '';
+    const txt = `${label(r)}${by ? ` · ${by}` : ''}`;
+    const fs = 17;
+    const w = Math.max(64, txt.length * fs * 0.62 + 18);
+    const h = fs + 12;
     return (
       <g>
         <line className={`meas-line ${cls}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
         <circle className={`meas-end ${cls}`} cx={a.x} cy={a.y} r={4} />
         <circle className={`meas-end ${cls}`} cx={b.x} cy={b.y} r={4} />
-        <g transform={`translate(${mid.x}, ${mid.y - 14})`}>
-          <rect x={-30} y={-12} width={60} height={20} rx={6} fill="#000000c0" />
-          <text x={0} y={2} textAnchor="middle" fontFamily="var(--mono)" fontSize={11}
+        <g transform={`translate(${mid.x}, ${mid.y - 18})`}>
+          <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={8} fill="#000000cc" />
+          <text x={0} y={fs * 0.35} textAnchor="middle" fontFamily="var(--mono)" fontSize={fs} fontWeight={600}
             fill={isShared ? 'var(--teal)' : 'var(--ember)'}>
-            {label(r)}{by ? ` · ${by}` : ''}
+            {txt}
           </text>
         </g>
       </g>

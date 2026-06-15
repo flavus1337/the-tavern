@@ -58,13 +58,13 @@ export function GenDialog() {
     }
   }
 
-  async function commitAsset(base64: string): Promise<string | null> {
+  async function commitAsset(base64: string): Promise<UploadAssetResponse['asset'] | null> {
     if (!campaignId) return null;
     const res = await api.post<UploadAssetResponse>(`/api/campaigns/${campaignId}/generate/save`, {
       base64, kind, title: prompt.trim().slice(0, 40),
       ...(kind === 'prop' ? { category: category.trim() || 'Uploads' } : {}),
     });
-    return res.asset.id;
+    return res.asset;
   }
 
   async function useSelected() {
@@ -73,8 +73,14 @@ export function GenDialog() {
     setPhase('saving');
     setError(null);
     try {
-      const assetId = await commitAsset(img.base64);
-      if (assetId && kind === 'background') sendWs({ type: 'boardAdd', assetId, x: 0, y: 0 });
+      const asset = await commitAsset(img.base64);
+      if (asset && kind === 'background') {
+        sendWs({ type: 'boardAdd', assetId: asset.id, x: 0, y: 0 });
+        // Keep generated maps a consistent scale: ~24 squares across, so the grid
+        // (and therefore tokens) is never too small to read.
+        const boardW = Math.min(asset.width ?? 1024, 1200);
+        sendWs({ type: 'setGrid', grid: { cell: Math.max(28, Math.round(boardW / 24)) } });
+      }
       close(null); // prop assets appear in the palette via assetsUpdated
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Save failed');
