@@ -260,7 +260,7 @@ async function handleRoll(
 
 async function handleBoardAdd(
   session: WsSession,
-  msg: { type: 'boardAdd'; assetId: string; x: number; y: number },
+  msg: { type: 'boardAdd'; assetId: string; x: number; y: number; w?: number },
 ): Promise<void> {
   if (session.role !== 'dm') {
     sendError(session, 'FORBIDDEN', 'Only the DM can add items to the board');
@@ -277,9 +277,11 @@ async function handleBoardAdd(
     return;
   }
 
-  // w defaults to min(naturalWidth ?? 800, 1200); z = max existing z + 1.
+  // Explicit width wins (clamped); otherwise min(naturalWidth ?? 800, 1200).
   const naturalW = manifest.width ?? 800;
-  const w = Math.min(naturalW, 1200);
+  const w = msg.w !== undefined
+    ? Math.min(BOARD_W_MAX, Math.max(BOARD_W_MIN, msg.w))
+    : Math.min(naturalW, 1200);
   const maxZ = entry.runtime.state.board.reduce((acc, item) => Math.max(acc, item.z), 0);
 
   const newItem = {

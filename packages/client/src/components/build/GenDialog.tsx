@@ -24,6 +24,7 @@ export function GenDialog() {
   const features = useStore((s) => s.features);
   const close = useStore((s) => s.setGenDialog);
   const assets = useStore((s) => s.assets);
+  const grid = useStore((s) => s.grid);
   const enabled = features.imageGenEnabled;
 
   // Category suggestions: built-in palette sections + any already used on assets.
@@ -75,11 +76,10 @@ export function GenDialog() {
     try {
       const asset = await commitAsset(img.base64);
       if (asset && kind === 'background') {
-        sendWs({ type: 'boardAdd', assetId: asset.id, x: 0, y: 0 });
-        // Standard battle map: a 40-square-wide grid aligned to the map origin,
-        // with a dark line that reads clearly on the bright inked map.
-        const boardW = Math.min(asset.width ?? 1024, 1200);
-        sendWs({ type: 'setGrid', grid: { cell: Math.max(14, Math.round(boardW / 40)), offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
+        // Scale the MAP (not the grid) so it's exactly 40 cells wide at the
+        // current cell size; keep the grid aligned + clearly visible.
+        sendWs({ type: 'boardAdd', assetId: asset.id, x: 0, y: 0, w: 40 * grid.cell });
+        sendWs({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
       }
       close(null); // prop assets appear in the palette via assetsUpdated
     } catch (err) {

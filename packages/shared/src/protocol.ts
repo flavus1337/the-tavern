@@ -168,6 +168,9 @@ export interface ClientBoardAddPayload {
   assetId: string;
   x: number;
   y: number;
+  /** Optional display width (board space); clamped server-side. Defaults to the
+   *  natural width capped at 1200 when omitted. */
+  w?: number;
 }
 
 export interface ClientBoardMovePayload {
