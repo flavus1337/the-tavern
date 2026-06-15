@@ -43,7 +43,7 @@ const HOUSE_STYLE = [
 
 function stylePrompt(kind: GenKind, subject: string): string {
   if (kind === 'background') {
-    return `A square top-down tabletop RPG battlemap that fills the whole frame. Draw NO grid, NO squares and NO grid lines on it — the surface is clean (the app overlays its own grid). Keep the scale generous and uncluttered so a single creature comfortably fits in about a 1/40th-of-the-width area (do NOT cram in tiny detail). ${HOUSE_STYLE} Depict this place: ${subject}.`;
+    return `A square top-down tabletop RPG battlemap. FULL BLEED: the map surface and its colours must fill the ENTIRE image right to all four edges — absolutely no border, frame, vignette, margin, or white/empty space around it. Draw NO grid, NO squares and NO grid lines on it — the surface is clean (the app overlays its own grid). Keep the scale generous and uncluttered so a single creature comfortably fits in about a 1/40th-of-the-width area (do NOT cram in tiny detail). ${HOUSE_STYLE} Depict this place: ${subject}.`;
   }
   return `A single tabletop RPG map prop/object, centered, on a FULLY TRANSPARENT background (PNG cut-out with alpha) — no ground, no scene, no grid. ${HOUSE_STYLE} The object: ${subject}.`;
 }
