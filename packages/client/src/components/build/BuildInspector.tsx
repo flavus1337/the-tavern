@@ -48,6 +48,17 @@ export function BuildInspector() {
     for (const item of board) sendWs({ type: 'boardRemove', itemId: item.id });
   }
 
+  function resetGrid() {
+    const bg = board[0];
+    if (bg) {
+      // Re-establish the standard 40-square battle grid on the current map.
+      const boardW = bg.w || bg.naturalWidth || 1200;
+      sendWs({ type: 'setGrid', grid: { cell: Math.max(14, Math.round(boardW / 40)), offsetX: 0, offsetY: 0, visible: true, snap: true, unit: 'm', color: '#00000059' } });
+    } else {
+      sendWs({ type: 'setGrid', grid: { cell: 44, offsetX: 0, offsetY: 0, visible: true, snap: true, unit: 'm', color: '#ffffff33' } });
+    }
+  }
+
   async function uploadBackground(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !campaignId) return;
@@ -126,16 +137,16 @@ export function BuildInspector() {
           <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path d="M12 3l1.8 5.6L19 10l-5.2 1.4L12 17l-1.8-5.6L5 10l5.2-1.4z" /></svg>
           Generate background
         </button>
+        <button
+          type="button"
+          onClick={() => bgInputRef.current?.click()}
+          disabled={bgUploading}
+          className="w-full py-2 rounded-[9px] text-xs font-semibold disabled:opacity-50"
+          style={{ background: 'var(--raised)', color: 'var(--hi)', border: '1px solid var(--border)', cursor: 'pointer' }}
+        >
+          {bgUploading ? 'Uploading…' : '⤓ Upload image'}
+        </button>
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => bgInputRef.current?.click()}
-            disabled={bgUploading}
-            className="flex-1 py-2 rounded-[9px] text-xs font-semibold disabled:opacity-50"
-            style={{ background: 'var(--raised)', color: 'var(--hi)', border: '1px solid var(--border)', cursor: 'pointer' }}
-          >
-            {bgUploading ? 'Uploading…' : '⤓ Upload image'}
-          </button>
           <button
             type="button"
             onClick={() => setBoardToolDirect(boardTool === 'calibrate' ? 'select' : 'calibrate')}
@@ -146,6 +157,15 @@ export function BuildInspector() {
               : { background: 'var(--raised)', color: 'var(--hi)', border: '1px solid var(--border)', cursor: 'pointer' }}
           >
             ⊹ Calibrate grid
+          </button>
+          <button
+            type="button"
+            onClick={resetGrid}
+            title="Reset to the standard 40-square battle grid"
+            className="flex-1 py-2 rounded-[9px] text-xs font-semibold"
+            style={{ background: 'var(--raised)', color: 'var(--hi)', border: '1px solid var(--border)', cursor: 'pointer' }}
+          >
+            ↺ Reset grid
           </button>
         </div>
         {board.length > 0 && (
