@@ -337,6 +337,7 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active }: TokenElProps)
   const selectedId = useStore((s) => s.selectedTokenId);
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; alt: boolean } | null>(null);
 
   const mine = !!token.ownerUserId && token.ownerUserId === selfUserId;
@@ -399,11 +400,18 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active }: TokenElProps)
   return (
     <div
       className={cls}
-      style={{ left: x, top: y, width: px, height: px, zIndex: isDragging ? 9998 : 1000 + token.z,
-        cursor: active ? (canMove ? (isDragging ? 'grabbing' : 'grab') : 'pointer') : 'default' }}
+      style={{
+        left: x, top: y, width: px, height: px,
+        // Hovered/selected tokens float above the rest so their name label is
+        // never hidden behind a neighbouring token.
+        zIndex: isDragging ? 100000 : (hovered || selected) ? 50000 + token.z : 1000 + token.z,
+        cursor: active ? (canMove ? (isDragging ? 'grabbing' : 'grab') : 'pointer') : 'default',
+      }}
       onPointerDown={active ? onPointerDown : undefined}
       onPointerMove={canMove ? onPointerMove : undefined}
       onPointerUp={canMove ? onPointerUp : undefined}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       <div className="tok-ground" />
       <div
