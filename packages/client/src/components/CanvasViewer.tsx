@@ -847,6 +847,13 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const sortedPieces = [...pieces].sort((a, b) => a.z - b.z).filter((p) => layerVisible[p.layer]);
   const isEmpty = board.length === 0 && tokens.length === 0 && pieces.length === 0;
   const cursor = measuring || stamping || erasing || calibrating ? 'crosshair' : draggingCanvas.current ? 'grabbing' : 'grab';
+  // Two transform stages share this transform so the grid can sit between the
+  // background (below) and the pieces/tokens (above).
+  const stageStyle: React.CSSProperties = {
+    position: 'absolute', top: 0, left: 0,
+    transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+    transformOrigin: '0 0', willChange: 'transform',
+  };
 
   return (
     <div
@@ -870,21 +877,18 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       onWheel={handleWheel}
       aria-label="Campaign map canvas"
     >
-      {/* Dynamic grid (screen-space, follows pan + zoom) */}
-      <GridLayer grid={grid} view={view} />
-
-      {/* Transform stage — board images + tokens live in board space */}
-      <div
-        style={{
-          position: 'absolute', top: 0, left: 0,
-          transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-          transformOrigin: '0 0',
-          willChange: 'transform',
-        }}
-      >
+      {/* Background stage — sits BELOW the grid so the grid shows on the map */}
+      <div style={stageStyle}>
         {(layerVisible.background) && sortedItems.map((item) => (
           <BoardItemEl key={item.id} item={item} isDm={isDm && !isBuild} scale={view.scale} />
         ))}
+      </div>
+
+      {/* Dynamic grid (screen-space, follows pan + zoom) — above the background */}
+      <GridLayer grid={grid} view={view} />
+
+      {/* Content stage — pieces + tokens live ABOVE the grid */}
+      <div style={stageStyle}>
         {sortedPieces.map((piece) => (
           <PieceEl
             key={piece.id}
