@@ -14,6 +14,7 @@ import { deleteAssetFiles } from '../campaign/writer.js';
 import { config } from '../config.js';
 import { broadcast } from '../ws/hub.js';
 import { makeBoardItemView } from '../ws/snapshot.js';
+import { canAccessShared, documentSharing } from '../ws/sharing.js';
 import type {
   CampaignListItem,
   CreateCampaignResponse,
@@ -146,18 +147,22 @@ router.get('/:id/files/assets/:filename', requireMember(), async (req: Request, 
   const user = req.user!;
   const role = getRole(campaignId, user.id);
 
-  // Documents: private to the uploader unless shared with the table.
+  // Documents: owner, anyone shared-with, or the DM (omniscient).
   if (manifest.assetKind === 'document') {
-    const isShared = entry.runtime.state.sharedDocumentIds.includes(manifest.id);
-    if (!isShared && manifest.ownerUsername !== user.username) {
+    const viewer = { userId: user.id, username: user.username, role: role ?? 'player' };
+    if (!canAccessShared(viewer, manifest.ownerUsername ?? null, documentSharing(entry, manifest))) {
       res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
       return;
     }
   } else {
-    // Images with dmOnly: only DM can access, UNLESS a board item references it.
+    // Images with dmOnly: only DM can access, UNLESS a board item or a
+    // non-dmOnly token references it (so token face images load for players).
     if (manifest.dmOnly) {
       const isOnBoard = entry.runtime.state.board.some((item) => item.assetId === manifest.id);
-      if (!isOnBoard && role !== 'dm') {
+      const isReferencedByToken = entry.runtime.state.tokens.some(
+        (tok) => tok.assetId === manifest.id && !tok.dmOnly,
+      );
+      if (!isOnBoard && !isReferencedByToken && role !== 'dm') {
         res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
         return;
       }

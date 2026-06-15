@@ -8,6 +8,12 @@ import type {
   AssetManifest,
   Note,
   ServerSnapshotPayload,
+  TokenView,
+  GridState,
+  MemberEntry,
+  MapPiece,
+  MapMeta,
+  MapTemplateSummary,
 } from '@vtt/shared';
 
 /** A transient join-notification toast */
@@ -21,6 +27,38 @@ export interface ShareToast {
   id: string;
   docTitle: string;
 }
+
+/** Shared measurement from another user */
+export interface SharedMeasure {
+  kind: 'ruler';
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  by: string;
+}
+
+/** Active board interaction tool (local UI — not broadcast) */
+export type BoardTool = 'select' | 'move' | 'measure' | 'stamp' | 'erase' | 'calibrate';
+
+/** Build vs Play mode (DM-only, local UI). */
+export type EditorMode = 'play' | 'build';
+
+/** Map layers for visibility toggles in build mode. */
+export type MapLayer = 'background' | 'terrain' | 'props';
+
+/** A palette piece armed for stamping — a built-in inked piece or an image asset. */
+export interface ActivePalettePiece {
+  builtin: string | null;
+  assetId: string | null;
+  /** image url for asset-backed ghost preview */
+  url: string | null;
+  layer: 'terrain' | 'props';
+  lockedToGrid: boolean;
+}
+
+/** AI generator dialog target. */
+export type GenKind = 'background' | 'prop';
 
 const ROLL_LOG_MAX = 200;
 
@@ -72,7 +110,8 @@ export interface BoardView {
 // ---------------------------------------------------------------------------
 export type TablePanel =
   | { panelId: string; kind: 'doc'; doc: AssetManifest }
-  | { panelId: string; kind: 'note'; noteId: string | null };
+  | { panelId: string; kind: 'note'; noteId: string | null }
+  | { panelId: string; kind: 'token'; tokenId: string | null };
 
 let panelSeq = 0;
 const nextPanelId = () => `panel_${++panelSeq}`;
@@ -88,11 +127,23 @@ interface SelfInfo {
   role: 'dm' | 'player';
 }
 
+const DEFAULT_GRID: GridState = {
+  cell: 44,
+  offsetX: 0,
+  offsetY: 0,
+  visible: true,
+  snap: true,
+  color: '#ffffff22',
+  unit: 'ft',
+};
+
 interface TableSlice {
   connection: ConnectionState;
   self: SelfInfo | null;
   campaignName: string;
   presence: PresenceEntry[];
+  /** All campaign members (online or not) — for share pickers + owner dropdowns */
+  members: MemberEntry[];
   board: BoardItemView[];
   uploadsLocked: boolean;
   /** View transform shared across the whole board (pan + zoom). */
@@ -100,7 +151,7 @@ interface TableSlice {
   rollLog: RollLogEntry[];
   assets: AssetManifest[] | null;
   documents: AssetManifest[];
-  /** open floating panels over the board (docs + notes), render order = z-order */
+  /** open floating panels over the board (docs + notes + token editor), render order = z-order */
   openPanels: TablePanel[];
   /** latest table-playback command per audio asset (drives synced players) */
   mediaSync: Record<string, { action: 'play' | 'pause' | 'stop'; time: number; atMs: number }>;
@@ -116,6 +167,35 @@ interface TableSlice {
   shareToasts: ShareToast[];
   myNotes: Note[];
   lastErrorMessage: string | null;
+
+  // Token & grid state
+  tokens: TokenView[];
+  grid: GridState;
+  /** Active board tool (local UI state — not persisted or broadcast) */
+  boardTool: BoardTool;
+  /** This user's own private measurement (board-space coords) */
+  ownMeasure: { x1: number; y1: number; x2: number; y2: number } | null;
+  /** Whether own measurement is currently shown to the table */
+  ownMeasureShared: boolean;
+  /** Shared measurements from other users — keyed by username */
+  sharedMeasures: Record<string, SharedMeasure>;
+  /** ID of the selected token on the board (null = none) */
+  selectedTokenId: string | null;
+
+  // Map creation (build mode)
+  pieces: MapPiece[];
+  mapMeta: MapMeta;
+  features: { imageGenEnabled: boolean };
+  editorMode: EditorMode;
+  selectedPieceId: string | null;
+  /** palette piece armed for stamping (build mode) */
+  activePalettePiece: ActivePalettePiece | null;
+  /** per-layer visibility toggles (build mode aid) */
+  layerVisible: Record<MapLayer, boolean>;
+  /** open AI generator dialog (null = closed) */
+  genDialog: GenKind | null;
+  /** saved map templates (summaries) */
+  templates: MapTemplateSummary[];
 
   setConnection: (state: ConnectionState) => void;
   setSelf: (self: SelfInfo) => void;
@@ -136,6 +216,7 @@ interface TableSlice {
   setDocuments: (documents: AssetManifest[]) => void;
   openDocPanel: (doc: AssetManifest) => void;
   openNotePanel: (noteId: string | null) => void;
+  openTokenPanel: (tokenId: string | null) => void;
   closePanel: (panelId: string) => void;
   bringPanelToFront: (panelId: string) => void;
   setMediaSync: (assetId: string, cmd: { action: 'play' | 'pause' | 'stop'; time: number; atMs: number }) => void;
@@ -146,6 +227,26 @@ interface TableSlice {
   removeNote: (noteId: string) => void;
   setLastErrorMessage: (msg: string | null) => void;
   resetTable: () => void;
+
+  // Token & grid actions
+  setTokens: (tokens: TokenView[]) => void;
+  setGrid: (grid: GridState) => void;
+  setBoardTool: (tool: BoardTool) => void;
+  setOwnMeasure: (measure: { x1: number; y1: number; x2: number; y2: number } | null) => void;
+  setOwnMeasureShared: (shared: boolean) => void;
+  setSharedMeasure: (by: string, measure: SharedMeasure | null) => void;
+  clearSharedMeasure: (by: string) => void;
+  setSelectedTokenId: (id: string | null) => void;
+
+  // Map creation actions
+  setPieces: (pieces: MapPiece[]) => void;
+  setMapMeta: (meta: MapMeta) => void;
+  setEditorMode: (mode: EditorMode) => void;
+  setSelectedPieceId: (id: string | null) => void;
+  setActivePalettePiece: (p: ActivePalettePiece | null) => void;
+  toggleLayerVisible: (layer: MapLayer) => void;
+  setGenDialog: (kind: GenKind | null) => void;
+  setTemplates: (templates: MapTemplateSummary[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,13 +259,14 @@ const tableDefaults = {
   self: null,
   campaignName: '',
   presence: [],
+  members: [] as MemberEntry[],
   board: [] as BoardItemView[],
   uploadsLocked: false,
   boardView: { x: 0, y: 0, scale: 1 } as BoardView,
   rollLog: [],
   assets: null,
   documents: [],
-  openPanels: [],
+  openPanels: [] as TablePanel[],
   mediaSync: {},
   audioDock: null,
   rollToasts: [],
@@ -173,6 +275,22 @@ const tableDefaults = {
   shareToasts: [] as ShareToast[],
   myNotes: [],
   lastErrorMessage: null,
+  tokens: [] as TokenView[],
+  grid: { ...DEFAULT_GRID } as GridState,
+  boardTool: 'select' as BoardTool,
+  ownMeasure: null as null | { x1: number; y1: number; x2: number; y2: number },
+  ownMeasureShared: false,
+  sharedMeasures: {} as Record<string, SharedMeasure>,
+  selectedTokenId: null as string | null,
+  pieces: [] as MapPiece[],
+  mapMeta: { name: 'Untitled map', areaTag: '' } as MapMeta,
+  features: { imageGenEnabled: false },
+  editorMode: 'play' as EditorMode,
+  selectedPieceId: null as string | null,
+  activePalettePiece: null as ActivePalettePiece | null,
+  layerVisible: { background: true, terrain: true, props: true } as Record<MapLayer, boolean>,
+  genDialog: null as GenKind | null,
+  templates: [] as MapTemplateSummary[],
 };
 
 export const useStore = create<StoreState>()((set) => ({
@@ -231,10 +349,17 @@ export const useStore = create<StoreState>()((set) => ({
       board: snap.board,
       uploadsLocked: snap.uploadsLocked,
       presence: snap.presence,
+      members: snap.members,
       rollLog: snap.rollLog.slice(0, ROLL_LOG_MAX),
       assets: snap.assets,
       documents: snap.documents,
       myNotes: snap.myNotes,
+      tokens: snap.tokens,
+      grid: snap.grid,
+      pieces: snap.pieces,
+      mapMeta: snap.mapMeta,
+      features: snap.features,
+      templates: snap.templates,
       lastErrorMessage: null,
     }),
 
@@ -317,6 +442,13 @@ export const useStore = create<StoreState>()((set) => ({
       return { openPanels: [...s.openPanels, { panelId: nextPanelId(), kind: 'note', noteId }] };
     }),
 
+  openTokenPanel: (tokenId) =>
+    set((s) => {
+      // Only one token panel open at a time; replace if present.
+      const withoutToken = s.openPanels.filter((p) => p.kind !== 'token');
+      return { openPanels: [...withoutToken, { panelId: nextPanelId(), kind: 'token', tokenId }] };
+    }),
+
   closePanel: (panelId) =>
     set((s) => ({ openPanels: s.openPanels.filter((p) => p.panelId !== panelId) })),
 
@@ -364,4 +496,40 @@ export const useStore = create<StoreState>()((set) => ({
   setLastErrorMessage: (msg) => set({ lastErrorMessage: msg }),
 
   resetTable: () => set(tableDefaults),
+
+  // Token & grid actions
+  setTokens: (tokens) => set({ tokens }),
+  setGrid: (grid) => set({ grid }),
+  setBoardTool: (tool) => set({ boardTool: tool }),
+  setOwnMeasure: (measure) => set({ ownMeasure: measure }),
+  setOwnMeasureShared: (shared) => set({ ownMeasureShared: shared }),
+  setSharedMeasure: (by, measure) =>
+    set((s) => ({
+      sharedMeasures: measure
+        ? { ...s.sharedMeasures, [by]: measure }
+        : Object.fromEntries(Object.entries(s.sharedMeasures).filter(([k]) => k !== by)),
+    })),
+  clearSharedMeasure: (by) =>
+    set((s) => ({
+      sharedMeasures: Object.fromEntries(Object.entries(s.sharedMeasures).filter(([k]) => k !== by)),
+    })),
+  setSelectedTokenId: (id) => set({ selectedTokenId: id }),
+
+  // Map creation
+  setPieces: (pieces) => set({ pieces }),
+  setMapMeta: (mapMeta) => set({ mapMeta }),
+  setEditorMode: (editorMode) =>
+    set((s) => ({
+      editorMode,
+      // Leaving build mode clears build-only selections/tools.
+      ...(editorMode === 'play'
+        ? { selectedPieceId: null, activePalettePiece: null, boardTool: 'select' as BoardTool }
+        : {}),
+    })),
+  setSelectedPieceId: (id) => set({ selectedPieceId: id }),
+  setActivePalettePiece: (p) => set({ activePalettePiece: p }),
+  toggleLayerVisible: (layer) =>
+    set((s) => ({ layerVisible: { ...s.layerVisible, [layer]: !s.layerVisible[layer] } })),
+  setGenDialog: (kind) => set({ genDialog: kind }),
+  setTemplates: (templates) => set({ templates }),
 }));

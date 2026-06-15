@@ -2,7 +2,7 @@ import type { Note } from '@vtt/shared';
 import { useStore } from '../store';
 import { Button } from './ui/button';
 import { ScrollArea } from './ui/scroll-area';
-import { Badge } from './ui/badge';
+import { ShareBadge } from './SharePicker';
 
 /**
  * Notes list in the sidebar. Creating/editing opens the NoteEditor over the
@@ -15,7 +15,6 @@ export function NotesPanel() {
   const openPanels = useStore((s) => s.openPanels);
   const openNotePanel = useStore((s) => s.openNotePanel);
 
-  const isDm = self?.role === 'dm';
   const sorted = [...myNotes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const mine = sorted.filter((n) => n.ownerUsername === self?.username);
   const sharedWithMe = sorted.filter((n) => n.ownerUsername !== self?.username);
@@ -48,15 +47,7 @@ export function NotesPanel() {
           >
             {note.title}
           </p>
-          {isDm && note.visibility === 'dm' && <Badge>DM</Badge>}
-          {note.visibility === 'shared' && (
-            <span
-              className="text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 shrink-0"
-              style={{ fontFamily: 'var(--mono)', background: '#69b7a61a', color: 'var(--teal)' }}
-            >
-              shared
-            </span>
-          )}
+          <ShareBadge sharing={note.sharing} />
         </div>
         {!ownNote && note.ownerUsername && (
           <p className="mt-0.5" style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--faint)' }}>

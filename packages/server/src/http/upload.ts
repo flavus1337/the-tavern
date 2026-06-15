@@ -37,16 +37,25 @@ const BLOCKED_DOC_MIMES = new Set([
 ]);
 const BLOCKED_DOC_EXTENSIONS = new Set(['html', 'htm', 'xhtml', 'svg', 'js', 'mjs']);
 
-// POST /api/campaigns/:id/assets — dm only, images.
+// POST /api/campaigns/:id/assets — image upload. DM may upload any image kind;
+// players may upload only token face images (gated by the upload lock).
 router.post(
   '/:id/assets',
-  requireMember('dm'),
+  requireMember(),
   upload.single('file'),
   async (req: Request, res: Response) => {
     const campaignId = param(req.params['id']);
     const entry = getCampaign(campaignId);
     if (!entry) {
       res.status(404).json({ error: 'Campaign not found' });
+      return;
+    }
+
+    const isDm = req.campaignRole === 'dm';
+
+    // Players: only token images, and only while uploads are unlocked.
+    if (!isDm && entry.runtime.state.uploadsLocked) {
+      res.status(403).json({ error: 'Uploads are locked by the DM', code: 'UPLOADS_LOCKED' });
       return;
     }
 
@@ -68,12 +77,18 @@ router.post(
 
     const kind = (req.body as Record<string, string>)['kind'] ?? 'art';
     const validKinds = ['map', 'art', 'handout', 'token'];
-    const assetKind = validKinds.includes(kind)
-      ? (kind as 'map' | 'art' | 'handout' | 'token')
-      : 'art';
+    // Players can only contribute token images (never maps/handouts/dmOnly art).
+    const assetKind = !isDm
+      ? 'token'
+      : validKinds.includes(kind)
+        ? (kind as 'map' | 'art' | 'handout' | 'token')
+        : 'art';
 
     const dmOnlyRaw = (req.body as Record<string, string>)['dmOnly'];
-    const dmOnly = dmOnlyRaw === 'true' || dmOnlyRaw === '1';
+    const dmOnly = isDm && (dmOnlyRaw === 'true' || dmOnlyRaw === '1');
+    // Optional palette category for stampable prop assets.
+    const categoryRaw = (req.body as Record<string, string>)['category'];
+    const category = typeof categoryRaw === 'string' && categoryRaw.trim() ? categoryRaw.trim().slice(0, 40) : undefined;
 
     // Process with sharp: resize to max 2560, encode as webp q82.
     const originalName = file.originalname;
@@ -114,6 +129,7 @@ router.post(
       height,
       mime: 'image/webp',
       ownerUsername: req.user!.username,
+      ...(category ? { category } : {}),
     };
 
     await saveAssetManifest(entry.store, manifest);

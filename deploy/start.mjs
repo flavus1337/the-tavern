@@ -26,6 +26,7 @@ import { writeFile, mkdtemp } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -125,6 +126,23 @@ if (firstRun && !adminPassword) {
   generatedPassword = true;
 }
 
+// --- 5b. Image generation API key (interactive, optional) -----------------------
+// Asked once per start. Press Enter to skip — the app runs fine without it
+// (AI map generation is simply disabled). Set LLM_API_KEY in the env to skip
+// the prompt. The key is passed to the server process only; never written to disk.
+let llmApiKey = process.env.LLM_API_KEY ?? '';
+if (!llmApiKey && process.stdin.isTTY) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise((resolve) =>
+    rl.question('\n==> Image generation: paste a Gemini API key, or press Enter to skip: ', resolve),
+  );
+  rl.close();
+  llmApiKey = (answer || '').trim();
+  console.log(llmApiKey
+    ? '    ✓ AI map generation enabled for this session.'
+    : '    → Continuing without AI generation (you can add a key on the next start).');
+}
+
 // --- Fail fast if the port is taken ----------------------------------------------
 await new Promise((resolve) => {
   const probe = createServer();
@@ -216,6 +234,7 @@ serverProc = spawn(process.execPath, [SERVER_ENTRY], {
     PUBLIC_ORIGIN: publicUrl,
     COOKIE_SECURE: 'false',
     ADMIN_USER: adminUser,
+    ...(llmApiKey ? { LLM_API_KEY: llmApiKey } : {}),
     ...(adminPassword ? { ADMIN_PASSWORD: adminPassword } : {}),
   },
 });

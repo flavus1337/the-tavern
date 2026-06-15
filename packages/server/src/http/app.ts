@@ -10,12 +10,16 @@ import { param } from './params.js';
 import authRouter from './auth.js';
 import campaignsRouter from './campaigns.js';
 import uploadRouter from './upload.js';
+import generateRouter from './generate.js';
 import type { RedeemInviteResponse } from '@vtt/shared';
 
 export function createApp(): express.Application {
   const app = express();
 
   app.set('trust proxy', 1);
+  // Image generation routes carry base64 bodies and bring their own larger JSON
+  // parser — mounted before the global 1 MB parser so the scoped limit applies.
+  app.use('/api/campaigns', generateRouter);
   // Bound JSON bodies (uploads use multipart, not JSON, so 1 MB is generous).
   app.use(express.json({ limit: '1mb' }));
 

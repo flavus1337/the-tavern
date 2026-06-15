@@ -1,9 +1,11 @@
 import { useRef, useState } from 'react';
-import type { ClientMessage } from '@vtt/shared';
+import type { ClientMessage, Sharing } from '@vtt/shared';
+import { defaultSharing } from '@vtt/shared';
 import { useStore } from '../store';
 import { renderMarkdown } from '../lib/markdown';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { SharePicker, ShareBadge } from './SharePicker';
 
 /**
  * Note editor rendered over the canvas area (non-modal — the sidebar stays
@@ -24,8 +26,8 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [body, setBody] = useState(existing?.body ?? '');
-  const [visibility, setVisibility] = useState<'dm' | 'player' | 'shared'>(
-    existing?.visibility ?? (isDm ? 'dm' : 'player'),
+  const [sharing, setSharing] = useState<Sharing>(
+    existing?.sharing ?? (isDm ? { scope: 'dm', userIds: [] } : defaultSharing()),
   );
   const [mode, setMode] = useState<'write' | 'preview'>('write');
   // Existing notes open in read mode; new notes go straight to editing.
@@ -33,20 +35,6 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const canSave = connection === 'open' && title.trim() !== '';
-
-  function toggleShared() {
-    if (!existing || !canModify || connection !== 'open') return;
-    const next = existing.visibility === 'shared' ? (isDm ? 'dm' : 'player') : 'shared';
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({
-      type: 'saveNote',
-      noteId: existing.id,
-      title: existing.title,
-      body: existing.body,
-      visibility: next,
-    });
-    setVisibility(next);
-  }
 
   function save() {
     if (!canSave) return;
@@ -56,7 +44,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
       ...(noteId ? { noteId } : {}),
       title: title.trim(),
       body,
-      visibility,
+      sharing,
     });
     if (noteId) {
       // Back to reading the (locally up-to-date) note.
@@ -80,7 +68,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
     if (noteId && existing) {
       setTitle(existing.title);
       setBody(existing.body);
-      setVisibility(existing.visibility);
+      setSharing(existing.sharing);
       setEditing(false);
       setMode('write');
     } else {
@@ -154,18 +142,6 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
         <div className="flex items-center gap-2 shrink-0">
           {editing ? (
             <>
-              {isDm && (
-                <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--mid)' }}>
-                  <input
-                    type="checkbox"
-                    checked={visibility === 'dm'}
-                    onChange={(e) => setVisibility(e.target.checked ? 'dm' : 'player')}
-                    className="rounded"
-                    style={{ accentColor: 'var(--ember)' }}
-                  />
-                  DM-only
-                </label>
-              )}
               <Button size="sm" variant="ghost" onClick={cancelEdit}>
                 Cancel
               </Button>
@@ -175,29 +151,6 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
             </>
           ) : (
             <>
-              {canModify && existing && (
-                existing.visibility === 'shared' ? (
-                  <button
-                    type="button"
-                    onClick={toggleShared}
-                    disabled={connection !== 'open'}
-                    style={{ fontSize: 12, fontWeight: 600, color: 'var(--low)', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', padding: '6px 11px', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                    title="Stop sharing with the table"
-                  >
-                    ✓ Shared with table
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={toggleShared}
-                    disabled={connection !== 'open'}
-                    style={{ fontSize: 12, fontWeight: 600, color: 'var(--teal)', background: '#69b7a615', border: '1px solid #69b7a63a', padding: '6px 11px', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                    title="Make this note visible to everyone at the table"
-                  >
-                    Share with table
-                  </button>
-                )
-              )}
               {canModify && (
                 <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
@@ -250,22 +203,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
               >
                 {title}
               </h1>
-              {isDm && visibility === 'dm' && (
-                <span
-                  className="text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5"
-                  style={{ background: 'var(--raised)', color: 'var(--mid)' }}
-                >
-                  DM
-                </span>
-              )}
-              {(existing?.visibility ?? visibility) === 'shared' && (
-                <span
-                  className="text-[10px] uppercase tracking-wider rounded px-1.5 py-0.5"
-                  style={{ background: '#69b7a61a', color: 'var(--teal)' }}
-                >
-                  shared
-                </span>
-              )}
+              <ShareBadge sharing={existing?.sharing ?? sharing} />
               {existing && !isOwner && existing.ownerUsername && (
                 <span className="text-xs" style={{ color: 'var(--faint)', fontFamily: 'var(--mono)' }}>
                   by {existing.ownerUsername}
@@ -291,6 +229,14 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
           autoFocus={!noteId}
           className="text-base font-medium"
         />
+
+        {/* Sharing */}
+        <div className="flex items-center gap-2">
+          <span className="eyebrow shrink-0">Visible to</span>
+          <div className="flex-1">
+            <SharePicker sharing={sharing} onChange={setSharing} />
+          </div>
+        </div>
 
         {/* Toolbar */}
         <div className="flex items-center gap-1 flex-wrap gap-y-2">

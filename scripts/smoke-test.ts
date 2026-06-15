@@ -696,7 +696,7 @@ async function main(): Promise<void> {
     // D4: player1 ws join demo-campaign → NOT_MEMBER fatal
     {
       const { ws, messages } = await openWs(wsUrl, player1Jar);
-      send(ws, { type: 'join', protocolVersion: 3, campaignId: 'demo-campaign' });
+      send(ws, { type: 'join', protocolVersion: 6, campaignId: 'demo-campaign' });
       try {
         const err = await waitForMessage(messages, (m) => m['type'] === 'error');
         assert(err['code'] === 'NOT_MEMBER', 'D4: player1 join demo-campaign → NOT_MEMBER');
@@ -758,8 +758,8 @@ async function main(): Promise<void> {
     const { ws: p1Ws, messages: p1Messages } = await openWs(wsUrl, player1Jar);
 
     // Join both (protocol version 3)
-    send(adminWs, { type: 'join', protocolVersion: 3, campaignId });
-    send(p1Ws, { type: 'join', protocolVersion: 3, campaignId });
+    send(adminWs, { type: 'join', protocolVersion: 6, campaignId });
+    send(p1Ws, { type: 'join', protocolVersion: 6, campaignId });
 
     await waitForMessage(adminMessages, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1Messages, (m) => m['type'] === 'joined', 3000);
@@ -934,13 +934,17 @@ async function main(): Promise<void> {
     assert(docBody?.asset?.assetKind === 'document', 'F3: assetKind is document');
     assert(docBody?.asset?.ownerUsername === 'player1', 'F4: ownerUsername is player1');
 
-    // F5: documents are PRIVATE to the uploader — admin's documentsUpdated must NOT contain it
+    // F5: the DM is omniscient — admin's documentsUpdated DOES contain the doc.
     try {
-      const docsUpdMsg = await waitForMessage(adminMessages, (m) => m['type'] === 'documentsUpdated', 3000);
+      const docsUpdMsg = await waitForMessage(
+        adminMessages,
+        (m) => m['type'] === 'documentsUpdated' && (m['documents'] as Array<{ id?: string }>).some((d) => d.id === docId),
+        3000,
+      );
       const docs = docsUpdMsg['documents'] as Array<{ id?: string }>;
-      assert(Array.isArray(docs) && !docs.some((d) => d.id === docId), 'F5: admin documentsUpdated does NOT contain player1 private doc');
+      assert(Array.isArray(docs) && docs.some((d) => d.id === docId), 'F5: admin (omniscient) documentsUpdated contains player1 doc');
     } catch {
-      fail('F5: admin receives documentsUpdated', 'timeout');
+      fail('F5: admin (omniscient) documentsUpdated contains player1 doc', 'timeout');
     }
 
     // F6: player1 receives documentsUpdated containing their own doc
@@ -958,30 +962,21 @@ async function main(): Promise<void> {
     const p1DocGet = await player1(`/api/campaigns/${campaignId}/files/assets/${docFile}`);
     assert(p1DocGet.status === 200, 'F7: player1 GET own pdf → 200');
 
-    // F7a: admin (even DM) cannot fetch the private doc → 403
+    // F7a: the DM is omniscient — can fetch a player's private doc (200).
     const adminPrivGet = await admin(`/api/campaigns/${campaignId}/files/assets/${docFile}`);
-    assert(adminPrivGet.status === 403, 'F7a: dm GET private player doc → 403');
+    assert(adminPrivGet.status === 200, 'F7a: dm GET private player doc → 200 (DM omniscient)');
 
-    // F7b: player1 shares the doc with the table
-    send(p1Ws, { type: 'shareDocument', assetId: docId as string });
-    try {
-      const sharedMsg = await waitForMessage(adminMessages, (m) => m['type'] === 'documentShared', 3000);
-      const sharedAsset = sharedMsg['asset'] as { id?: string };
-      assert(sharedAsset?.id === docId, 'F7b: admin receives documentShared for the doc');
-    } catch {
-      fail('F7b: admin receives documentShared', 'timeout');
-    }
-
-    // F7c: after sharing, admin's documentsUpdated contains it and the file is fetchable
+    // F7b: player1 shares the doc with everyone; admin's list still has it.
+    send(p1Ws, { type: 'setDocumentSharing', assetId: docId as string, sharing: { scope: 'all', userIds: [] } });
     try {
       const docsAfterShare = await waitForMessage(
         adminMessages,
         (m) => m['type'] === 'documentsUpdated' && (m['documents'] as Array<{ id?: string }>).some((d) => d.id === docId),
         3000,
       );
-      assert(!!docsAfterShare, 'F7c: admin documentsUpdated contains doc after sharing');
+      assert(!!docsAfterShare, 'F7b: admin documentsUpdated contains doc after share-with-all');
     } catch {
-      fail('F7c: admin documentsUpdated contains doc after sharing', 'timeout');
+      fail('F7b: admin documentsUpdated contains doc after share-with-all', 'timeout');
     }
     const adminSharedGet = await admin(`/api/campaigns/${campaignId}/files/assets/${docFile}`);
     assert(adminSharedGet.status === 200, 'F7d: dm GET shared doc → 200');
@@ -1022,7 +1017,7 @@ async function main(): Promise<void> {
 
       // F7j: late joiners get the playback state in the snapshot
       const { ws: lateWs, messages: lateMsgs } = await openWs(wsUrl, player2Jar);
-      send(lateWs, { type: 'join', protocolVersion: 3, campaignId });
+      send(lateWs, { type: 'join', protocolVersion: 6, campaignId });
       try {
         const snap = await waitForMessage(lateMsgs, (m) => m['type'] === 'snapshot', 3000);
         const media = snap['media'] as { assetId?: string; action?: string; elapsedMs?: number } | null;
@@ -1068,7 +1063,7 @@ async function main(): Promise<void> {
 
     // Set up player2 WS
     const { ws: p2Ws, messages: p2Messages } = await openWs(wsUrl, player2Jar);
-    send(p2Ws, { type: 'join', protocolVersion: 3, campaignId });
+    send(p2Ws, { type: 'join', protocolVersion: 6, campaignId });
     await waitForMessage(p2Messages, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p2Messages, (m) => m['type'] === 'snapshot', 3000);
 
@@ -1224,7 +1219,7 @@ async function main(): Promise<void> {
 
     // Admin joins second campaign
     const { ws: adminWs2, messages: adminMessages2 } = await openWs(wsUrl, adminJar);
-    send(adminWs2, { type: 'join', protocolVersion: 3, campaignId: camp2Id });
+    send(adminWs2, { type: 'join', protocolVersion: 6, campaignId: camp2Id });
     await waitForMessage(adminMessages2, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(adminMessages2, (m) => m['type'] === 'snapshot', 3000);
 
@@ -1288,7 +1283,7 @@ async function main(): Promise<void> {
 
     // Reopen with same cookie + join
     const { ws: p1WsNew, messages: p1MessagesNew } = await openWs(wsUrl, player1Jar);
-    send(p1WsNew, { type: 'join', protocolVersion: 3, campaignId });
+    send(p1WsNew, { type: 'join', protocolVersion: 6, campaignId });
     await waitForMessage(p1MessagesNew, (m) => m['type'] === 'joined', 3000);
 
     // Snapshot contains board items (re-pinned earlier) + prior rolls
@@ -1360,7 +1355,7 @@ async function main(): Promise<void> {
 
     // Snapshot still has board items + roll history
     const { ws: adminWsRestart, messages: adminMsgsRestart } = await openWs(wsUrl2, adminJar);
-    send(adminWsRestart, { type: 'join', protocolVersion: 3, campaignId });
+    send(adminWsRestart, { type: 'join', protocolVersion: 6, campaignId });
     await waitForMessage(adminMsgsRestart, (m) => m['type'] === 'joined', 3000);
     try {
       const snapRestart = await waitForMessage(adminMsgsRestart, (m) => m['type'] === 'snapshot', 3000);
@@ -1381,22 +1376,22 @@ async function main(): Promise<void> {
 
     // Reopen p1WsNew connection on port2
     const { ws: p1WsPort2, messages: p1MsgsPort2 } = await openWs(wsUrl2, player1Jar);
-    send(p1WsPort2, { type: 'join', protocolVersion: 3, campaignId });
+    send(p1WsPort2, { type: 'join', protocolVersion: 6, campaignId });
     await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'snapshot', 3000);
 
-    // J1: player1 saveNote visibility='player' → noteSaved + persisted
+    // J1: player1 saveNote private → noteSaved + persisted
     send(p1WsPort2, {
       type: 'saveNote',
       title: 'My Note',
       body: 'Player note content',
-      visibility: 'player',
+      sharing: { scope: 'private', userIds: [] },
     });
 
     try {
       const noteSavedMsg = await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'noteSaved', 3000);
-      const note = noteSavedMsg['note'] as { id?: string; visibility?: string; ownerUsername?: string };
-      assert(note?.visibility === 'player', 'J1: note visibility is player');
+      const note = noteSavedMsg['note'] as { id?: string; sharing?: { scope?: string }; ownerUsername?: string };
+      assert(note?.sharing?.scope === 'private', 'J1: note scope is private');
       assert(note?.ownerUsername === 'player1', 'J2: note ownerUsername is player1');
 
       const noteId = note?.id;
@@ -1415,44 +1410,56 @@ async function main(): Promise<void> {
       fail('J1: player1 saveNote', 'timeout');
     }
 
-    // J6: player1 saveNote visibility='dm' → rejected (FORBIDDEN)
+    // J7: dm can save dm-scope notes
+    const { ws: adminWsPort2Notes, messages: adminMsgsPort2Notes } = await openWs(wsUrl2, adminJar);
+    send(adminWsPort2Notes, { type: 'join', protocolVersion: 6, campaignId });
+    await waitForMessage(adminMsgsPort2Notes, (m) => m['type'] === 'joined', 3000);
+
+    // J6: player1 may now share a note with the DM (scope 'dm') — allowed, and
+    // the DM receives it.
     send(p1WsPort2, {
       type: 'saveNote',
-      title: 'DM Note',
-      body: 'Trying to write dm note',
-      visibility: 'dm',
+      title: 'For the DM',
+      body: 'Psst, DM only',
+      sharing: { scope: 'dm', userIds: [] },
     });
     try {
-      const forbiddenMsg = await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
-      assert(forbiddenMsg['code'] === 'FORBIDDEN', 'J6: player saveNote visibility=dm → FORBIDDEN');
+      const dmShare = await waitForMessage(
+        adminMsgsPort2Notes,
+        (m) => m['type'] === 'noteSaved' && (m['note'] as { title?: string })?.title === 'For the DM',
+        3000,
+      );
+      const note = dmShare['note'] as { sharing?: { scope?: string }; ownerUsername?: string };
+      assert(note?.sharing?.scope === 'dm', 'J6: player can share a note with the DM (scope dm)');
+      assert(note?.ownerUsername === 'player1', 'J6b: DM-shared note keeps player1 as owner');
     } catch {
-      fail('J6: player saveNote visibility=dm → FORBIDDEN', 'timeout');
+      fail('J6: player can share a note with the DM', 'timeout');
     }
 
-    // J7: dm can save dm notes
-    const { ws: adminWsPort2Notes, messages: adminMsgsPort2Notes } = await openWs(wsUrl2, adminJar);
-    send(adminWsPort2Notes, { type: 'join', protocolVersion: 3, campaignId });
-    await waitForMessage(adminMsgsPort2Notes, (m) => m['type'] === 'joined', 3000);
     send(adminWsPort2Notes, {
       type: 'saveNote',
       title: 'DM Secret',
       body: 'DM-only content',
-      visibility: 'dm',
+      sharing: { scope: 'dm', userIds: [] },
     });
     try {
-      const dmNoteSaved = await waitForMessage(adminMsgsPort2Notes, (m) => m['type'] === 'noteSaved', 3000);
-      const note = dmNoteSaved['note'] as { visibility?: string };
-      assert(note?.visibility === 'dm', 'J7: dm can save dm-visibility notes');
+      const dmNoteSaved = await waitForMessage(
+        adminMsgsPort2Notes,
+        (m) => m['type'] === 'noteSaved' && (m['note'] as { title?: string })?.title === 'DM Secret',
+        3000,
+      );
+      const note = dmNoteSaved['note'] as { sharing?: { scope?: string } };
+      assert(note?.sharing?.scope === 'dm', 'J7: dm can save dm-scope notes');
     } catch {
-      fail('J7: dm can save dm-visibility notes', 'timeout');
+      fail('J7: dm can save dm-scope notes', 'timeout');
     }
 
-    // J8–J11: shared notes — player1 shares a note with the table
+    // J8–J11: shared notes — player1 shares a note with everyone
     send(p1WsPort2, {
       type: 'saveNote',
       title: 'Party plan',
       body: 'We attack at dawn',
-      visibility: 'shared',
+      sharing: { scope: 'all', userIds: [] },
     });
     let sharedNoteId: string | undefined;
     try {
@@ -1461,9 +1468,9 @@ async function main(): Promise<void> {
         (m) => m['type'] === 'noteSaved' && (m['note'] as { title?: string })?.title === 'Party plan',
         3000,
       );
-      const note = sharedSaved['note'] as { id?: string; visibility?: string; ownerUsername?: string };
+      const note = sharedSaved['note'] as { id?: string; sharing?: { scope?: string }; ownerUsername?: string };
       sharedNoteId = note?.id;
-      assert(note?.visibility === 'shared', 'J8: shared note broadcast to other members');
+      assert(note?.sharing?.scope === 'all', 'J8: shared note broadcast to other members');
       assert(note?.ownerUsername === 'player1', 'J9: shared note keeps owner');
     } catch {
       fail('J8: shared note broadcast to other members', 'timeout');
@@ -1472,14 +1479,14 @@ async function main(): Promise<void> {
     // J10: non-owner non-dm cannot edit a shared note
     if (sharedNoteId) {
       const { ws: p2WsNotes, messages: p2MsgsNotes } = await openWs(wsUrl2, player2Jar);
-      send(p2WsNotes, { type: 'join', protocolVersion: 3, campaignId });
+      send(p2WsNotes, { type: 'join', protocolVersion: 6, campaignId });
       await waitForMessage(p2MsgsNotes, (m) => m['type'] === 'joined', 3000);
       send(p2WsNotes, {
         type: 'saveNote',
         noteId: sharedNoteId,
         title: 'Hijacked',
         body: 'rewritten',
-        visibility: 'shared',
+        sharing: { scope: 'all', userIds: [] },
       });
       try {
         const forb = await waitForMessage(p2MsgsNotes, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
@@ -1487,26 +1494,27 @@ async function main(): Promise<void> {
       } catch {
         fail('J10: non-owner cannot edit shared note', 'timeout');
       }
-      p2WsNotes.close();
 
-      // J11: unsharing removes it from other members
+      // J11: unsharing (→ private) removes it from other players (the DM, being
+      // omniscient, keeps it — so we check player2, not the DM).
       send(p1WsPort2, {
         type: 'saveNote',
         noteId: sharedNoteId,
         title: 'Party plan',
         body: 'We attack at dawn',
-        visibility: 'player',
+        sharing: { scope: 'private', userIds: [] },
       });
       try {
         const removed = await waitForMessage(
-          adminMsgsPort2Notes,
+          p2MsgsNotes,
           (m) => m['type'] === 'noteDeleted' && m['noteId'] === sharedNoteId,
           3000,
         );
-        assert(removed['noteId'] === sharedNoteId, 'J11: unsharing sends noteDeleted to others');
+        assert(removed['noteId'] === sharedNoteId, 'J11: unsharing sends noteDeleted to other players');
       } catch {
-        fail('J11: unsharing sends noteDeleted to others', 'timeout');
+        fail('J11: unsharing sends noteDeleted to other players', 'timeout');
       }
+      p2WsNotes.close();
     }
 
     adminWsPort2Notes.close();
@@ -1520,8 +1528,8 @@ async function main(): Promise<void> {
     // Open fresh WS connections on port2
     const { ws: adminWsLock, messages: adminMsgsLock } = await openWs(wsUrl2, adminJar);
     const { ws: p1WsLock, messages: p1MsgsLock } = await openWs(wsUrl2, player1Jar);
-    send(adminWsLock, { type: 'join', protocolVersion: 3, campaignId });
-    send(p1WsLock, { type: 'join', protocolVersion: 3, campaignId });
+    send(adminWsLock, { type: 'join', protocolVersion: 6, campaignId });
+    send(p1WsLock, { type: 'join', protocolVersion: 6, campaignId });
     await waitForMessage(adminMsgsLock, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1MsgsLock, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(adminMsgsLock, (m) => m['type'] === 'snapshot', 3000);
@@ -1583,6 +1591,570 @@ async function main(): Promise<void> {
 
     adminWsLock.close();
     p1WsLock.close();
+
+    // =========================================================================
+    // M. Tokens, grid & measurement
+    // =========================================================================
+    process.stdout.write('\n--- M. Tokens, grid & measurement ---\n');
+
+    const { ws: adminWsTok, messages: adminMsgsTok } = await openWs(wsUrl2, adminJar);
+    const { ws: p1WsTok, messages: p1MsgsTok } = await openWs(wsUrl2, player1Jar);
+    send(adminWsTok, { type: 'join', protocolVersion: 6, campaignId });
+    send(p1WsTok, { type: 'join', protocolVersion: 6, campaignId });
+    const adminJoinedTok = await waitForMessage(adminMsgsTok, (m) => m['type'] === 'joined', 3000);
+    await waitForMessage(p1MsgsTok, (m) => m['type'] === 'joined', 3000);
+    await waitForMessage(adminMsgsTok, (m) => m['type'] === 'snapshot', 3000);
+    await waitForMessage(p1MsgsTok, (m) => m['type'] === 'snapshot', 3000);
+
+    // M1: joined handshake reports protocol version 6
+    assertEqual(adminJoinedTok['protocolVersion'], 6, 'M1: server protocol version is 6');
+
+    const player1Id = (reg1Body as { user?: { id?: string } })?.user?.id ?? null;
+    assert(typeof player1Id === 'string', 'M2-pre: player1 id available');
+
+    // M2: DM adds a token owned by player1 → both DM and player1 receive tokensUpdated
+    send(adminWsTok, {
+      type: 'tokenAdd',
+      name: 'Aragorn',
+      shape: 'round',
+      allegiance: 'ally',
+      ownerUserId: player1Id,
+      size: 'M',
+      x: 100,
+      y: 100,
+    });
+    let tokenId: string | null = null;
+    try {
+      const tokMsg = await waitForMessage(
+        p1MsgsTok,
+        (m) => m['type'] === 'tokensUpdated' &&
+          (m['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'Aragorn'),
+        3000,
+      );
+      const tokens = tokMsg['tokens'] as Array<{ id?: string; name?: string; ownerUserId?: string }>;
+      const tok = tokens.find((t) => t.name === 'Aragorn');
+      tokenId = tok?.id ?? null;
+      assert(tok !== undefined, 'M2: player1 receives tokensUpdated after DM tokenAdd');
+      assert(tok?.ownerUserId === player1Id, 'M3: token carries ownerUserId');
+    } catch {
+      fail('M2: player1 receives tokensUpdated after DM tokenAdd', 'timeout');
+    }
+
+    // M4: player moving a token they own → broadcast with new position
+    if (tokenId) {
+      send(p1WsTok, { type: 'tokenMove', tokenId, x: 264, y: 308 });
+      try {
+        const moved = await waitForMessage(
+          adminMsgsTok,
+          (m) => m['type'] === 'tokensUpdated' &&
+            (m['tokens'] as Array<{ id?: string; x?: number; y?: number }>).some(
+              (t) => t.id === tokenId && t.x === 264 && t.y === 308,
+            ),
+          3000,
+        );
+        assert(!!moved, 'M4: owner can move their token');
+      } catch {
+        fail('M4: owner can move their token', 'timeout');
+      }
+    }
+
+    // M5: DM adds an unowned token → player move → FORBIDDEN
+    send(adminWsTok, {
+      type: 'tokenAdd',
+      name: 'Goblin',
+      shape: 'square',
+      allegiance: 'enemy',
+      ownerUserId: null,
+      size: 'S',
+      x: 200,
+      y: 200,
+    });
+    let goblinId: string | null = null;
+    try {
+      const gobMsg = await waitForMessage(
+        p1MsgsTok,
+        (m) => m['type'] === 'tokensUpdated' &&
+          (m['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'Goblin'),
+        3000,
+      );
+      goblinId = (gobMsg['tokens'] as Array<{ id?: string; name?: string }>).find((t) => t.name === 'Goblin')?.id ?? null;
+    } catch {
+      fail('M5-pre: goblin token added', 'timeout');
+    }
+    if (goblinId) {
+      send(p1WsTok, { type: 'tokenMove', tokenId: goblinId, x: 5, y: 5 });
+      try {
+        const forb = await waitForMessage(p1MsgsTok, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(forb['code'] === 'FORBIDDEN', 'M5: player tokenMove on non-owned token → FORBIDDEN');
+      } catch {
+        fail('M5: player tokenMove on non-owned token → FORBIDDEN', 'timeout');
+      }
+    }
+
+    // M6: player tokenAdd → FORBIDDEN
+    send(p1WsTok, {
+      type: 'tokenAdd', name: 'Hack', shape: 'round', allegiance: 'ally',
+      ownerUserId: null, size: 'M', x: 0, y: 0,
+    });
+    try {
+      const forb = await waitForMessage(p1MsgsTok, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forb['code'] === 'FORBIDDEN', 'M6: player tokenAdd → FORBIDDEN');
+    } catch {
+      fail('M6: player tokenAdd → FORBIDDEN', 'timeout');
+    }
+
+    // M7/M8: dmOnly token is hidden from players
+    send(adminWsTok, {
+      type: 'tokenAdd', name: 'SecretTrap', shape: 'square', allegiance: 'neutral',
+      ownerUserId: null, size: 'M', x: 300, y: 300, dmOnly: true,
+    });
+    try {
+      await waitForMessage(
+        adminMsgsTok,
+        (m) => m['type'] === 'tokensUpdated' &&
+          (m['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'SecretTrap'),
+        3000,
+      );
+      pass('M7: DM receives dmOnly token');
+    } catch {
+      fail('M7: DM receives dmOnly token', 'timeout');
+    }
+    await waitMs(300);
+    const p1SeesSecret = p1MsgsTok
+      .filter((m) => m['type'] === 'tokensUpdated')
+      .some((m) => (m['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'SecretTrap'));
+    assert(!p1SeesSecret, 'M8: dmOnly token never reaches player tokensUpdated');
+
+    // M9: DM setGrid → player receives gridUpdated
+    send(adminWsTok, { type: 'setGrid', grid: { cell: 64, unit: 'm' } });
+    try {
+      const gridMsg = await waitForMessage(p1MsgsTok, (m) => m['type'] === 'gridUpdated', 3000);
+      const grid = gridMsg['grid'] as { cell?: number; unit?: string };
+      assert(grid?.cell === 64 && grid?.unit === 'm', 'M9: player receives gridUpdated (cell=64, unit=m)');
+    } catch {
+      fail('M9: player receives gridUpdated', 'timeout');
+    }
+
+    // M10: setGrid clamps cell to [8,512]
+    send(adminWsTok, { type: 'setGrid', grid: { cell: 9000 } });
+    try {
+      const gridMsg = await waitForMessage(
+        p1MsgsTok,
+        (m) => m['type'] === 'gridUpdated' && (m['grid'] as { cell?: number })?.cell === 512,
+        3000,
+      );
+      assert(!!gridMsg, 'M10: setGrid clamps oversized cell to 512');
+    } catch {
+      fail('M10: setGrid clamps oversized cell', 'timeout');
+    }
+
+    // M11: non-DM setGrid → FORBIDDEN
+    send(p1WsTok, { type: 'setGrid', grid: { cell: 50 } });
+    try {
+      const forb = await waitForMessage(p1MsgsTok, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forb['code'] === 'FORBIDDEN', 'M11: player setGrid → FORBIDDEN');
+    } catch {
+      fail('M11: player setGrid → FORBIDDEN', 'timeout');
+    }
+
+    // M12/M13: measure ruler broadcasts to OTHER sessions only (sender excluded)
+    send(adminWsTok, { type: 'measure', kind: 'ruler', x1: 0, y1: 0, x2: 100, y2: 0 });
+    try {
+      const meas = await waitForMessage(
+        p1MsgsTok,
+        (m) => m['type'] === 'measureShared' && m['kind'] === 'ruler',
+        2000,
+      );
+      assert(meas['by'] === 'admin' && meas['x2'] === 100, 'M12: player receives admin measure ruler');
+    } catch {
+      fail('M12: player receives admin measure ruler', 'timeout');
+    }
+    await waitMs(200);
+    const adminGotOwnMeasure = adminMsgsTok.filter((m) => m['type'] === 'measureShared').length;
+    assert(adminGotOwnMeasure === 0, 'M13: measure is not echoed back to the sender');
+
+    // M14: DM tokenRemove → player receives tokensUpdated without it
+    if (goblinId) {
+      send(adminWsTok, { type: 'tokenRemove', tokenId: goblinId });
+      try {
+        await waitForMessage(
+          p1MsgsTok,
+          (m) => m['type'] === 'tokensUpdated' &&
+            !(m['tokens'] as Array<{ id?: string }>).some((t) => t.id === goblinId),
+          3000,
+        );
+        pass('M14: player receives tokensUpdated after tokenRemove');
+      } catch {
+        fail('M14: player receives tokensUpdated after tokenRemove', 'timeout');
+      }
+    }
+
+    adminWsTok.close();
+    p1WsTok.close();
+
+    // =========================================================================
+    // N. Granular sharing + player-uploaded tokens
+    // =========================================================================
+    process.stdout.write('\n--- N. Granular sharing + player tokens ---\n');
+
+    // HTTP clients bound to the restarted server (port2).
+    const player2b = makeClient(base2, player2Jar);
+    const player3b = makeClient(base2, player3Jar);
+    const adminB = makeClient(base2, adminJar);
+
+    const { ws: adminWsN, messages: adminMsgsN } = await openWs(wsUrl2, adminJar);
+    const { ws: p1WsN, messages: p1MsgsN } = await openWs(wsUrl2, player1Jar);
+    const { ws: p2WsN, messages: p2MsgsN } = await openWs(wsUrl2, player2Jar);
+    const { ws: p3WsN, messages: p3MsgsN } = await openWs(wsUrl2, player3Jar);
+    for (const ws of [adminWsN, p1WsN, p2WsN, p3WsN]) send(ws, { type: 'join', protocolVersion: 6, campaignId });
+    const adminSnapN = await waitForMessage(adminMsgsN, (m) => m['type'] === 'snapshot', 3000);
+    await waitForMessage(p1MsgsN, (m) => m['type'] === 'snapshot', 3000);
+    await waitForMessage(p2MsgsN, (m) => m['type'] === 'snapshot', 3000);
+    await waitForMessage(p3MsgsN, (m) => m['type'] === 'snapshot', 3000);
+
+    // Resolve member ids from the snapshot's members list.
+    const memberList = adminSnapN['members'] as Array<{ userId: string; username: string }>;
+    assert(Array.isArray(memberList) && memberList.length >= 3, 'N0: snapshot carries members list');
+    const idOf = (u: string) => memberList.find((m) => m.username === u)?.userId ?? '';
+    const p2Id = idOf('player2');
+    const p3Id = idOf('player3');
+    assert(p2Id !== '' && p3Id !== '', 'N0b: resolved player2 & player3 ids from members');
+
+    // N1: player1 uploads a doc and shares it with ONLY player2.
+    const targetedPdf = minimalPdf('targeted.pdf');
+    const tDocRes = await uploadFile(base2, player1Jar, `/api/campaigns/${campaignId}/documents`, targetedPdf, 'targeted.pdf', 'application/pdf');
+    const tDocId = (tDocRes.body as { asset?: { id?: string; file?: string } })?.asset?.id ?? '';
+    const tDocFile = (tDocRes.body as { asset?: { file?: string } })?.asset?.file ?? '';
+    assert(tDocRes.status === 201 && tDocId !== '', 'N1: player1 uploaded targeted doc');
+
+    send(p1WsN, { type: 'setDocumentSharing', assetId: tDocId, sharing: { scope: 'users', userIds: [p2Id] } });
+
+    // player2 gains it; player3 never does; admin (omniscient) has it.
+    try {
+      await waitForMessage(
+        p2MsgsN,
+        (m) => m['type'] === 'documentsUpdated' && (m['documents'] as Array<{ id?: string }>).some((d) => d.id === tDocId),
+        3000,
+      );
+      pass('N2: targeted share reaches the chosen player (player2)');
+    } catch {
+      fail('N2: targeted share reaches player2', 'timeout');
+    }
+    await waitMs(300);
+    const p3HasTargeted = p3MsgsN
+      .filter((m) => m['type'] === 'documentsUpdated')
+      .some((m) => (m['documents'] as Array<{ id?: string }>).some((d) => d.id === tDocId));
+    assert(!p3HasTargeted, 'N3: non-targeted player (player3) never receives the doc');
+
+    // File access matches sharing.
+    const p2Get = await player2b(`/api/campaigns/${campaignId}/files/assets/${tDocFile}`);
+    const p3Get = await player3b(`/api/campaigns/${campaignId}/files/assets/${tDocFile}`);
+    const admGet = await adminB(`/api/campaigns/${campaignId}/files/assets/${tDocFile}`);
+    assert(p2Get.status === 200, 'N4: targeted player2 can GET the file → 200');
+    assert(p3Get.status === 403, 'N5: non-targeted player3 GET → 403');
+    assert(admGet.status === 200, 'N6: DM (omniscient) GET → 200');
+
+    // N7: player2 uploads a token image (allowed; assetKind forced to 'token').
+    const tokenPng = await generatePng(120, 120);
+    const tokImgRes = await uploadFile(base2, player2Jar, `/api/campaigns/${campaignId}/assets`, tokenPng, 'myface.png', 'image/png', { kind: 'map' });
+    const tokImg = (tokImgRes.body as { asset?: { id?: string; assetKind?: string; ownerUsername?: string; dmOnly?: boolean } })?.asset;
+    assert(tokImgRes.status === 201, 'N7: player2 uploads a token image → 201');
+    assert(tokImg?.assetKind === 'token', 'N8: player upload forced to assetKind=token (not map)');
+    assert(tokImg?.dmOnly === false, 'N9: player-uploaded image is not dmOnly');
+
+    // N10: player2 creates their own token from it (tries to assign owner=player3 & dmOnly — both ignored).
+    send(p2WsN, {
+      type: 'tokenAdd', name: 'Legolas', shape: 'round', allegiance: 'ally',
+      ownerUserId: p3Id, size: 'M', x: 80, y: 80, assetId: tokImg?.id, dmOnly: true,
+    });
+    let pTokenId = '';
+    try {
+      const tu = await waitForMessage(
+        p2MsgsN,
+        (m) => m['type'] === 'tokensUpdated' && (m['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'Legolas'),
+        3000,
+      );
+      const tok = (tu['tokens'] as Array<{ id?: string; name?: string; ownerUserId?: string; dmOnly?: boolean }>).find((t) => t.name === 'Legolas');
+      pTokenId = tok?.id ?? '';
+      assert(tok?.ownerUserId === p2Id, 'N10: player token is owned by its creator (not the spoofed owner)');
+      assert(tok?.dmOnly === false, 'N11: player cannot create a dmOnly token');
+    } catch {
+      fail('N10: player creates own token', 'timeout');
+    }
+
+    // N12: player1 (not owner, not shared) cannot move it.
+    if (pTokenId) {
+      send(p1WsN, { type: 'tokenMove', tokenId: pTokenId, x: 1, y: 1 });
+      try {
+        const forb = await waitForMessage(p1MsgsN, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(forb['code'] === 'FORBIDDEN', 'N12: non-controller player cannot move the token');
+      } catch {
+        fail('N12: non-controller player cannot move the token', 'timeout');
+      }
+
+      // N13: player2 shares control with player3; player3 can then move it.
+      send(p2WsN, { type: 'tokenUpdate', tokenId: pTokenId, sharing: { scope: 'users', userIds: [p3Id] } });
+      await waitMs(150);
+      send(p3WsN, { type: 'tokenMove', tokenId: pTokenId, x: 200, y: 240 });
+      try {
+        await waitForMessage(
+          adminMsgsN,
+          (m) => m['type'] === 'tokensUpdated' &&
+            (m['tokens'] as Array<{ id?: string; x?: number }>).some((t) => t.id === pTokenId && t.x === 200),
+          3000,
+        );
+        pass('N13: shared-control player (player3) can move the token');
+      } catch {
+        fail('N13: shared-control player can move the token', 'timeout');
+      }
+
+      // N14: player3 (controller, not owner) cannot EDIT properties.
+      send(p3WsN, { type: 'tokenUpdate', tokenId: pTokenId, name: 'Hijacked' });
+      try {
+        const forb = await waitForMessage(p3MsgsN, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(forb['code'] === 'FORBIDDEN', 'N14: controller (non-owner) cannot edit token properties');
+      } catch {
+        fail('N14: controller cannot edit token properties', 'timeout');
+      }
+
+      // N15: a non-owner player cannot remove it; the owner can.
+      send(p1WsN, { type: 'tokenRemove', tokenId: pTokenId });
+      try {
+        const forb = await waitForMessage(p1MsgsN, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(forb['code'] === 'FORBIDDEN', 'N15: non-owner cannot remove the token');
+      } catch {
+        fail('N15: non-owner cannot remove the token', 'timeout');
+      }
+      send(p2WsN, { type: 'tokenRemove', tokenId: pTokenId });
+      try {
+        await waitForMessage(
+          adminMsgsN,
+          (m) => m['type'] === 'tokensUpdated' && !(m['tokens'] as Array<{ id?: string }>).some((t) => t.id === pTokenId),
+          3000,
+        );
+        pass('N16: owner can remove their own token');
+      } catch {
+        fail('N16: owner can remove their own token', 'timeout');
+      }
+    }
+
+    adminWsN.close();
+    p1WsN.close();
+    p2WsN.close();
+    p3WsN.close();
+
+    // =========================================================================
+    // O. Map creation (build mode pieces)
+    // =========================================================================
+    process.stdout.write('\n--- O. Map creation (pieces) ---\n');
+
+    const { ws: adminWsO, messages: adminMsgsO } = await openWs(wsUrl2, adminJar);
+    const { ws: p1WsO, messages: p1MsgsO } = await openWs(wsUrl2, player1Jar);
+    send(adminWsO, { type: 'join', protocolVersion: 6, campaignId });
+    send(p1WsO, { type: 'join', protocolVersion: 6, campaignId });
+    const adminSnapO = await waitForMessage(adminMsgsO, (m) => m['type'] === 'snapshot', 3000);
+    await waitForMessage(p1MsgsO, (m) => m['type'] === 'snapshot', 3000);
+
+    // O0: snapshot carries the new map-creation fields
+    assert(Array.isArray(adminSnapO['pieces']), 'O0: snapshot has pieces[]');
+    assert(typeof adminSnapO['mapMeta'] === 'object' && adminSnapO['mapMeta'] !== null, 'O0b: snapshot has mapMeta');
+    const feats = adminSnapO['features'] as { imageGenEnabled?: boolean } | undefined;
+    assert(typeof feats?.imageGenEnabled === 'boolean', 'O0c: snapshot has features.imageGenEnabled');
+
+    // O1: DM adds a builtin piece → broadcast to all (pieces are visible to everyone)
+    send(adminWsO, { type: 'pieceAdd', builtin: 'oak', x: 64, y: 64, w: 96, h: 96, rotation: 0, layer: 'props', lockedToGrid: false });
+    let pieceId = '';
+    try {
+      const pu = await waitForMessage(
+        p1MsgsO,
+        (m) => m['type'] === 'piecesUpdated' && (m['pieces'] as Array<{ builtin?: string }>).some((p) => p.builtin === 'oak'),
+        3000,
+      );
+      pieceId = (pu['pieces'] as Array<{ id?: string; builtin?: string }>).find((p) => p.builtin === 'oak')?.id ?? '';
+      assert(pieceId !== '', 'O1: player receives piecesUpdated after DM pieceAdd');
+    } catch {
+      fail('O1: player receives piecesUpdated', 'timeout');
+    }
+
+    // O2: player pieceAdd → FORBIDDEN
+    send(p1WsO, { type: 'pieceAdd', builtin: 'pine', x: 0, y: 0, w: 96, h: 96, rotation: 0, layer: 'props', lockedToGrid: false });
+    try {
+      const forb = await waitForMessage(p1MsgsO, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forb['code'] === 'FORBIDDEN', 'O2: player pieceAdd → FORBIDDEN');
+    } catch {
+      fail('O2: player pieceAdd → FORBIDDEN', 'timeout');
+    }
+
+    if (pieceId) {
+      // O3: DM moves the piece
+      send(adminWsO, { type: 'pieceMove', id: pieceId, x: 256, y: 320 });
+      try {
+        await waitForMessage(
+          p1MsgsO,
+          (m) => m['type'] === 'piecesUpdated' && (m['pieces'] as Array<{ id?: string; x?: number }>).some((p) => p.id === pieceId && p.x === 256),
+          3000,
+        );
+        pass('O3: piece move broadcasts new position');
+      } catch {
+        fail('O3: piece move broadcasts', 'timeout');
+      }
+
+      // O4: DM resizes + rotates
+      send(adminWsO, { type: 'pieceUpdate', id: pieceId, w: 160, h: 160, rotation: 45 });
+      try {
+        await waitForMessage(
+          adminMsgsO,
+          (m) => m['type'] === 'piecesUpdated' && (m['pieces'] as Array<{ id?: string; w?: number; rotation?: number }>).some((p) => p.id === pieceId && p.w === 160 && p.rotation === 45),
+          3000,
+        );
+        pass('O4: piece resize + rotate broadcasts');
+      } catch {
+        fail('O4: piece resize + rotate', 'timeout');
+      }
+    }
+
+    // O5: DM sets map meta → mapMetaUpdated broadcast
+    send(adminWsO, { type: 'setMapMeta', name: 'Whisper Wood — Camp', areaTag: 'Forest' });
+    try {
+      const mm = await waitForMessage(p1MsgsO, (m) => m['type'] === 'mapMetaUpdated', 3000);
+      const meta = mm['mapMeta'] as { name?: string; areaTag?: string };
+      assert(meta?.name === 'Whisper Wood — Camp' && meta?.areaTag === 'Forest', 'O5: player receives mapMetaUpdated');
+    } catch {
+      fail('O5: player receives mapMetaUpdated', 'timeout');
+    }
+
+    // O6: non-DM setMapMeta → FORBIDDEN
+    send(p1WsO, { type: 'setMapMeta', name: 'hijack' });
+    try {
+      const forb = await waitForMessage(p1MsgsO, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forb['code'] === 'FORBIDDEN', 'O6: player setMapMeta → FORBIDDEN');
+    } catch {
+      fail('O6: player setMapMeta → FORBIDDEN', 'timeout');
+    }
+
+    // O7: DM removes the piece
+    if (pieceId) {
+      send(adminWsO, { type: 'pieceRemove', id: pieceId });
+      try {
+        await waitForMessage(
+          p1MsgsO,
+          (m) => m['type'] === 'piecesUpdated' && !(m['pieces'] as Array<{ id?: string }>).some((p) => p.id === pieceId),
+          3000,
+        );
+        pass('O7: piece remove broadcasts');
+      } catch {
+        fail('O7: piece remove broadcasts', 'timeout');
+      }
+    }
+
+    adminWsO.close();
+    p1WsO.close();
+
+    // =========================================================================
+    // P. Image generation (gating + save)
+    // =========================================================================
+    process.stdout.write('\n--- P. Image generation ---\n');
+
+    // No LLM_API_KEY in the smoke env → generation disabled.
+    const genRes = await adminB(`/api/campaigns/${campaignId}/generate`, { method: 'POST', body: JSON.stringify({ subject: 'a cave', kind: 'background' }) });
+    assert(genRes.status === 503, 'P1: DM /generate without key → 503');
+    assert((genRes.body as { code?: string })?.code === 'GEN_DISABLED', 'P2: 503 carries GEN_DISABLED');
+
+    const genForb = await player2b(`/api/campaigns/${campaignId}/generate`, { method: 'POST', body: JSON.stringify({ subject: 'x', kind: 'prop' }) });
+    assert(genForb.status === 403, 'P3: player /generate → 403 (DM only)');
+
+    // The save path needs no LLM key — it persists a provided image as an asset.
+    const tinyPng = (await generatePng(64, 64)).toString('base64');
+    const saveBg = await adminB(`/api/campaigns/${campaignId}/generate/save`, { method: 'POST', body: JSON.stringify({ base64: tinyPng, kind: 'background', title: 'gen map' }) });
+    assert(saveBg.status === 201, 'P4: DM /generate/save (background) → 201');
+    assert((saveBg.body as { asset?: { assetKind?: string } })?.asset?.assetKind === 'map', 'P5: saved background is assetKind=map');
+
+    const saveProp = await adminB(`/api/campaigns/${campaignId}/generate/save`, { method: 'POST', body: JSON.stringify({ base64: tinyPng, kind: 'prop', title: 'gen prop', category: 'Monsters' }) });
+    assert(saveProp.status === 201, 'P6: DM /generate/save (prop) → 201');
+    assert((saveProp.body as { asset?: { assetKind?: string } })?.asset?.assetKind === 'token', 'P7: saved prop is assetKind=token');
+    assert((saveProp.body as { asset?: { category?: string } })?.asset?.category === 'Monsters', 'P7b: saved prop carries its category');
+
+    const savePlayer = await player2b(`/api/campaigns/${campaignId}/generate/save`, { method: 'POST', body: JSON.stringify({ base64: tinyPng, kind: 'prop' }) });
+    assert(savePlayer.status === 403, 'P8: player /generate/save → 403 (DM only)');
+
+    // =========================================================================
+    // Q. Map templates (save / load / delete)
+    // =========================================================================
+    process.stdout.write('\n--- Q. Map templates ---\n');
+
+    const { ws: adminWsQ, messages: adminMsgsQ } = await openWs(wsUrl2, adminJar);
+    const { ws: p1WsQ, messages: p1MsgsQ } = await openWs(wsUrl2, player1Jar);
+    send(adminWsQ, { type: 'join', protocolVersion: 6, campaignId });
+    send(p1WsQ, { type: 'join', protocolVersion: 6, campaignId });
+    const adminSnapQ = await waitForMessage(adminMsgsQ, (m) => m['type'] === 'snapshot', 3000);
+    await waitForMessage(p1MsgsQ, (m) => m['type'] === 'snapshot', 3000);
+    assert(Array.isArray(adminSnapQ['templates']), 'Q0: snapshot has templates[]');
+
+    // Seed a piece so the saved template has content, then save it.
+    send(adminWsQ, { type: 'pieceAdd', builtin: 'tent', x: 32, y: 32, w: 96, h: 96, rotation: 0, layer: 'props', lockedToGrid: false });
+    await waitForMessage(adminMsgsQ, (m) => m['type'] === 'piecesUpdated', 3000);
+    send(adminWsQ, { type: 'saveMapTemplate', name: 'Forest Camp' });
+    let templateId = '';
+    try {
+      const tu = await waitForMessage(
+        adminMsgsQ,
+        (m) => m['type'] === 'templatesUpdated' && (m['templates'] as Array<{ name?: string }>).some((t) => t.name === 'Forest Camp'),
+        3000,
+      );
+      templateId = (tu['templates'] as Array<{ id?: string; name?: string }>).find((t) => t.name === 'Forest Camp')?.id ?? '';
+      assert(templateId !== '', 'Q1: DM saveMapTemplate → templatesUpdated');
+    } catch {
+      fail('Q1: DM saveMapTemplate → templatesUpdated', 'timeout');
+    }
+
+    // Q2: non-DM save → FORBIDDEN
+    send(p1WsQ, { type: 'saveMapTemplate', name: 'hijack' });
+    try {
+      const forb = await waitForMessage(p1MsgsQ, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forb['code'] === 'FORBIDDEN', 'Q2: player saveMapTemplate → FORBIDDEN');
+    } catch {
+      fail('Q2: player saveMapTemplate → FORBIDDEN', 'timeout');
+    }
+
+    if (templateId) {
+      // Clear current pieces, then load the template → pieces come back.
+      send(adminWsQ, { type: 'loadMapTemplate', id: templateId });
+      try {
+        await waitForMessage(
+          p1MsgsQ,
+          (m) => m['type'] === 'piecesUpdated' && (m['pieces'] as Array<{ builtin?: string }>).some((p) => p.builtin === 'tent'),
+          3000,
+        );
+        pass('Q3: loadMapTemplate restores pieces to the table');
+      } catch {
+        fail('Q3: loadMapTemplate restores pieces', 'timeout');
+      }
+
+      // Q4: non-DM load → FORBIDDEN
+      send(p1WsQ, { type: 'loadMapTemplate', id: templateId });
+      try {
+        const forb = await waitForMessage(p1MsgsQ, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(forb['code'] === 'FORBIDDEN', 'Q4: player loadMapTemplate → FORBIDDEN');
+      } catch {
+        fail('Q4: player loadMapTemplate → FORBIDDEN', 'timeout');
+      }
+
+      // Q5: DM delete → templatesUpdated without it
+      send(adminWsQ, { type: 'deleteMapTemplate', id: templateId });
+      try {
+        await waitForMessage(
+          adminMsgsQ,
+          (m) => m['type'] === 'templatesUpdated' && !(m['templates'] as Array<{ id?: string }>).some((t) => t.id === templateId),
+          3000,
+        );
+        pass('Q5: deleteMapTemplate removes it');
+      } catch {
+        fail('Q5: deleteMapTemplate removes it', 'timeout');
+      }
+    }
+
+    adminWsQ.close();
+    p1WsQ.close();
 
     // =========================================================================
     // K. Production path

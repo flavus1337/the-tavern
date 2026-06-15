@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../log.js';
-import { randomId } from '@vtt/shared';
-import type { RollLogEntry } from '@vtt/shared';
+import { randomId, parseSharing } from '@vtt/shared';
+import type { RollLogEntry, GridState, Sharing, MapPiece, MapMeta } from '@vtt/shared';
 
 export interface BoardItem {
   id: string;
@@ -15,11 +15,61 @@ export interface BoardItem {
   playersCanMove?: boolean;
 }
 
+export interface Token {
+  id: string;
+  name: string;
+  shape: 'round' | 'square';
+  allegiance: 'ally' | 'enemy' | 'neutral';
+  ownerUserId: string | null;
+  size: 'S' | 'M' | 'L' | 'H';
+  x: number;
+  y: number;
+  z: number;
+  /** asset id of the face image — resolved to imageUrl in snapshot */
+  assetId: string | null;
+  fill: string | null;
+  hp: number | null;
+  maxHp: number | null;
+  dmOnly: boolean;
+  /** Who, besides owner + DM, may control this token. */
+  sharing: Sharing;
+}
+
+export const DEFAULT_GRID: GridState = {
+  cell: 44,
+  offsetX: 0,
+  offsetY: 0,
+  visible: true,
+  snap: true,
+  color: '#ffffff22',
+  unit: 'ft',
+};
+
+export const DEFAULT_MAP_META: MapMeta = { name: 'Untitled map', areaTag: '' };
+
+/** A saved, reloadable map (background + pieces + grid + meta) for this campaign. */
+export interface MapTemplate {
+  id: string;
+  name: string;
+  createdAt: string;
+  board: BoardItem[];
+  pieces: MapPiece[];
+  grid: GridState;
+  mapMeta: MapMeta;
+}
+
 export interface RuntimeState {
   board: BoardItem[];
   uploadsLocked: boolean;
   /** documents explicitly shared with the table — visible/fetchable by all members */
   sharedDocumentIds: string[];
+  tokens: Token[];
+  grid: GridState;
+  /** placed map pieces (terrain/props) authored in build mode */
+  pieces: MapPiece[];
+  mapMeta: MapMeta;
+  /** saved reusable maps */
+  mapTemplates: MapTemplate[];
 }
 
 export interface CampaignRuntime {
@@ -42,7 +92,16 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
   await fs.mkdir(runtimeDir, { recursive: true });
 
   // Load state.json.
-  let state: RuntimeState = { board: [], uploadsLocked: false, sharedDocumentIds: [] };
+  let state: RuntimeState = {
+    board: [],
+    uploadsLocked: false,
+    sharedDocumentIds: [],
+    tokens: [],
+    grid: { ...DEFAULT_GRID },
+    pieces: [],
+    mapMeta: { ...DEFAULT_MAP_META },
+    mapTemplates: [],
+  };
   const statePath = path.join(runtimeDir, 'state.json');
   try {
     const raw = await fs.readFile(statePath, 'utf8');
@@ -70,12 +129,40 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
       board = [];
     }
 
+    // Lenient migration: tokens and grid may be absent in old state.json files;
+    // pre-v5 tokens have no `sharing` field → default to private control.
+    const tokens: Token[] = Array.isArray(parsed['tokens'])
+      ? (parsed['tokens'] as Token[]).map((t) => ({
+          ...t,
+          sharing: parseSharing((t as { sharing?: unknown }).sharing),
+        }))
+      : [];
+
+    const grid: GridState =
+      parsed['grid'] != null && typeof parsed['grid'] === 'object'
+        ? { ...DEFAULT_GRID, ...(parsed['grid'] as Partial<GridState>) }
+        : { ...DEFAULT_GRID };
+
+    // Lenient migration: pieces/mapMeta absent in pre-v6 state.json files.
+    const pieces: MapPiece[] = Array.isArray(parsed['pieces'])
+      ? (parsed['pieces'] as MapPiece[])
+      : [];
+    const mapMeta: MapMeta =
+      parsed['mapMeta'] != null && typeof parsed['mapMeta'] === 'object'
+        ? { ...DEFAULT_MAP_META, ...(parsed['mapMeta'] as Partial<MapMeta>) }
+        : { ...DEFAULT_MAP_META };
+
     state = {
       board,
       uploadsLocked: typeof parsed['uploadsLocked'] === 'boolean' ? parsed['uploadsLocked'] : false,
       sharedDocumentIds: Array.isArray(parsed['sharedDocumentIds'])
         ? (parsed['sharedDocumentIds'] as string[])
         : [],
+      tokens,
+      grid,
+      pieces,
+      mapMeta,
+      mapTemplates: Array.isArray(parsed['mapTemplates']) ? (parsed['mapTemplates'] as MapTemplate[]) : [],
     };
   } catch {
     // Missing is fine.
@@ -113,14 +200,16 @@ export function persistState(runtime: CampaignRuntime): Promise<void> {
   // Serialize writes through a per-runtime queue so two near-simultaneous saves
   // never write the shared tmp file concurrently (which could corrupt it). Each
   // write snapshots the latest in-memory state at write time.
-  runtime.stateWriteQueue = runtime.stateWriteQueue.then(async () => {
-    const statePath = path.join(runtime.dir, 'state.json');
-    const tmpPath = statePath + '.tmp';
-    await fs.writeFile(tmpPath, JSON.stringify(runtime.state, null, 2), 'utf8');
-    await fs.rename(tmpPath, statePath);
-  }).catch((err: unknown) => {
-    log.error(`Failed to persist state for ${runtime.dir}: ${String(err)}`);
-  });
+  runtime.stateWriteQueue = runtime.stateWriteQueue
+    .then(async () => {
+      const statePath = path.join(runtime.dir, 'state.json');
+      const tmpPath = statePath + '.tmp';
+      await fs.writeFile(tmpPath, JSON.stringify(runtime.state, null, 2), 'utf8');
+      await fs.rename(tmpPath, statePath);
+    })
+    .catch((err: unknown) => {
+      log.error(`Failed to persist state for ${runtime.dir}: ${String(err)}`);
+    });
   return runtime.stateWriteQueue;
 }
 

@@ -161,6 +161,38 @@ export class TableConnection {
         store.removeNote(msg.noteId);
         break;
 
+      case 'tokensUpdated':
+        store.setTokens(msg.tokens);
+        break;
+
+      case 'gridUpdated':
+        store.setGrid(msg.grid);
+        break;
+
+      case 'piecesUpdated':
+        store.setPieces(msg.pieces);
+        break;
+
+      case 'mapMetaUpdated':
+        store.setMapMeta(msg.mapMeta);
+        break;
+
+      case 'templatesUpdated':
+        store.setTemplates(msg.templates);
+        break;
+
+      case 'measureShared':
+        if (msg.kind === 'clear') {
+          store.clearSharedMeasure(msg.by);
+        } else {
+          store.setSharedMeasure(msg.by, {
+            kind: 'ruler',
+            x1: msg.x1, y1: msg.y1, x2: msg.x2, y2: msg.y2,
+            by: msg.by,
+          });
+        }
+        break;
+
       case 'mediaControl': {
         // Record the table-playback state — the audio dock follows it
         // (including docks that mount later, e.g. via the auto-open below).

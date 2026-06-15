@@ -1,8 +1,9 @@
 import { useRef, type ChangeEvent, useState } from 'react';
-import type { AssetManifest, UploadAssetResponse, ClientMessage } from '@vtt/shared';
+import type { AssetManifest, UploadAssetResponse, ClientMessage, Sharing } from '@vtt/shared';
 import { api, apiUpload, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { ScrollArea } from './ui/scroll-area';
+import { SharePicker, ShareBadge } from './SharePicker';
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB (videos)
 
@@ -19,9 +20,9 @@ export function DocumentsPanel() {
   const openPanels = useStore((s) => s.openPanels);
   const connection = useStore((s) => s.connection);
 
-  function shareDocument(assetId: string) {
+  function setDocumentSharing(assetId: string, sharing: Sharing) {
     const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'shareDocument', assetId });
+    conn?.send({ type: 'setDocumentSharing', assetId, sharing });
   }
 
   const isDm = self?.role === 'dm';
@@ -142,7 +143,7 @@ export function DocumentsPanel() {
                   sharedByOther={doc.ownerUsername !== self?.username}
                   onDelete={() => { void handleDelete(doc.id); }}
                   onView={() => (doc.mime.startsWith('audio/') ? openAudioDock(doc.id) : openDocPanel(doc))}
-                  onShare={() => shareDocument(doc.id)}
+                  onSetSharing={(s) => setDocumentSharing(doc.id, s)}
                 />
               );
               return (
@@ -178,10 +179,12 @@ interface DocumentItemProps {
   sharedByOther: boolean;
   onDelete: () => void;
   onView: () => void;
-  onShare: () => void;
+  onSetSharing: (sharing: Sharing) => void;
 }
 
-function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedByOther, onDelete, onView, onShare }: DocumentItemProps) {
+function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedByOther, onDelete, onView, onSetSharing }: DocumentItemProps) {
+  const [shareOpen, setShareOpen] = useState(false);
+  const sharing: Sharing = doc.sharing ?? { scope: 'private', userIds: [] };
   const extLabel = doc.mime === 'application/pdf' ? 'PDF'
     : doc.mime.startsWith('audio/') ? 'Audio'
     : doc.mime.startsWith('image/') ? 'Image'
@@ -189,6 +192,7 @@ function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedBy
     : 'File';
 
   return (
+   <div style={{ display: 'flex', flexDirection: 'column' }}>
     <div
       style={{
         display: 'flex',
@@ -246,10 +250,12 @@ function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedBy
             <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>
               {doc.ownerUsername ? `by ${doc.ownerUsername} · ${extLabel}` : extLabel}
             </p>
-            {sharedByOther && (
+            {sharedByOther ? (
               <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--teal)', background: '#69b7a61a', padding: '2px 6px', borderRadius: 4, letterSpacing: '0.08em' }}>
                 shared
               </span>
+            ) : (
+              <ShareBadge sharing={sharing} />
             )}
           </div>
         </div>
@@ -259,13 +265,13 @@ function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedBy
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
         <button
           type="button"
-          onClick={onShare}
+          onClick={() => setShareOpen((o) => !o)}
           disabled={!canShare}
-          style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: canShare ? 'var(--low)' : 'var(--faint)', background: 'none', border: 'none', cursor: canShare ? 'pointer' : 'not-allowed', transition: 'all 0.12s', opacity: canShare ? 1 : 0.4 }}
+          style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: shareOpen ? 'var(--teal)' : canShare ? 'var(--low)' : 'var(--faint)', background: 'none', border: 'none', cursor: canShare ? 'pointer' : 'not-allowed', transition: 'all 0.12s', opacity: canShare ? 1 : 0.4 }}
           onMouseEnter={(e) => { if (canShare) (e.currentTarget as HTMLElement).style.color = 'var(--teal)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--low)'; }}
-          aria-label={`Share ${doc.title} with the table`}
-          title="Share with table"
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = shareOpen ? 'var(--teal)' : 'var(--low)'; }}
+          aria-label={`Change who can see ${doc.title}`}
+          title="Sharing"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
             <path d="M8.7 10.7l6.6-3.4M8.7 13.3l6.6 3.4M21 5a3 3 0 11-6 0 3 3 0 016 0zM9 12a3 3 0 11-6 0 3 3 0 016 0zm12 7a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" />
@@ -302,5 +308,12 @@ function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedBy
         )}
       </div>
     </div>
+
+    {shareOpen && canShare && (
+      <div style={{ padding: '8px 12px 2px' }}>
+        <SharePicker sharing={sharing} onChange={onSetSharing} />
+      </div>
+    )}
+   </div>
   );
 }

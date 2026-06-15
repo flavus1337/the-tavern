@@ -1,16 +1,17 @@
 import type { AssetManifest } from '@vtt/shared';
 import type { CampaignEntry } from '../campaign/registry.js';
 import { getSessionsInRoom, send } from './hub.js';
+import { canAccessShared, documentSharing, type Viewer } from './sharing.js';
 
 /**
- * Documents are private to their uploader unless explicitly shared with the
- * table (runtime.state.sharedDocumentIds). The DM has no special read access —
- * sharing is the only way a document becomes table-visible.
+ * Documents a viewer may see: their own uploads, plus any shared with them
+ * (scope all / users-including-them). The DM is omniscient.
  */
-export function visibleDocuments(entry: CampaignEntry, username: string): AssetManifest[] {
-  const shared = new Set(entry.runtime.state.sharedDocumentIds);
+export function visibleDocuments(entry: CampaignEntry, viewer: Viewer): AssetManifest[] {
   return [...entry.store.assets.values()].filter(
-    (a) => a.assetKind === 'document' && (a.ownerUsername === username || shared.has(a.id)),
+    (a) =>
+      a.assetKind === 'document' &&
+      canAccessShared(viewer, a.ownerUsername ?? null, documentSharing(entry, a)),
   );
 }
 
@@ -19,7 +20,11 @@ export function broadcastDocuments(campaignId: string, entry: CampaignEntry): vo
   for (const session of getSessionsInRoom(campaignId)) {
     send(session.ws, {
       type: 'documentsUpdated',
-      documents: visibleDocuments(entry, session.username),
+      documents: visibleDocuments(entry, {
+        userId: session.userId,
+        username: session.username,
+        role: session.role!,
+      }),
     });
   }
 }

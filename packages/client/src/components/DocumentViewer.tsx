@@ -32,7 +32,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
   function shareWithTable() {
     if (connection !== 'open') return;
     const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'shareDocument', assetId: doc.id });
+    conn?.send({ type: 'setDocumentSharing', assetId: doc.id, sharing: { scope: 'all', userIds: [] } });
     setShared(true);
 
     // Fire share toast

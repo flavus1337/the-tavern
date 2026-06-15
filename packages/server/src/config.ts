@@ -18,6 +18,9 @@ export const config = {
   ADMIN_PASSWORD: process.env['ADMIN_PASSWORD'] ?? null,
   COOKIE_SECURE: (process.env['COOKIE_SECURE'] ?? 'false') === 'true',
   PUBLIC_ORIGIN: process.env['PUBLIC_ORIGIN'] ?? 'http://localhost:8080',
+  // Image generation (Map Creation, Gemini). When LLM_API_KEY is unset,
+  // generation is disabled and the UI falls back to upload-only.
+  LLM_API_KEY: process.env['LLM_API_KEY'] ?? null,
   CLIENT_DIST: resolveDir(
     process.env['CLIENT_DIST'],
     path.join(REPO_ROOT, 'packages', 'client', 'dist'),

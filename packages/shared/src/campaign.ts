@@ -4,11 +4,47 @@ export const SCHEMA_VERSIONS = {
   campaign: 1,
   chapter: 1,
   character: 1,
-  note: 1,
-  asset: 1,
+  note: 2,
+  asset: 2,
 } as const;
 
 export type EntityType = keyof typeof SCHEMA_VERSIONS;
+
+// ---------------------------------------------------------------------------
+// Unified sharing model (notes, documents, token control)
+// ---------------------------------------------------------------------------
+
+/**
+ * Who, besides the owner, may access (notes/documents) or control (tokens) an
+ * entity. The DM is always omniscient/in-control regardless of scope.
+ * - private: owner only
+ * - dm:      owner + the DM(s)  ("share with the DM")
+ * - users:   owner + listed userIds
+ * - all:     everyone at the table
+ */
+export type ShareScope = 'private' | 'dm' | 'users' | 'all';
+
+export interface Sharing {
+  scope: ShareScope;
+  /** userIds; only meaningful when scope === 'users'. */
+  userIds: string[];
+}
+
+export function defaultSharing(): Sharing {
+  return { scope: 'private', userIds: [] };
+}
+
+export function parseSharing(raw: unknown): Sharing {
+  if (typeof raw !== 'object' || raw === null) return defaultSharing();
+  const r = raw as Record<string, unknown>;
+  const scope: ShareScope = (['private', 'dm', 'users', 'all'].includes(r['scope'] as string)
+    ? r['scope']
+    : 'private') as ShareScope;
+  const userIds = Array.isArray(r['userIds'])
+    ? (r['userIds'] as unknown[]).filter((x): x is string => typeof x === 'string')
+    : [];
+  return { scope, userIds };
+}
 
 // ---------------------------------------------------------------------------
 // Sub-types
@@ -95,16 +131,13 @@ export interface Character {
   body?: string;
 }
 
-/** 'dm' = all DMs · 'player' = owner only · 'shared' = the whole table */
-export type NoteVisibility = 'dm' | 'player' | 'shared';
-
 export interface NoteEntity {
   type: 'note';
   schemaVersion: number;
   id: string;
   title: string;
   body: string;
-  visibility: NoteVisibility;
+  sharing: Sharing;
   ownerUsername: string | null;
   createdAt: string;
   updatedAt: string;
@@ -131,6 +164,10 @@ export interface AssetManifest {
   mime: string;
   /** Who uploaded; null for authored content. */
   ownerUsername?: string | null;
+  /** Access sharing — only used for documents (assetKind === 'document'). */
+  sharing?: Sharing;
+  /** Palette category for stampable prop assets (e.g. 'Nature', 'Uploads'). */
+  category?: string;
 }
 
 export type CampaignEntity = CampaignMeta | Chapter | Character | NoteEntity | AssetManifest;
@@ -218,6 +255,17 @@ function applyDefaults(expectedType: EntityType, raw: Record<string, unknown>): 
 
     case 'note': {
       const now = new Date().toISOString();
+      // v1 notes carried `visibility`; migrate to the unified sharing model.
+      let sharing: Sharing;
+      if (raw['sharing'] !== undefined) {
+        sharing = parseSharing(raw['sharing']);
+      } else {
+        const v = raw['visibility'];
+        sharing =
+          v === 'player' ? { scope: 'private', userIds: [] }
+          : v === 'shared' ? { scope: 'all', userIds: [] }
+          : { scope: 'dm', userIds: [] }; // 'dm' or unknown
+      }
       return {
         ...base,
         type: 'note',
@@ -225,10 +273,7 @@ function applyDefaults(expectedType: EntityType, raw: Record<string, unknown>): 
         id: raw['id'] as string,
         title: typeof raw['title'] === 'string' ? raw['title'] : '',
         body: typeof raw['body'] === 'string' ? raw['body'] : '',
-        visibility:
-          raw['visibility'] === 'dm' || raw['visibility'] === 'player' || raw['visibility'] === 'shared'
-            ? (raw['visibility'] as NoteVisibility)
-            : 'dm',
+        sharing,
         ownerUsername:
           typeof raw['ownerUsername'] === 'string' ? raw['ownerUsername'] : null,
         createdAt: typeof raw['createdAt'] === 'string' ? raw['createdAt'] : now,
@@ -254,6 +299,10 @@ function applyDefaults(expectedType: EntityType, raw: Record<string, unknown>): 
         width: typeof raw['width'] === 'number' ? raw['width'] : null,
         height: typeof raw['height'] === 'number' ? raw['height'] : null,
         mime: typeof raw['mime'] === 'string' ? raw['mime'] : 'application/octet-stream',
+        // Documents carry sharing; pass through when present (migration of legacy
+        // sharedDocumentIds happens in the server runtime loader).
+        ...(raw['sharing'] !== undefined ? { sharing: parseSharing(raw['sharing']) } : {}),
+        ...(typeof raw['category'] === 'string' ? { category: raw['category'] } : {}),
       } as AssetManifest;
     }
   }

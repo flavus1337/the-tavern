@@ -5,6 +5,7 @@ import { TableConnection } from '../ws/connection';
 import { CanvasViewer } from './CanvasViewer';
 import { DocumentViewer } from './DocumentViewer';
 import { NoteEditor } from './NoteEditor';
+import { TokenEditor } from './TokenEditor';
 import { RollToasts } from './RollToasts';
 import { AudioDock } from './AudioDock';
 import { DiceRoller } from './DiceRoller';
@@ -13,8 +14,11 @@ import { DocumentsPanel } from './DocumentsPanel';
 import { NotesPanel } from './NotesPanel';
 import { PresenceBar } from './PresenceBar';
 import { DmPanel } from './dm/DmPanel';
+import { BuildInspector } from './build/BuildInspector';
+import { GenDialog } from './build/GenDialog';
 import { D20Logo } from './D20Logo';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
+import type { ClientMessage } from '@vtt/shared';
 
 export function TableLayout() {
   const activeCampaignId = useStore((s) => s.activeCampaignId);
@@ -30,12 +34,17 @@ export function TableLayout() {
   const resetTable = useStore((s) => s.resetTable);
   const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
   const addJoinToast = useStore((s) => s.addJoinToast);
+  const editorMode = useStore((s) => s.editorMode);
+  const setEditorMode = useStore((s) => s.setEditorMode);
+  const mapMeta = useStore((s) => s.mapMeta);
+  const genDialog = useStore((s) => s.genDialog);
 
   const connRef = useRef<TableConnection | null>(null);
   const [sidebarTab, setSidebarTab] = useState<'dice' | 'docs' | 'notes' | 'dm'>('dice');
 
   const isDm = self?.role === 'dm';
   const isConnected = connection === 'open';
+  const buildMode = isDm && editorMode === 'build';
 
   useEffect(() => {
     if (!activeCampaignId) return;
@@ -123,6 +132,28 @@ export function TableLayout() {
           >
             {campaignName || 'Loading…'}
           </span>
+          {buildMode && (
+            <>
+              <span style={{ width: 1, height: 20, background: 'var(--border)' }} aria-hidden="true" />
+              <input
+                defaultValue={mapMeta.name}
+                key={mapMeta.name}
+                onBlur={(e) => {
+                  const name = e.target.value.trim() || 'Untitled map';
+                  if (name !== mapMeta.name) {
+                    const conn = (window as unknown as { __vttConn?: { send: (m: ClientMessage) => void } }).__vttConn;
+                    conn?.send({ type: 'setMapMeta', name });
+                  }
+                }}
+                aria-label="Map name"
+                style={{
+                  fontFamily: 'var(--serif)', fontSize: 15, color: 'var(--hi)', background: 'transparent',
+                  border: '1px solid transparent', borderRadius: 7, padding: '3px 7px', minWidth: 80, maxWidth: 220,
+                }}
+                onFocus={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
+              />
+            </>
+          )}
         </div>
 
         {/* Center zone: presence pill */}
@@ -130,8 +161,35 @@ export function TableLayout() {
           <PresenceBar entries={presence} onJoin={handlePresenceJoin} />
         </div>
 
-        {/* Right zone: connection status + Leave */}
+        {/* Right zone: build/play switch + connection status + Leave */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, justifyContent: 'flex-end' }}>
+          {isDm && (
+            <div style={{ display: 'flex', overflow: 'hidden', borderRadius: 9, border: '1px solid var(--border)' }}>
+              {(['build', 'play'] as const).map((m) => {
+                const on = editorMode === m;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setEditorMode(m)}
+                    aria-pressed={on}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600,
+                      border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                      background: on ? 'var(--ember)' : 'transparent', color: on ? 'var(--ink)' : 'var(--mid)',
+                    }}
+                  >
+                    {m === 'build' ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="w-3.5 h-3.5"><path d="M14 7l4-4 3 3-4 4-3-3zm-1 1l-9 9 3 3 9-9-3-3z" strokeLinejoin="round" /></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path d="M7 5l12 7-12 7z" /></svg>
+                    )}
+                    {m}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div
             style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--mid)' }}
             title={connection === 'open' ? 'Connected' : connection === 'connecting' ? 'Connecting…' : connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
@@ -203,18 +261,20 @@ export function TableLayout() {
         {/* Board area */}
         <div className="flex-1 min-w-0 min-h-0 relative flex">
           <CanvasViewer />
-          {openPanels.map((panel, i) =>
-            panel.kind === 'doc' ? (
-              <DocumentViewer key={panel.panelId} panelId={panel.panelId} doc={panel.doc} stackIndex={i} />
-            ) : (
-              <NoteEditor key={panel.panelId} panelId={panel.panelId} noteId={panel.noteId} stackIndex={i} />
-            ),
-          )}
+          {openPanels.map((panel, i) => {
+            if (panel.kind === 'doc') {
+              return <DocumentViewer key={panel.panelId} panelId={panel.panelId} doc={panel.doc} stackIndex={i} />;
+            }
+            if (panel.kind === 'token') {
+              return <TokenEditor key={panel.panelId} panelId={panel.panelId} tokenId={panel.tokenId} stackIndex={i} />;
+            }
+            return <NoteEditor key={panel.panelId} panelId={panel.panelId} noteId={panel.noteId} stackIndex={i} />;
+          })}
           <AudioDock />
           <RollToasts />
         </div>
 
-        {/* Sidebar */}
+        {/* Sidebar — build inspector in build mode, else the play tabs */}
         <aside
           className="w-full h-2/5 border-t md:w-[340px] md:h-auto md:border-t-0 md:border-l"
           style={{
@@ -226,6 +286,9 @@ export function TableLayout() {
             flexShrink: 0,
           }}
         >
+          {buildMode ? (
+            <div className="flex flex-col h-full"><BuildInspector /></div>
+          ) : (
           <div className="flex flex-col h-full">
             <Tabs
               value={sidebarTab}
@@ -280,8 +343,11 @@ export function TableLayout() {
               )}
             </Tabs>
           </div>
+          )}
         </aside>
       </div>
+
+      {genDialog && <GenDialog />}
     </div>
   );
 }

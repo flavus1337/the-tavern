@@ -171,3 +171,60 @@ body {
     animation: none !important;
   }
 }
+
+/* ===================== Tokens, Grid & Measurement ===================== */
+:root {
+  --ring-mine: #e08a4b;
+  --ring-ally: #69b7a6;
+  --ring-enemy: #b6485a;
+  --ring-neutral: #a98f74;
+}
+
+.tok { position: absolute; cursor: grab; touch-action: none; user-select: none; --ring: var(--ring-neutral); --rw: 2.5px; }
+.tok.mine { --ring: var(--ring-mine); }
+.tok.ally { --ring: var(--ring-ally); }
+.tok.enemy { --ring: var(--ring-enemy); }
+.tok.neutral { --ring: var(--ring-neutral); }
+.tok.drag { cursor: grabbing; }
+
+.tok-ground { position: absolute; left: 8%; right: 8%; bottom: -7%; height: 26%; border-radius: 50%;
+  background: radial-gradient(50% 60% at 50% 50%, #000000bb, transparent 72%); filter: blur(2px);
+  pointer-events: none; transition: transform .14s, opacity .14s; }
+.tok-face { position: absolute; inset: 0; border-radius: 50%; overflow: hidden;
+  background: #241a13 center/cover no-repeat; display: grid; place-items: center;
+  box-shadow: inset 0 0 0 var(--rw) var(--ring), inset 0 2px 10px -3px #000c,
+    inset 0 0 0 calc(var(--rw) + 1.5px) #00000080, 0 7px 16px -6px #000c;
+  transition: box-shadow .15s, transform .14s; }
+.tok.square .tok-face { border-radius: 14px; }
+.tok.square .tok-ground { border-radius: 10px; }
+.tok-face .glyph { font-family: var(--serif); font-weight: 600; color: #f4efe9;
+  text-shadow: 0 1px 4px #000a; line-height: 1; }
+.tok-name { position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%);
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: #f4efe9e0; background: #000000a8; padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+  backdrop-filter: blur(4px); border: 1px solid #ffffff14; pointer-events: none; opacity: 0; transition: opacity .14s; }
+.tok:hover .tok-name, .tok.sel .tok-name { opacity: 1; }
+.tok-hp { position: absolute; left: 14%; right: 14%; bottom: 9%; height: 5px; border-radius: 3px;
+  background: #000000aa; border: 1px solid #00000080; overflow: hidden; pointer-events: none; }
+.tok-hp i { display: block; height: 100%; border-radius: 2px; background: var(--ring-ally); }
+.tok-hp.hurt i { background: var(--gold); }
+.tok-hp.low i { background: var(--garnet); }
+.tok-you { position: absolute; right: -3%; top: -3%; width: 34%; max-width: 22px; height: 34%; max-height: 22px;
+  border-radius: 50%; background: var(--ring-mine); border: 2px solid var(--bg); display: grid; place-items: center;
+  color: var(--ink); font-family: var(--mono); font-weight: 700; font-size: 8px; box-shadow: 0 2px 6px -1px #000a; pointer-events: none; }
+.tok-sel { position: absolute; inset: -7px; border-radius: 50%; pointer-events: none;
+  border: 1.5px solid var(--ring-mine); box-shadow: 0 0 0 4px #e0824c1c, 0 0 22px -2px #e0824c5e; }
+.tok.square .tok-sel { border-radius: 20px; }
+.tok:hover .tok-ground { transform: scaleX(1.05); opacity: .9; }
+@media (prefers-reduced-motion: no-preference) {
+  .tok.mine .tok-face { animation: mineBreath 3.4s ease-in-out infinite; }
+}
+@keyframes mineBreath {
+  0%, 100% { box-shadow: inset 0 0 0 var(--rw) var(--ring), inset 0 2px 10px -3px #000c, inset 0 0 0 calc(var(--rw) + 1.5px) #00000080, 0 7px 16px -6px #000c, 0 0 0 0 #e0824c00; }
+  50% { box-shadow: inset 0 0 0 var(--rw) var(--ring), inset 0 2px 10px -3px #000c, inset 0 0 0 calc(var(--rw) + 1.5px) #00000080, 0 7px 16px -6px #000c, 0 0 0 5px #e0824c2e; }
+}
+
+.meas-line { stroke: var(--ember); stroke-width: 2.5; stroke-dasharray: 7 6; stroke-linecap: round; filter: drop-shadow(0 0 5px #e0824c88); }
+.meas-line.shared { stroke: var(--teal); filter: drop-shadow(0 0 5px #69b7a688); }
+.meas-end { fill: var(--ember); stroke: var(--bg); stroke-width: 2; }
+.meas-end.shared { fill: var(--teal); }
