@@ -76,10 +76,10 @@ export function GenDialog() {
       const asset = await commitAsset(img.base64);
       if (asset && kind === 'background') {
         sendWs({ type: 'boardAdd', assetId: asset.id, x: 0, y: 0 });
-        // Keep generated maps a consistent scale: ~24 squares across, so the grid
-        // (and therefore tokens) is never too small to read.
+        // Standard battle map: a 40-square-wide grid aligned to the map origin,
+        // with a dark line that reads clearly on the bright inked map.
         const boardW = Math.min(asset.width ?? 1024, 1200);
-        sendWs({ type: 'setGrid', grid: { cell: Math.max(28, Math.round(boardW / 24)) } });
+        sendWs({ type: 'setGrid', grid: { cell: Math.max(14, Math.round(boardW / 40)), offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
       }
       close(null); // prop assets appear in the palette via assetsUpdated
     } catch (err) {

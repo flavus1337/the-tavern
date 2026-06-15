@@ -43,7 +43,7 @@ const HOUSE_STYLE = [
 
 function stylePrompt(kind: GenKind, subject: string): string {
   if (kind === 'background') {
-    return `A top-down tabletop RPG battlemap that fills the whole frame, grid-ready with a thin faint grid. Scale it for a battle grid of roughly 20–26 five-foot squares across — keep the scale generous and uncluttered so a single creature token comfortably fills about one square (do NOT cram in tiny detail). ${HOUSE_STYLE} Depict this place: ${subject}.`;
+    return `A square top-down tabletop RPG battlemap that fills the whole frame, grid-ready with a thin faint grid of about 40×40 squares. Keep the scale generous and uncluttered so a single creature token comfortably fills about one square (do NOT cram in tiny detail). ${HOUSE_STYLE} Depict this place: ${subject}.`;
   }
   return `A single tabletop RPG map prop/object, centered, on a FULLY TRANSPARENT background (PNG cut-out with alpha) — no ground, no scene, no grid. ${HOUSE_STYLE} The object: ${subject}.`;
 }

@@ -133,8 +133,8 @@ const DEFAULT_GRID: GridState = {
   offsetY: 0,
   visible: true,
   snap: true,
-  color: '#ffffff22',
-  unit: 'ft',
+  color: '#ffffff33',
+  unit: 'm',
 };
 
 interface TableSlice {

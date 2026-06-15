@@ -41,8 +41,8 @@ export const DEFAULT_GRID: GridState = {
   offsetY: 0,
   visible: true,
   snap: true,
-  color: '#ffffff22',
-  unit: 'ft',
+  color: '#ffffff33',
+  unit: 'm',
 };
 
 export const DEFAULT_MAP_META: MapMeta = { name: 'Untitled map', areaTag: '' };
