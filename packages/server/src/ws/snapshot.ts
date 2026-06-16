@@ -54,7 +54,16 @@ function makeTokenView(campaignId: string, token: Token, entry: CampaignEntry): 
     maxHp: token.maxHp,
     dmOnly: token.dmOnly,
     sharing: token.sharing,
+    conditions: token.conditions ?? [],
+    statBlock: token.statBlock ?? null,
   };
+}
+
+/** Stat blocks are visible to the DM always, and to a player only for tokens
+ *  they own. Everyone else receives statBlock: null. (Conditions stay visible.) */
+export function redactStatBlock(view: TokenView, isDm: boolean, viewerUserId: string | null): TokenView {
+  if (isDm || (view.ownerUserId !== null && view.ownerUserId === viewerUserId)) return view;
+  return view.statBlock === null ? view : { ...view, statBlock: null };
 }
 
 /** Resolve an asset-backed piece's image url; builtin pieces carry no url. */
@@ -109,10 +118,11 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     }
   }
 
-  // Tokens: DM sees all; players only see non-dmOnly tokens.
+  // Tokens: DM sees all; players only see non-dmOnly tokens, and stat blocks
+  // are redacted to the ones they own.
   const tokens: TokenView[] = runtime.state.tokens
     .filter((t) => isDm || !t.dmOnly)
-    .map((t) => makeTokenView(campaignId, t, entry));
+    .map((t) => redactStatBlock(makeTokenView(campaignId, t, entry), isDm, session.userId));
 
   // Grid state (same for everyone — unit is table-wide display).
   const grid: GridState = runtime.state.grid;
@@ -152,6 +162,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     grid,
     pieces: runtime.state.pieces.map((p) => makePieceView(campaignId, p, entry)),
     aoes: runtime.state.aoes,
+    initiative: runtime.state.initiative,
     mapMeta: runtime.state.mapMeta,
     features: { imageGenEnabled: config.LLM_API_KEY != null },
     templates: runtime.state.mapTemplates.map((t) => ({ id: t.id, name: t.name, createdAt: t.createdAt })),

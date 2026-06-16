@@ -52,6 +52,28 @@ export interface BoardItemView {
 // Token & Grid types
 // ---------------------------------------------------------------------------
 
+/** Lightweight combat stat block on a token. The DM sees every block; a player
+ *  sees it only for tokens they own (the server redacts it to null otherwise). */
+export interface TokenStatBlock {
+  ac: number | null;
+  speed: string;
+  str: number | null;
+  dex: number | null;
+  con: number | null;
+  int: number | null;
+  wis: number | null;
+  cha: number | null;
+  notes: string;
+}
+
+/** The standard D&D conditions a token can carry. Shown to everyone. */
+export const CONDITIONS = [
+  'blinded', 'charmed', 'concentration', 'deafened', 'frightened', 'grappled',
+  'incapacitated', 'invisible', 'paralyzed', 'petrified', 'poisoned', 'prone',
+  'restrained', 'stunned', 'unconscious',
+] as const;
+export type Condition = (typeof CONDITIONS)[number];
+
 export interface TokenView {
   id: string;
   name: string;
@@ -69,6 +91,10 @@ export interface TokenView {
   dmOnly: boolean;
   /** Who, besides owner + DM, may control (move/edit) this token. */
   sharing: Sharing;
+  /** Active conditions (visible to everyone). */
+  conditions: string[];
+  /** Stat block — null when the viewer isn't allowed to see it. */
+  statBlock: TokenStatBlock | null;
 }
 
 export interface GridState {
@@ -271,6 +297,8 @@ export interface ClientTokenAddPayload {
   maxHp?: number | null;
   dmOnly?: boolean;
   sharing?: Sharing;
+  conditions?: string[];
+  statBlock?: TokenStatBlock | null;
 }
 
 export interface ClientTokenMovePayload {
@@ -293,11 +321,35 @@ export interface ClientTokenUpdatePayload {
   maxHp?: number | null;
   dmOnly?: boolean;
   sharing?: Sharing;
+  conditions?: string[];
+  statBlock?: TokenStatBlock | null;
 }
 
 export interface ClientTokenRemovePayload {
   type: 'tokenRemove';
   tokenId: string;
+}
+
+// Initiative tracker — DM-controlled, but the turn order is visible to everyone.
+export interface InitiativeEntry {
+  id: string;
+  /** linked token (null for abstract entries like "Lair Action") */
+  tokenId: string | null;
+  name: string;
+  initiative: number;
+  ownerUserId: string | null;
+}
+export interface InitiativeState {
+  active: boolean;
+  round: number;
+  /** index into the initiative-sorted order whose turn it is */
+  turnIndex: number;
+  entries: InitiativeEntry[];
+}
+/** DM replaces the whole tracker state (add/remove/reorder/advance). */
+export interface ClientSetInitiativePayload {
+  type: 'setInitiative';
+  initiative: InitiativeState;
 }
 
 export interface ClientSetGridPayload {
@@ -431,6 +483,7 @@ export type ClientMessage =
   | ClientAoeAddPayload
   | ClientAoeRemovePayload
   | ClientAoeClearPayload
+  | ClientSetInitiativePayload
   | ClientSetMapMetaPayload
   | ClientSaveMapTemplatePayload
   | ClientLoadMapTemplatePayload
@@ -483,6 +536,8 @@ export interface ServerSnapshotPayload {
   pieces: MapPiece[];
   /** Placed AoE templates (spell/effect areas) — visible to everyone. */
   aoes: AoeTemplate[];
+  /** Initiative tracker — turn order visible to everyone, DM-controlled. */
+  initiative: InitiativeState;
   /** Map metadata (name + area tag) shown in the build-mode top bar. */
   mapMeta: MapMeta;
   /** Server capability flags derived from config. */
@@ -574,6 +629,11 @@ export interface ServerAoesUpdatedPayload {
   aoes: AoeTemplate[];
 }
 
+export interface ServerInitiativeUpdatedPayload {
+  type: 'initiativeUpdated';
+  initiative: InitiativeState;
+}
+
 export interface ServerMapMetaUpdatedPayload {
   type: 'mapMetaUpdated';
   mapMeta: MapMeta;
@@ -635,6 +695,7 @@ export type ServerMessage =
   | ServerGridUpdatedPayload
   | ServerPiecesUpdatedPayload
   | ServerAoesUpdatedPayload
+  | ServerInitiativeUpdatedPayload
   | ServerMapMetaUpdatedPayload
   | ServerTemplatesUpdatedPayload
   | ServerMeasureSharedPayload

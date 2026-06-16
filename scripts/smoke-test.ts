@@ -1741,6 +1741,72 @@ async function main(): Promise<void> {
       .some((m) => (m['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'SecretTrap'));
     assert(!p1SeesSecret, 'M8: dmOnly token never reaches player tokensUpdated');
 
+    // M8a: a token OWNED by player1 carries its stat block + conditions to player1.
+    send(adminWsTok, {
+      type: 'tokenAdd', name: 'Lyra', shape: 'round', allegiance: 'ally', ownerUserId: player1Id, size: 'M', x: 120, y: 120,
+      conditions: ['poisoned'], statBlock: { ac: 15, speed: '30 ft.', str: 12, dex: 14, con: 13, int: 10, wis: 11, cha: 16, notes: 'rapier' },
+    });
+    try {
+      const m = await waitForMessage(
+        p1MsgsTok,
+        (mm) => mm['type'] === 'tokensUpdated' && (mm['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'Lyra'),
+        3000,
+      );
+      const lyra = (m['tokens'] as Array<{ name?: string; statBlock?: { ac?: number } | null; conditions?: string[] }>).find((t) => t.name === 'Lyra');
+      assert(lyra?.statBlock?.ac === 15, 'M8a: player sees the stat block of a token they own');
+      assert(Array.isArray(lyra?.conditions) && lyra!.conditions!.includes('poisoned'), 'M8b: conditions are visible to the player');
+    } catch {
+      fail('M8a: player sees own token stat block', 'timeout');
+    }
+
+    // M8c: a token the player does NOT own has its stat block redacted (conditions stay).
+    send(adminWsTok, {
+      type: 'tokenAdd', name: 'Ogre', shape: 'square', allegiance: 'enemy', ownerUserId: null, size: 'L', x: 360, y: 360,
+      conditions: ['prone'], statBlock: { ac: 11, speed: '40 ft.', str: 19, dex: 8, con: 16, int: 5, wis: 7, cha: 7, notes: 'greatclub' },
+    });
+    try {
+      const m = await waitForMessage(
+        p1MsgsTok,
+        (mm) => mm['type'] === 'tokensUpdated' && (mm['tokens'] as Array<{ name?: string }>).some((t) => t.name === 'Ogre'),
+        3000,
+      );
+      const ogre = (m['tokens'] as Array<{ name?: string; statBlock?: unknown; conditions?: string[] }>).find((t) => t.name === 'Ogre');
+      assert(ogre?.statBlock === null, "M8c: player does NOT see a non-owned token's stat block (redacted)");
+      assert(Array.isArray(ogre?.conditions) && ogre!.conditions!.includes('prone'), 'M8d: conditions stay visible on non-owned tokens');
+    } catch {
+      fail('M8c: stat block redacted for player', 'timeout');
+    }
+    // DM still sees the Ogre's stat block in full.
+    const dmOgre = [...adminMsgsTok].reverse()
+      .filter((m) => m['type'] === 'tokensUpdated')
+      .flatMap((m) => m['tokens'] as Array<{ name?: string; statBlock?: { ac?: number } | null }>)
+      .find((t) => t.name === 'Ogre');
+    assert(dmOgre?.statBlock?.ac === 11, 'M8e: DM sees every stat block');
+
+    // M8f: DM sets initiative → players receive the order; M8g: player setInitiative → FORBIDDEN.
+    send(adminWsTok, { type: 'setInitiative', initiative: { active: true, round: 1, turnIndex: 0, entries: [
+      { id: 'ini1', tokenId: null, name: 'Goblin', initiative: 17, ownerUserId: null },
+      { id: 'ini2', tokenId: null, name: 'Lyra', initiative: 12, ownerUserId: player1Id },
+    ] } });
+    try {
+      const m = await waitForMessage(
+        p1MsgsTok,
+        (mm) => mm['type'] === 'initiativeUpdated' && ((mm['initiative'] as { entries?: unknown[] }).entries?.length ?? 0) === 2,
+        3000,
+      );
+      const init = m['initiative'] as { active?: boolean; entries?: Array<{ name?: string; initiative?: number }> };
+      assert(init.active === true && init.entries!.some((e) => e.name === 'Goblin' && e.initiative === 17), 'M8f: players see the DM-set initiative order');
+    } catch {
+      fail('M8f: players see initiative order', 'timeout');
+    }
+    send(p1WsTok, { type: 'setInitiative', initiative: { active: false, round: 0, turnIndex: 0, entries: [] } });
+    try {
+      const forb = await waitForMessage(p1MsgsTok, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+      assert(forb['code'] === 'FORBIDDEN', 'M8g: player setInitiative → FORBIDDEN');
+    } catch {
+      fail('M8g: player setInitiative → FORBIDDEN', 'timeout');
+    }
+
     // M9: DM setGrid → player receives gridUpdated
     send(adminWsTok, { type: 'setGrid', grid: { cell: 64, unit: 'm' } });
     try {

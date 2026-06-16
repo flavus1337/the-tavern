@@ -11,10 +11,13 @@ import type {
   MeasureKind,
   AoeTemplate,
   AoeKind,
+  TokenStatBlock,
+  InitiativeState,
 } from '@vtt/shared';
+import { CONDITIONS } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import { send, broadcast, broadcastPresence, getSessionsInRoom } from './hub.js';
-import { buildSnapshot, makeBoardItemView, makeTokenView, makePieceView } from './snapshot.js';
+import { buildSnapshot, makeBoardItemView, makeTokenView, makePieceView, redactStatBlock } from './snapshot.js';
 import { broadcastDocuments } from './documents.js';
 import { canAccessShared, canControlToken, documentSharing, type Viewer } from './sharing.js';
 import { getCampaign } from '../campaign/registry.js';
@@ -55,7 +58,8 @@ function broadcastBoardUpdated(campaignId: string, entry: { store: { meta: { id:
   broadcast(campaignId, { type: 'boardUpdated', items });
 }
 
-/** Broadcast tokensUpdated to each session, filtering dmOnly tokens for non-DM. */
+/** Broadcast tokensUpdated to each session, filtering dmOnly tokens for non-DM
+ *  and redacting each stat block to the tokens that viewer owns. */
 function broadcastTokensUpdated(
   campaignId: string,
   entry: Parameters<typeof makeTokenView>[2] & { runtime: { state: { tokens: Token[] } } },
@@ -65,7 +69,8 @@ function broadcastTokensUpdated(
   );
   for (const sess of getSessionsInRoom(campaignId)) {
     const isDm = sess.role === 'dm';
-    const tokens: TokenView[] = isDm ? allViews : allViews.filter((tv) => !tv.dmOnly);
+    const tokens: TokenView[] = (isDm ? allViews : allViews.filter((tv) => !tv.dmOnly))
+      .map((tv) => redactStatBlock(tv, isDm, sess.userId));
     send(sess.ws, { type: 'tokensUpdated', tokens });
   }
 }
@@ -163,6 +168,9 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
         break;
       case 'aoeClear':
         await handleAoeClear(session);
+        break;
+      case 'setInitiative':
+        await handleSetInitiative(session, msg);
         break;
       case 'setMapMeta':
         await handleSetMapMeta(session, msg);
@@ -640,6 +648,22 @@ async function handleDeleteNote(
 // Token handlers
 // ---------------------------------------------------------------------------
 
+const CONDITION_SET = new Set<string>(CONDITIONS);
+function sanitizeConditions(input: string[] | undefined): string[] {
+  if (!Array.isArray(input)) return [];
+  return [...new Set(input.filter((c) => CONDITION_SET.has(c)))];
+}
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+function sanitizeStatBlock(input: TokenStatBlock | null | undefined): TokenStatBlock | null {
+  if (input == null || typeof input !== 'object') return null;
+  const s = input as Partial<TokenStatBlock>;
+  return {
+    ac: num(s.ac), speed: typeof s.speed === 'string' ? s.speed.slice(0, 60) : '',
+    str: num(s.str), dex: num(s.dex), con: num(s.con), int: num(s.int), wis: num(s.wis), cha: num(s.cha),
+    notes: typeof s.notes === 'string' ? s.notes.slice(0, 4000) : '',
+  };
+}
+
 async function handleTokenAdd(
   session: WsSession,
   msg: {
@@ -657,6 +681,8 @@ async function handleTokenAdd(
     maxHp?: number | null;
     dmOnly?: boolean;
     sharing?: Sharing;
+    conditions?: string[];
+    statBlock?: TokenStatBlock | null;
   },
 ): Promise<void> {
   const campaignId = session.campaignId!;
@@ -698,6 +724,8 @@ async function handleTokenAdd(
     maxHp: msg.maxHp ?? null,
     dmOnly,
     sharing: msg.sharing ? parseSharing(msg.sharing) : defaultSharing(),
+    conditions: sanitizeConditions(msg.conditions),
+    statBlock: sanitizeStatBlock(msg.statBlock),
   };
 
   entry.runtime.state = {
@@ -759,6 +787,8 @@ async function handleTokenUpdate(
     maxHp?: number | null;
     dmOnly?: boolean;
     sharing?: Sharing;
+    conditions?: string[];
+    statBlock?: TokenStatBlock | null;
   },
 ): Promise<void> {
   const campaignId = session.campaignId!;
@@ -793,6 +823,8 @@ async function handleTokenUpdate(
     ...(msg.hp !== undefined && { hp: msg.hp }),
     ...(msg.maxHp !== undefined && { maxHp: msg.maxHp }),
     ...(msg.sharing !== undefined && { sharing: parseSharing(msg.sharing) }),
+    ...(msg.conditions !== undefined && { conditions: sanitizeConditions(msg.conditions) }),
+    ...(msg.statBlock !== undefined && { statBlock: sanitizeStatBlock(msg.statBlock) }),
     ...(isDm && msg.ownerUserId !== undefined && { ownerUserId: msg.ownerUserId }),
     ...(isDm && msg.dmOnly !== undefined && { dmOnly: msg.dmOnly }),
   };
@@ -829,6 +861,42 @@ async function handleTokenRemove(
   await persistState(entry.runtime);
 
   broadcastTokensUpdated(campaignId, entry);
+}
+
+// ---------------------------------------------------------------------------
+// Initiative tracker (DM-controlled; order visible to everyone)
+// ---------------------------------------------------------------------------
+
+async function handleSetInitiative(
+  session: WsSession,
+  msg: { type: 'setInitiative'; initiative: InitiativeState },
+): Promise<void> {
+  if (session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', 'Only the DM can change the initiative order');
+    return;
+  }
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  const i = msg.initiative;
+  const entries = Array.isArray(i?.entries) ? i.entries.slice(0, 100) : [];
+  const initiative: InitiativeState = {
+    active: !!i?.active,
+    round: Number.isFinite(i?.round) ? Math.max(0, Math.floor(i.round)) : 0,
+    turnIndex: Number.isFinite(i?.turnIndex) ? Math.max(0, Math.floor(i.turnIndex)) : 0,
+    entries: entries.map((e) => ({
+      id: typeof e.id === 'string' && e.id ? e.id : randomId('ini'),
+      tokenId: typeof e.tokenId === 'string' ? e.tokenId : null,
+      name: typeof e.name === 'string' ? e.name.slice(0, 80) : 'Combatant',
+      initiative: Number.isFinite(e.initiative) ? e.initiative : 0,
+      ownerUserId: typeof e.ownerUserId === 'string' ? e.ownerUserId : null,
+    })),
+  };
+
+  entry.runtime.state = { ...entry.runtime.state, initiative };
+  await persistState(entry.runtime);
+  broadcast(campaignId, { type: 'initiativeUpdated', initiative });
 }
 
 // ---------------------------------------------------------------------------

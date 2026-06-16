@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../log.js';
 import { randomId, parseSharing } from '@vtt/shared';
-import type { RollLogEntry, GridState, Sharing, MapPiece, MapMeta, AoeTemplate } from '@vtt/shared';
+import type { RollLogEntry, GridState, Sharing, MapPiece, MapMeta, AoeTemplate, TokenStatBlock, InitiativeState } from '@vtt/shared';
 
 export interface BoardItem {
   id: string;
@@ -33,6 +33,10 @@ export interface Token {
   dmOnly: boolean;
   /** Who, besides owner + DM, may control this token. */
   sharing: Sharing;
+  /** active conditions (visible to everyone) */
+  conditions: string[];
+  /** combat stat block — redacted per viewer in the snapshot/broadcast */
+  statBlock: TokenStatBlock | null;
 }
 
 export const DEFAULT_GRID: GridState = {
@@ -71,10 +75,14 @@ export interface RuntimeState {
   pieces: MapPiece[];
   /** placed AoE templates (spell/effect areas) — persist through the session */
   aoes: AoeTemplate[];
+  /** initiative tracker — DM-controlled, order visible to everyone */
+  initiative: InitiativeState;
   mapMeta: MapMeta;
   /** saved reusable maps */
   mapTemplates: MapTemplate[];
 }
+
+export const EMPTY_INITIATIVE: InitiativeState = { active: false, round: 0, turnIndex: 0, entries: [] };
 
 export interface CampaignRuntime {
   state: RuntimeState;
@@ -105,6 +113,7 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     grid: { ...DEFAULT_GRID },
     pieces: [],
     aoes: [],
+    initiative: { ...EMPTY_INITIATIVE, entries: [] },
     mapMeta: { ...DEFAULT_MAP_META },
     mapTemplates: [],
   };
@@ -141,6 +150,10 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
       ? (parsed['tokens'] as Token[]).map((t) => ({
           ...t,
           sharing: parseSharing((t as { sharing?: unknown }).sharing),
+          conditions: Array.isArray((t as { conditions?: unknown }).conditions)
+            ? ((t as { conditions: unknown[] }).conditions.filter((c) => typeof c === 'string') as string[])
+            : [],
+          statBlock: (t as { statBlock?: TokenStatBlock | null }).statBlock ?? null,
         }))
       : [];
 
@@ -156,6 +169,11 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     const aoes: AoeTemplate[] = Array.isArray(parsed['aoes'])
       ? (parsed['aoes'] as AoeTemplate[])
       : [];
+    const initiative: InitiativeState =
+      parsed['initiative'] != null && typeof parsed['initiative'] === 'object'
+        ? { ...EMPTY_INITIATIVE, ...(parsed['initiative'] as Partial<InitiativeState>),
+            entries: Array.isArray((parsed['initiative'] as InitiativeState).entries) ? (parsed['initiative'] as InitiativeState).entries : [] }
+        : { ...EMPTY_INITIATIVE, entries: [] };
     const mapMeta: MapMeta =
       parsed['mapMeta'] != null && typeof parsed['mapMeta'] === 'object'
         ? { ...DEFAULT_MAP_META, ...(parsed['mapMeta'] as Partial<MapMeta>) }
@@ -172,6 +190,7 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
       grid,
       pieces,
       aoes,
+      initiative,
       mapMeta,
       mapTemplates: Array.isArray(parsed['mapTemplates']) ? (parsed['mapTemplates'] as MapTemplate[]) : [],
     };

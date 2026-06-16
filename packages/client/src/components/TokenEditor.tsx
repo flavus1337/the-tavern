@@ -1,6 +1,6 @@
 import { useRef, useState, type ChangeEvent } from 'react';
-import type { ClientMessage, TokenView, Sharing, UploadAssetResponse } from '@vtt/shared';
-import { defaultSharing } from '@vtt/shared';
+import type { ClientMessage, TokenView, Sharing, UploadAssetResponse, TokenStatBlock } from '@vtt/shared';
+import { defaultSharing, CONDITIONS } from '@vtt/shared';
 import { useStore } from '../store';
 import { apiUpload, ApiRequestError } from '../lib/api';
 import { Button } from './ui/button';
@@ -56,6 +56,11 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
   const [maxHp, setMaxHp] = useState(existing?.maxHp ?? 10);
   const [dmOnly, setDmOnly] = useState(existing?.dmOnly ?? false);
   const [sharing, setSharing] = useState<Sharing>(existing?.sharing ?? defaultSharing());
+  const [conditions, setConditions] = useState<string[]>(existing?.conditions ?? []);
+  const BLANK_SB: TokenStatBlock = { ac: null, speed: '', str: null, dex: null, con: null, int: null, wis: null, cha: null, notes: '' };
+  const [hasStats, setHasStats] = useState(existing?.statBlock != null);
+  const [sb, setSb] = useState<TokenStatBlock>(existing?.statBlock ?? BLANK_SB);
+  const setSbField = (k: keyof TokenStatBlock, v: number | string | null) => setSb((s) => ({ ...s, [k]: v }));
   const [assetId, setAssetId] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(existing?.imageUrl ?? null);
   const [uploading, setUploading] = useState(false);
@@ -89,9 +94,10 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
   function submit() {
     if (!canSubmit) return;
     const hpFields = hasHp ? { hp, maxHp } : { hp: null, maxHp: null };
+    const combat = { conditions, statBlock: hasStats ? sb : null };
     if (tokenId && existing) {
       sendWs({
-        type: 'tokenUpdate', tokenId, name: name.trim(), shape, allegiance, size, fill, sharing, ...hpFields,
+        type: 'tokenUpdate', tokenId, name: name.trim(), shape, allegiance, size, fill, sharing, ...hpFields, ...combat,
         ...(isDm ? { ownerUserId, dmOnly } : {}),
       });
     } else {
@@ -99,7 +105,7 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
       const x = grid.snap ? Math.round((pt.x - grid.offsetX) / grid.cell) * grid.cell + grid.offsetX : pt.x;
       const y = grid.snap ? Math.round((pt.y - grid.offsetY) / grid.cell) * grid.cell + grid.offsetY : pt.y;
       sendWs({
-        type: 'tokenAdd', name: name.trim(), shape, allegiance, size, fill, sharing, x, y,
+        type: 'tokenAdd', name: name.trim(), shape, allegiance, size, fill, sharing, x, y, ...combat,
         // For players the server forces owner=self & dmOnly=false; sending sane defaults.
         ownerUserId: isDm ? ownerUserId : (self?.userId ?? null),
         dmOnly: isDm ? dmOnly : false,
@@ -109,6 +115,9 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
     }
     closePanel(panelId);
   }
+
+  const toggleCondition = (c: string) =>
+    setConditions((cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
 
   const labelCls = 'eyebrow';
   const rowCls = 'flex flex-col gap-1.5';
@@ -275,6 +284,75 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
               <Input type="number" value={hp} onChange={(e) => setHp(Number(e.target.value))} className="w-20" aria-label="Current HP" />
               <span style={{ color: 'var(--faint)' }}>/</span>
               <Input type="number" value={maxHp} onChange={(e) => setMaxHp(Number(e.target.value))} className="w-20" aria-label="Max HP" />
+            </div>
+          )}
+        </div>
+
+        {/* Conditions — visible to everyone */}
+        <div className={rowCls}>
+          <span className={labelCls}>Conditions</span>
+          <div className="flex flex-wrap gap-1.5">
+            {CONDITIONS.map((c) => {
+              const on = conditions.includes(c);
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => toggleCondition(c)}
+                  className="px-2 py-1 text-xs rounded-full capitalize transition-colors"
+                  style={{
+                    border: `1px solid ${on ? 'var(--ember)' : 'var(--border)'}`,
+                    background: on ? '#e08a4b22' : 'transparent',
+                    color: on ? 'var(--ember)' : 'var(--low)', cursor: 'pointer',
+                  }}
+                >
+                  {c}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Stat block — lightweight; DM sees all, players only their own tokens */}
+        <div className={rowCls}>
+          <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--mid)' }}>
+            <input type="checkbox" checked={hasStats} onChange={(e) => setHasStats(e.target.checked)} style={{ accentColor: 'var(--ember)' }} />
+            Combat stat block
+          </label>
+          {hasStats && (
+            <div className="flex flex-col gap-2 p-2.5 rounded-[9px]" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--low)' }}>
+                  AC
+                  <Input type="number" value={sb.ac ?? ''} onChange={(e) => setSbField('ac', e.target.value === '' ? null : Number(e.target.value))} className="w-16" aria-label="Armor class" />
+                </label>
+                <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--low)' }}>
+                  Speed
+                  <Input value={sb.speed} onChange={(e) => setSbField('speed', e.target.value)} placeholder="30 ft." className="flex-1" aria-label="Speed" />
+                </label>
+              </div>
+              <div className="grid grid-cols-6 gap-1.5">
+                {(['str', 'dex', 'con', 'int', 'wis', 'cha'] as const).map((ab) => (
+                  <div key={ab} className="flex flex-col items-center gap-1">
+                    <span className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--faint)' }}>{ab}</span>
+                    <Input
+                      type="number"
+                      value={sb[ab] ?? ''}
+                      onChange={(e) => setSbField(ab, e.target.value === '' ? null : Number(e.target.value))}
+                      className="w-full text-center px-1"
+                      aria-label={ab}
+                    />
+                  </div>
+                ))}
+              </div>
+              <textarea
+                value={sb.notes}
+                onChange={(e) => setSbField('notes', e.target.value)}
+                placeholder="Attacks, traits, notes…"
+                rows={3}
+                className="w-full px-2 py-1.5 text-sm rounded-[7px] resize-y"
+                style={{ background: '#100c0a', border: '1px solid var(--border)', color: 'var(--hi)' }}
+              />
             </div>
           )}
         </div>

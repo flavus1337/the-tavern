@@ -12,6 +12,7 @@ import { DiceRoller } from './DiceRoller';
 import { RollLog } from './RollLog';
 import { DocumentsPanel } from './DocumentsPanel';
 import { NotesPanel } from './NotesPanel';
+import { InitiativePanel } from './InitiativePanel';
 import { PresenceBar } from './PresenceBar';
 import { DmPanel } from './dm/DmPanel';
 import { BuildInspector } from './build/BuildInspector';
@@ -40,7 +41,7 @@ export function TableLayout() {
   const genDialog = useStore((s) => s.genDialog);
 
   const connRef = useRef<TableConnection | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<'dice' | 'docs' | 'notes' | 'dm'>('dice');
+  const [sidebarTab, setSidebarTab] = useState<'dice' | 'combat' | 'docs' | 'notes' | 'dm'>('dice');
 
   const isDm = self?.role === 'dm';
   const isConnected = connection === 'open';
@@ -87,8 +88,8 @@ export function TableLayout() {
   useEffect(() => {
     function onSwitchTab(e: Event) {
       const tab = (e as CustomEvent<string>).detail;
-      if (tab === 'dice' || tab === 'docs' || tab === 'notes' || tab === 'dm') {
-        setSidebarTab(tab as 'dice' | 'docs' | 'notes' | 'dm');
+      if (tab === 'dice' || tab === 'combat' || tab === 'docs' || tab === 'notes' || tab === 'dm') {
+        setSidebarTab(tab as 'dice' | 'combat' | 'docs' | 'notes' | 'dm');
       }
     }
     window.addEventListener('vtt:switch-sidebar-tab', onSwitchTab);
@@ -297,6 +298,7 @@ export function TableLayout() {
             >
               <TabsList>
                 <TabsTrigger value="dice">Dice</TabsTrigger>
+                <TabsTrigger value="combat">Combat</TabsTrigger>
                 <TabsTrigger value="docs">
                   Docs
                   {documents.length > 0 && (
@@ -326,6 +328,10 @@ export function TableLayout() {
                     <RollLog entries={rollLog} />
                   </div>
                 </div>
+              </TabsContent>
+
+              <TabsContent value="combat" className="flex flex-col h-full overflow-hidden">
+                <InitiativePanel />
               </TabsContent>
 
               <TabsContent value="docs" className="flex flex-col h-full overflow-hidden">

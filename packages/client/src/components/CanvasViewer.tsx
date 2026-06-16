@@ -12,6 +12,7 @@ import { useStore } from '../store';
 import type { BoardView, BoardTool, EditorMode, AoeShape } from '../store';
 import { BoardMoments } from './RollLog';
 import { inkSprite } from '../lib/inkArt';
+import { activeEntry } from '../lib/initiative';
 
 const TOKEN_CELLS: Record<TokenView['size'], number> = { S: 1, M: 1, L: 2, H: 3 };
 
@@ -336,9 +337,17 @@ interface TokenElProps {
   scale: number;
   grid: GridState;
   active: boolean; // tool allows selecting/moving (select or move tool)
+  turnActive: boolean; // it's this token's turn in the initiative tracker
 }
 
-function TokenEl({ token, selfUserId, isDm, scale, grid, active }: TokenElProps) {
+// Short labels for condition badges shown on tokens (visible to everyone).
+const CONDITION_ABBR: Record<string, string> = {
+  blinded: 'BLN', charmed: 'CHM', concentration: 'CON', deafened: 'DEF', frightened: 'FRT',
+  grappled: 'GRP', incapacitated: 'INC', invisible: 'INV', paralyzed: 'PAR', petrified: 'PET',
+  poisoned: 'PSN', prone: 'PRN', restrained: 'RST', stunned: 'STN', unconscious: 'UNC',
+};
+
+function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: TokenElProps) {
   const setSelectedTokenId = useStore((s) => s.setSelectedTokenId);
   const openTokenPanel = useStore((s) => s.openTokenPanel);
   const selectedId = useStore((s) => s.selectedTokenId);
@@ -434,6 +443,34 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active }: TokenElProps)
       )}
       {mine && <div className="tok-you">YOU</div>}
       {selected && <div className="tok-sel" />}
+
+      {/* Active-turn ring (initiative tracker) */}
+      {turnActive && (
+        <div style={{
+          position: 'absolute', inset: -5 / scale, borderRadius: '50%', pointerEvents: 'none',
+          border: `${3 / scale}px solid var(--gold)`, boxShadow: '0 0 12px 1px #e8b76588',
+        }} />
+      )}
+
+      {/* Condition badges — visible to everyone */}
+      {token.conditions.length > 0 && (
+        <div style={{
+          position: 'absolute', left: '50%', bottom: -8 / scale, transform: `translate(-50%, 100%) scale(${1 / scale})`,
+          transformOrigin: 'top center', display: 'flex', gap: 3, flexWrap: 'wrap', justifyContent: 'center',
+          maxWidth: px * scale * 2.2, pointerEvents: 'none',
+        }}>
+          {token.conditions.map((c) => (
+            <span key={c} title={c} style={{
+              fontFamily: 'var(--mono)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
+              color: '#1a1008', background: 'var(--ember)', borderRadius: 4, padding: '1px 4px',
+              boxShadow: '0 1px 2px #000a',
+            }}>
+              {CONDITION_ABBR[c] ?? c.slice(0, 3).toUpperCase()}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="tok-name">{token.name}</div>
 
       {/* Owner/DM edit/remove on selected (no combat toolbar) */}
@@ -671,6 +708,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const setSelectedTokenId = useStore((s) => s.setSelectedTokenId);
   const pieces = useStore((s) => s.pieces);
   const aoes = useStore((s) => s.aoes);
+  const initiative = useStore((s) => s.initiative);
   const editorMode = useStore((s) => s.editorMode);
   const activePalettePiece = useStore((s) => s.activePalettePiece);
   const layerVisible = useStore((s) => s.layerVisible);
@@ -940,6 +978,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 
   const sortedItems = [...board].sort((a, b) => a.z - b.z);
   const sortedTokens = [...tokens].sort((a, b) => a.z - b.z);
+  const activeTurnTokenId = activeEntry(initiative)?.tokenId ?? null;
   const sortedPieces = [...pieces].sort((a, b) => a.z - b.z).filter((p) => layerVisible[p.layer]);
   const isEmpty = board.length === 0 && tokens.length === 0 && pieces.length === 0;
   const cursor = measuring || aoeing || stamping || erasing || calibrating ? 'crosshair' : draggingCanvas.current ? 'grabbing' : 'grab';
@@ -1022,6 +1061,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
             scale={view.scale}
             grid={grid}
             active={tokensActive}
+            turnActive={activeTurnTokenId === token.id}
           />
         ))}
         {children}

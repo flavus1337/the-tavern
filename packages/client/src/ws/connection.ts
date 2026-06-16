@@ -181,6 +181,10 @@ export class TableConnection {
         store.setAoes(msg.aoes);
         break;
 
+      case 'initiativeUpdated':
+        store.setInitiative(msg.initiative);
+        break;
+
       case 'mapMetaUpdated':
         store.setMapMeta(msg.mapMeta);
         break;
