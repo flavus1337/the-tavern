@@ -478,6 +478,7 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
   const setSelectedPieceId = useStore((s) => s.setSelectedPieceId);
   const [local, setLocal] = useState<PieceT | null>(null);
   const [dragging, setDragging] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const drag = useRef<null | {
     mode: 'move' | 'resize' | 'rotate';
     sx: number; sy: number;
@@ -506,7 +507,8 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
   function begin(mode: 'move' | 'resize' | 'rotate', e: PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;
     e.stopPropagation();
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    // ponytail: capture on the root (never unmounts) — the grabbed handle does, which dropped capture.
+    rootRef.current?.setPointerCapture(e.pointerId);
     drag.current = {
       mode, sx: e.clientX, sy: e.clientY,
       ox: piece.x, oy: piece.y, ow: piece.w, oh: piece.h, orot: piece.rotation,
@@ -580,6 +582,7 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
 
   return (
     <div
+      ref={rootRef}
       style={{
         position: 'absolute', left: x, top: y, width: w, height: h,
         transform: `rotate(${rotation}deg)`, transformOrigin: 'center',
@@ -604,9 +607,17 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
         <div style={{ position: 'absolute', inset: -2 / scale, border: `${Math.max(1, 2 / scale)}px solid var(--ember)`, boxShadow: '0 0 0 1px #fff8', pointerEvents: 'none', borderRadius: 2 / scale }} />
       )}
 
-      {selected && interactive && !dragging && (
+      {/* Rotation readout while rotating — clear "you are rotating" indication. */}
+      {selected && interactive && dragging && drag.current?.mode === 'rotate' && (
+        <div style={{ position: 'absolute', left: '50%', top: '50%', transform: `translate(-50%,-50%) rotate(${-rotation}deg) scale(${1 / scale})`, background: 'var(--ember)', color: 'var(--ink)', fontFamily: 'var(--mono)', fontSize: 12, fontWeight: 700, padding: '3px 8px', borderRadius: 999, whiteSpace: 'nowrap', pointerEvents: 'none' }}>
+          {Math.round(rotation)}°
+        </div>
+      )}
+
+      {selected && interactive && (drag.current?.mode !== 'move' || !dragging) && (
         <>
-          {/* rotate grip */}
+          {/* rotate grip + stem */}
+          <div style={{ position: 'absolute', left: '50%', top: -28 / scale, bottom: '100%', width: Math.max(1, 1.5 / scale), marginLeft: -Math.max(1, 1.5 / scale) / 2, background: 'var(--ember)', pointerEvents: 'none' }} />
           <div
             onPointerDown={startRotate}
             title="Rotate"
