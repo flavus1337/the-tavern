@@ -2,7 +2,7 @@ import { useRef, useState, type ChangeEvent } from 'react';
 import type { ClientMessage, UploadAssetResponse } from '@vtt/shared';
 import { useStore } from '../../store';
 import { apiUpload, ApiRequestError } from '../../lib/api';
-import { inkTile, INK_LIBRARY, INK_PIECE_BY_NAME } from '../../lib/inkArt';
+import { centredPlacement } from '../../lib/view';
 
 function sendWs(msg: ClientMessage): void {
   const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
@@ -49,14 +49,24 @@ export function BuildInspector() {
     for (const item of board) sendWs({ type: 'boardRemove', itemId: item.id });
   }
 
+  // Scale a background to 40 cells, drop it centred in the current view (grid
+  // aligned), and set a clean, visible grid.
+  function placeBackground(assetId: string) {
+    const w = 40 * grid.cell;
+    const p = centredPlacement(w, w);
+    sendWs({ type: 'boardAdd', assetId, x: p.x, y: p.y, w });
+    sendWs({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
+  }
+
   function resetGrid() {
+    const std = 44;
+    sendWs({ type: 'setGrid', grid: { cell: std, offsetX: 0, offsetY: 0, visible: true, snap: true, unit: 'm', color: board.length ? '#00000059' : '#ffffff33' } });
+    // Re-fit the current background to a 40-cell map at the standard cell size.
     const bg = board[0];
-    if (bg) {
-      // Re-establish the standard 40-square battle grid on the current map.
-      const boardW = bg.w || bg.naturalWidth || 1200;
-      sendWs({ type: 'setGrid', grid: { cell: Math.max(14, Math.round(boardW / 40)), offsetX: 0, offsetY: 0, visible: true, snap: true, unit: 'm', color: '#00000059' } });
-    } else {
-      sendWs({ type: 'setGrid', grid: { cell: 44, offsetX: 0, offsetY: 0, visible: true, snap: true, unit: 'm', color: '#ffffff33' } });
+    if (bg && !mapLocked) {
+      const w = 40 * std;
+      const p = centredPlacement(w, w);
+      sendWs({ type: 'boardMove', itemId: bg.id, x: p.x, y: p.y, w });
     }
   }
 
@@ -67,8 +77,7 @@ export function BuildInspector() {
     setBgError(null);
     try {
       const res = await apiUpload<UploadAssetResponse>(`/api/campaigns/${campaignId}/assets`, file, { kind: 'map' });
-      // Pin it to the board at the origin as the background layer.
-      sendWs({ type: 'boardAdd', assetId: res.asset.id, x: 0, y: 0 });
+      placeBackground(res.asset.id);
     } catch (err) {
       setBgError(err instanceof ApiRequestError ? err.message : 'Upload failed');
     } finally {
@@ -77,37 +86,24 @@ export function BuildInspector() {
     }
   }
 
-  function arm(name: string) {
-    const def = INK_PIECE_BY_NAME[name];
-    if (!def) return;
-    setActivePalettePiece({ builtin: name, assetId: null, url: null, layer: def.layer, lockedToGrid: def.lockedToGrid });
-    setBoardTool('stamp');
-  }
   function armAsset(assetId: string, url: string) {
     setActivePalettePiece({ builtin: null, assetId, url, layer: 'props', lockedToGrid: false });
     setBoardTool('stamp');
   }
 
   const q = search.trim().toLowerCase();
-  // Custom prop assets grouped by their category (search-filtered).
+  // Saved backgrounds (generated/uploaded maps) to reuse.
+  const bgAssets = (assets ?? []).filter((a) => a.assetKind === 'map');
+  // Prop assets grouped by their category (search-filtered). Default props are
+  // gone — the palette is your generated/uploaded props.
   const assetsByCat: Record<string, typeof stampAssets> = {};
   for (const a of stampAssets) {
     if (q && !(a.title.toLowerCase().includes(q) || (a.category ?? '').toLowerCase().includes(q))) continue;
     (assetsByCat[a.category || 'Uploads'] ||= []).push(a);
   }
-  const builtinNames = new Set(INK_LIBRARY.map((g) => g.section));
-  // Built-in sections (with any custom assets filed under the same category)…
-  const builtinGroups = INK_LIBRARY.map((g) => ({
-    section: g.section,
-    pieces: g.pieces.filter((p) => !q || p.label.toLowerCase().includes(q)),
-    assets: assetsByCat[g.section] ?? [],
-  })).filter((g) => g.pieces.length > 0 || g.assets.length > 0);
-  // …then custom-only categories.
-  const customGroups = Object.keys(assetsByCat)
-    .filter((c) => !builtinNames.has(c))
+  const groups = Object.keys(assetsByCat)
     .sort()
-    .map((c) => ({ section: c, pieces: [] as typeof INK_LIBRARY[number]['pieces'], assets: assetsByCat[c]! }));
-  const groups = [...builtinGroups, ...customGroups];
+    .map((c) => ({ section: c, pieces: [] as never[], assets: assetsByCat[c]! }));
 
   return (
     <div className="flex flex-col h-full" style={{ overflow: 'hidden' }}>
@@ -138,6 +134,27 @@ export function BuildInspector() {
           <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path d="M12 3l1.8 5.6L19 10l-5.2 1.4L12 17l-1.8-5.6L5 10l5.2-1.4z" /></svg>
           Generate background
         </button>
+
+        {bgAssets.length > 0 && (
+          <div>
+            <p className="eyebrow" style={{ margin: '4px 0 6px' }}>Saved maps · click to use</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(64px, 1fr))', gap: 6, maxHeight: 168, overflowY: 'auto' }}>
+              {bgAssets.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => placeBackground(a.id)}
+                  title={`Use “${a.title}”`}
+                  className="rounded-[8px] overflow-hidden"
+                  style={{ aspectRatio: '1 / 1', border: '1px solid var(--border)', cursor: 'pointer', background: '#0008' }}
+                >
+                  <img src={`/api/campaigns/${campaignId}/files/assets/${a.file}`} alt={a.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => bgInputRef.current?.click()}
@@ -269,27 +286,6 @@ export function BuildInspector() {
             <div key={g.section} className="space-y-2">
               <p className="eyebrow">{g.section}</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 8 }}>
-                {g.pieces.map((p) => {
-                  const on = activePalettePiece?.builtin === p.name;
-                  return (
-                    <button
-                      key={p.name}
-                      type="button"
-                      onClick={() => arm(p.name)}
-                      title={p.label}
-                      className="flex flex-col items-center gap-1 p-1.5 rounded-[10px] transition-colors"
-                      style={{
-                        background: on ? '#e08a4b1a' : 'var(--surface2)',
-                        border: `1px solid ${on ? 'var(--ember)' : 'var(--border)'}`,
-                        boxShadow: on ? 'inset 0 0 0 1px var(--ember)' : 'none',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 7, overflow: 'hidden' }} dangerouslySetInnerHTML={{ __html: inkTile(p.name) }} />
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: on ? 'var(--ember)' : 'var(--mid)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{p.label}</span>
-                    </button>
-                  );
-                })}
                 {g.assets.map((a) => {
                   const url = `/api/campaigns/${campaignId}/files/assets/${a.file}`;
                   const on = activePalettePiece?.assetId === a.id;
@@ -317,7 +313,9 @@ export function BuildInspector() {
             </div>
           ))}
           {groups.length === 0 && (
-            <p className="text-xs italic text-center py-6" style={{ color: 'var(--faint)' }}>No pieces match “{search}”.</p>
+            <p className="text-xs italic text-center py-6" style={{ color: 'var(--faint)' }}>
+              {search ? `No props match “${search}”.` : 'No props yet — use “Add asset” to generate or upload one.'}
+            </p>
           )}
         </div>
       </div>
@@ -343,7 +341,7 @@ function SelectedPieceCard({
   onSize: (w: number) => void; onRotate: (r: number) => void; onDelete: () => void;
 }) {
   const scale = +(w / cell).toFixed(2);
-  const label = builtin ? (INK_PIECE_BY_NAME[builtin]?.label ?? builtin) : 'Image';
+  const label = builtin ?? 'Prop';
   const preset = scale <= 0.75 ? 'S' : scale <= 1.25 ? 'M' : scale <= 1.9 ? 'L' : 'H';
   return (
     <div className="p-3 space-y-3" style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface2)' }}>

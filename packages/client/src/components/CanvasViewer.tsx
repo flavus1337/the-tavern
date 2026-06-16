@@ -32,6 +32,8 @@ function snapTo(value: number, cell: number, offset: number): number {
 const SCALE_MIN = 0.05;
 const SCALE_MAX = 8;
 const FIT_MARGIN = 0.9;
+// The board is a finite MAP_CELLS × MAP_CELLS square (no endless panning).
+const MAP_CELLS = 120;
 
 interface CanvasViewerProps {
   children?: ReactNode;
@@ -469,15 +471,19 @@ interface PieceElProps {
   erasing: boolean;      // build mode + erase tool
 }
 
+interface PieceT { x: number; y: number; w: number; h: number; rotation: number }
+
 function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
   const selectedId = useStore((s) => s.selectedPieceId);
   const setSelectedPieceId = useStore((s) => s.setSelectedPieceId);
-  const [local, setLocal] = useState<{ x: number; y: number; w: number; h: number; rotation: number } | null>(null);
+  const [local, setLocal] = useState<PieceT | null>(null);
+  const [dragging, setDragging] = useState(false);
   const drag = useRef<null | {
     mode: 'move' | 'resize' | 'rotate';
     sx: number; sy: number;
     ox: number; oy: number; ow: number; oh: number; orot: number;
     cxBoard: number; cyBoard: number; // piece centre in board space
+    cur: PieceT;                       // live transform (read on release — never stale)
   }>(null);
 
   const selected = selectedId === piece.id;
@@ -487,72 +493,83 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
   const h = local?.h ?? piece.h;
   const rotation = local?.rotation ?? piece.rotation;
 
+  // Drop the optimistic transform once the server echoes (never mid-drag).
   useEffect(() => {
     if (drag.current) return;
     setLocal(null);
   }, [piece.x, piece.y, piece.w, piece.h, piece.rotation]);
 
-  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
-    if (erasing) { e.stopPropagation(); sendWs({ type: 'pieceRemove', id: piece.id }); return; }
-    if (!interactive || e.button !== 0) return;
-    e.stopPropagation();
-    setSelectedPieceId(piece.id);
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-    drag.current = { mode: 'move', sx: e.clientX, sy: e.clientY, ox: piece.x, oy: piece.y, ow: piece.w, oh: piece.h, orot: piece.rotation, cxBoard: piece.x + piece.w / 2, cyBoard: piece.y + piece.h / 2 };
+  function canvasRect() {
+    return document.querySelector('[aria-label="Campaign map canvas"]')!.getBoundingClientRect();
   }
 
-  function startResize(e: PointerEvent<HTMLDivElement>) {
+  function begin(mode: 'move' | 'resize' | 'rotate', e: PointerEvent<HTMLDivElement>) {
     if (e.button !== 0) return;
     e.stopPropagation();
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-    drag.current = { mode: 'resize', sx: e.clientX, sy: e.clientY, ox: piece.x, oy: piece.y, ow: piece.w, oh: piece.h, orot: piece.rotation, cxBoard: piece.x + piece.w / 2, cyBoard: piece.y + piece.h / 2 };
+    drag.current = {
+      mode, sx: e.clientX, sy: e.clientY,
+      ox: piece.x, oy: piece.y, ow: piece.w, oh: piece.h, orot: piece.rotation,
+      cxBoard: piece.x + piece.w / 2, cyBoard: piece.y + piece.h / 2,
+      cur: { x: piece.x, y: piece.y, w: piece.w, h: piece.h, rotation: piece.rotation },
+    };
+    setDragging(true);
   }
-  function startRotate(e: PointerEvent<HTMLDivElement>) {
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
-    drag.current = { mode: 'rotate', sx: e.clientX, sy: e.clientY, ox: piece.x, oy: piece.y, ow: piece.w, oh: piece.h, orot: piece.rotation, cxBoard: piece.x + piece.w / 2, cyBoard: piece.y + piece.h / 2 };
+
+  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    if (erasing) { e.stopPropagation(); sendWs({ type: 'pieceRemove', id: piece.id }); return; }
+    if (!interactive) return;
+    setSelectedPieceId(piece.id);
+    begin('move', e);
   }
+  function startResize(e: PointerEvent<HTMLDivElement>) { begin('resize', e); }
+  function startRotate(e: PointerEvent<HTMLDivElement>) { begin('rotate', e); }
 
   function onPointerMove(e: PointerEvent<HTMLDivElement>) {
     const d = drag.current;
     if (!d) return;
+    let t: PieceT;
     if (d.mode === 'move') {
-      setLocal({ x: d.ox + (e.clientX - d.sx) / scale, y: d.oy + (e.clientY - d.sy) / scale, w: d.ow, h: d.oh, rotation: d.orot });
+      t = { x: d.ox + (e.clientX - d.sx) / scale, y: d.oy + (e.clientY - d.sy) / scale, w: d.ow, h: d.oh, rotation: d.orot };
     } else if (d.mode === 'resize') {
       // ponytail: uniform scale from centre by pointer distance — lock-aspect default.
       const half0 = Math.hypot(d.ow, d.oh) / 2;
-      const rect = document.querySelector('[aria-label="Campaign map canvas"]')!.getBoundingClientRect();
-      const px = (e.clientX - rect.left - useStore.getState().boardView.x) / scale;
-      const py = (e.clientY - rect.top - useStore.getState().boardView.y) / scale;
-      const half1 = Math.hypot(px - d.cxBoard, py - d.cyBoard);
-      const k = Math.max(0.15, half1 / Math.max(8, half0));
+      const rect = canvasRect();
+      const bv = useStore.getState().boardView;
+      const px = (e.clientX - rect.left - bv.x) / scale;
+      const py = (e.clientY - rect.top - bv.y) / scale;
+      const k = Math.max(0.15, Math.hypot(px - d.cxBoard, py - d.cyBoard) / Math.max(8, half0));
       const nw = Math.max(8, d.ow * k), nh = Math.max(8, d.oh * k);
-      setLocal({ x: d.cxBoard - nw / 2, y: d.cyBoard - nh / 2, w: nw, h: nh, rotation: d.orot });
+      t = { x: d.cxBoard - nw / 2, y: d.cyBoard - nh / 2, w: nw, h: nh, rotation: d.orot };
     } else {
-      const rect = document.querySelector('[aria-label="Campaign map canvas"]')!.getBoundingClientRect();
-      const px = (e.clientX - rect.left - useStore.getState().boardView.x) / scale;
-      const py = (e.clientY - rect.top - useStore.getState().boardView.y) / scale;
+      const rect = canvasRect();
+      const bv = useStore.getState().boardView;
+      const px = (e.clientX - rect.left - bv.x) / scale;
+      const py = (e.clientY - rect.top - bv.y) / scale;
       const ang = Math.atan2(py - d.cyBoard, px - d.cxBoard) * 180 / Math.PI + 90;
-      setLocal({ x: d.ox, y: d.oy, w: d.ow, h: d.oh, rotation: Math.round(ang) });
+      t = { x: d.ox, y: d.oy, w: d.ow, h: d.oh, rotation: Math.round(ang) };
     }
+    d.cur = t;
+    setLocal(t);
   }
   function onPointerUp() {
     const d = drag.current;
     drag.current = null;
-    if (!d || !local) return;
+    setDragging(false);
+    if (!d) return;
+    const t = d.cur;
     if (d.mode === 'move') {
-      let nx = local.x, ny = local.y;
+      let nx = t.x, ny = t.y;
       if (piece.lockedToGrid || grid.snap) {
-        nx = snapTo(local.x, grid.cell, grid.offsetX);
-        ny = snapTo(local.y, grid.cell, grid.offsetY);
-        setLocal({ ...local, x: nx, y: ny });
+        nx = snapTo(t.x, grid.cell, grid.offsetX);
+        ny = snapTo(t.y, grid.cell, grid.offsetY);
+        setLocal({ ...t, x: nx, y: ny });
       }
       sendWs({ type: 'pieceMove', id: piece.id, x: nx, y: ny });
     } else if (d.mode === 'resize') {
-      sendWs({ type: 'pieceUpdate', id: piece.id, w: Math.round(local.w), h: Math.round(local.h) });
+      sendWs({ type: 'pieceUpdate', id: piece.id, w: Math.round(t.w), h: Math.round(t.h) });
     } else {
-      sendWs({ type: 'pieceUpdate', id: piece.id, rotation: local.rotation });
+      sendWs({ type: 'pieceUpdate', id: piece.id, rotation: t.rotation });
     }
   }
 
@@ -572,8 +589,9 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
         touchAction: 'none', userSelect: 'none',
       }}
       onPointerDown={onPointerDown}
-      onPointerMove={drag.current ? onPointerMove : undefined}
-      onPointerUp={drag.current ? onPointerUp : undefined}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
       {piece.builtin ? (
         <div style={{ width: '100%', height: '100%' }} dangerouslySetInnerHTML={{ __html: inkSprite(piece.builtin, 32, 0) }} />
@@ -581,9 +599,13 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
         <img src={piece.imageUrl} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} />
       ) : null}
 
-      {selected && interactive && !drag.current && (
+      {/* Persistent selection ring so it's clear a piece is selected. */}
+      {selected && interactive && (
+        <div style={{ position: 'absolute', inset: -2 / scale, border: `${Math.max(1, 2 / scale)}px solid var(--ember)`, boxShadow: '0 0 0 1px #fff8', pointerEvents: 'none', borderRadius: 2 / scale }} />
+      )}
+
+      {selected && interactive && !dragging && (
         <>
-          <div style={{ position: 'absolute', inset: 0, border: `${Math.max(1, 2 / scale)}px solid var(--ember)`, boxShadow: '0 0 0 1px #fff8', pointerEvents: 'none' }} />
           {/* rotate grip */}
           <div
             onPointerDown={startRotate}
@@ -662,15 +684,29 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   }
 
   const [view, setViewInternal] = useState<BoardView>({ x: 0, y: 0, scale: 1 });
+  // Keep at least part of the bounded map in view — no panning into the void.
+  const clampView = useCallback((v: BoardView): BoardView => {
+    const c = containerRef.current;
+    if (!c) return v;
+    const cell = useStore.getState().grid.cell;
+    const S = MAP_CELLS * cell * v.scale;
+    const keepX = Math.min(c.clientWidth * 0.5, S);
+    const keepY = Math.min(c.clientHeight * 0.5, S);
+    return {
+      scale: v.scale,
+      x: Math.min(c.clientWidth - keepX, Math.max(keepX - S, v.x)),
+      y: Math.min(c.clientHeight - keepY, Math.max(keepY - S, v.y)),
+    };
+  }, []);
   const setView = useCallback(
     (updater: BoardView | ((prev: BoardView) => BoardView)) => {
       setViewInternal((prev) => {
-        const next = typeof updater === 'function' ? updater(prev) : updater;
+        const next = clampView(typeof updater === 'function' ? updater(prev) : updater);
         setBoardView(next);
         return next;
       });
     },
-    [setBoardView],
+    [setBoardView, clampView],
   );
 
   const draggingCanvas = useRef(false);
@@ -701,13 +737,23 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   // Fit helper
   // ---------------------------------------------------------------------------
 
+  // Centre the bounded map area at a scale showing ~45 cells.
+  function fitCanvas() {
+    const container = containerRef.current;
+    if (!container) return;
+    const { clientWidth: cw, clientHeight: ch } = container;
+    const scale = clampScale(Math.min(cw, ch) / (45 * grid.cell));
+    const mid = (MAP_CELLS * grid.cell) / 2;
+    setView({ scale, x: cw / 2 - mid * scale, y: ch / 2 - mid * scale });
+  }
+
   function fitBoard() {
     const container = containerRef.current;
     if (!container) return;
     const { clientWidth: cw, clientHeight: ch } = container;
 
     if (board.length === 0) {
-      setView({ x: 0, y: 0, scale: 1 });
+      fitCanvas();
       return;
     }
 
@@ -734,10 +780,9 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 
   const fittedOnce = useRef(false);
   useEffect(() => {
-    if (!fittedOnce.current && board.length > 0) {
-      fittedOnce.current = true;
-      fitBoard();
-    }
+    if (fittedOnce.current) return;
+    fittedOnce.current = true;
+    if (board.length > 0) fitBoard(); else fitCanvas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board.length]);
 
@@ -887,15 +932,18 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       onWheel={handleWheel}
       aria-label="Campaign map canvas"
     >
-      {/* Background stage — sits BELOW the grid so the grid shows on the map */}
+      {/* Background stage — sits BELOW the grid so the grid shows on the map.
+          In build mode the DM can move/resize the background too. */}
       <div style={stageStyle}>
         {(layerVisible.background) && sortedItems.map((item) => (
-          <BoardItemEl key={item.id} item={item} isDm={isDm && !isBuild} scale={view.scale} />
+          <BoardItemEl key={item.id} item={item} isDm={isDm} scale={view.scale} />
         ))}
       </div>
 
-      {/* Dynamic grid (screen-space, follows pan + zoom) — above the background */}
-      <GridLayer grid={grid} view={view} />
+      {/* Bounded grid (board space) — a finite MAP_CELLS × MAP_CELLS play area */}
+      <div style={stageStyle}>
+        <BoundedGrid grid={grid} />
+      </div>
 
       {/* Content stage — pieces + tokens live ABOVE the grid */}
       <div style={stageStyle}>
@@ -1004,23 +1052,23 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Grid layer — screen-space repeating lines driven by grid state + view
+// Bounded grid — a finite MAP_CELLS × MAP_CELLS box in board space
 // ---------------------------------------------------------------------------
 
-function GridLayer({ grid, view }: { grid: GridState; view: BoardView }) {
+export const MAP_SIZE = (cell: number) => MAP_CELLS * cell;
+
+function BoundedGrid({ grid }: { grid: GridState }) {
   if (!grid.visible) return null;
-  const size = grid.cell * view.scale;
-  if (size < 4) return null; // too dense to be useful when zoomed far out
-  const offX = ((view.x + grid.offsetX * view.scale) % size + size) % size;
-  const offY = ((view.y + grid.offsetY * view.scale) % size + size) % size;
+  const S = MAP_CELLS * grid.cell;
   return (
     <div
       aria-hidden="true"
       style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none',
+        position: 'absolute', left: 0, top: 0, width: S, height: S, pointerEvents: 'none',
         backgroundImage: `linear-gradient(0deg, ${grid.color} 1px, transparent 1px), linear-gradient(90deg, ${grid.color} 1px, transparent 1px)`,
-        backgroundSize: `${size}px ${size}px, ${size}px ${size}px`,
-        backgroundPosition: `${offX}px ${offY}px, ${offX}px ${offY}px`,
+        backgroundSize: `${grid.cell}px ${grid.cell}px, ${grid.cell}px ${grid.cell}px`,
+        // The playable area border helps orient against the dark void around it.
+        outline: '2px solid #ffffff2e',
       }}
     />
   );

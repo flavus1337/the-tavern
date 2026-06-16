@@ -5,6 +5,7 @@ import type { GenKind } from '../../store';
 import { api, apiUpload, ApiRequestError } from '../../lib/api';
 import { Button } from '../ui/button';
 import { INK_LIBRARY } from '../../lib/inkArt';
+import { centredPlacement } from '../../lib/view';
 
 function sendWs(msg: ClientMessage): void {
   const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
@@ -76,9 +77,11 @@ export function GenDialog() {
     try {
       const asset = await commitAsset(img.base64);
       if (asset && kind === 'background') {
-        // Scale the MAP (not the grid) so it's exactly 40 cells wide at the
-        // current cell size; keep the grid aligned + clearly visible.
-        sendWs({ type: 'boardAdd', assetId: asset.id, x: 0, y: 0, w: 40 * grid.cell });
+        // Scale the MAP (not the grid) to 40 cells wide and drop it centred in
+        // the current view, grid-aligned; keep the grid clearly visible.
+        const w = 40 * grid.cell;
+        const p = centredPlacement(w, w);
+        sendWs({ type: 'boardAdd', assetId: asset.id, x: p.x, y: p.y, w });
         sendWs({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
       }
       close(null); // prop assets appear in the palette via assetsUpdated
