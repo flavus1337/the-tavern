@@ -35,6 +35,12 @@ const FIT_MARGIN = 0.9;
 // The board is a finite MAP_CELLS × MAP_CELLS square (no endless panning).
 const MAP_CELLS = 120;
 
+// Keep a w×h object's top-left inside the board square — nothing leaves the field.
+function clampToBoard(x: number, y: number, w: number, h: number, cell: number): { x: number; y: number } {
+  const S = MAP_CELLS * cell;
+  return { x: Math.min(Math.max(0, x), Math.max(0, S - w)), y: Math.min(Math.max(0, y), Math.max(0, S - h)) };
+}
+
 interface CanvasViewerProps {
   children?: ReactNode;
 }
@@ -392,8 +398,9 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active }: TokenElProps)
     if (grid.snap && !d.alt) {
       nx = snapTo(localPos.x, grid.cell, grid.offsetX);
       ny = snapTo(localPos.y, grid.cell, grid.offsetY);
-      setLocalPos({ x: nx, y: ny });
     }
+    ({ x: nx, y: ny } = clampToBoard(nx, ny, px, px, grid.cell));
+    setLocalPos({ x: nx, y: ny });
     sendWs({ type: 'tokenMove', tokenId: token.id, x: nx, y: ny });
   }
 
@@ -551,6 +558,10 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
       const ang = Math.atan2(py - d.cyBoard, px - d.cxBoard) * 180 / Math.PI + 90;
       t = { x: d.ox, y: d.oy, w: d.ow, h: d.oh, rotation: Math.round(ang) };
     }
+    if (d.mode === 'move') {
+      const cl = clampToBoard(t.x, t.y, t.w, t.h, grid.cell);
+      t = { ...t, x: cl.x, y: cl.y };
+    }
     d.cur = t;
     setLocal(t);
   }
@@ -565,8 +576,9 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
       if (piece.lockedToGrid || grid.snap) {
         nx = snapTo(t.x, grid.cell, grid.offsetX);
         ny = snapTo(t.y, grid.cell, grid.offsetY);
-        setLocal({ ...t, x: nx, y: ny });
       }
+      ({ x: nx, y: ny } = clampToBoard(nx, ny, t.w, t.h, grid.cell));
+      setLocal({ ...t, x: nx, y: ny });
       sendWs({ type: 'pieceMove', id: piece.id, x: nx, y: ny });
     } else if (d.mode === 'resize') {
       sendWs({ type: 'pieceUpdate', id: piece.id, w: Math.round(t.w), h: Math.round(t.h) });
@@ -695,19 +707,20 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   }
 
   const [view, setViewInternal] = useState<BoardView>({ x: 0, y: 0, scale: 1 });
-  // Keep at least part of the bounded map in view — no panning into the void.
+  // The board is a hard boundary: can't zoom out past it fitting, can't pan past its edges.
   const clampView = useCallback((v: BoardView): BoardView => {
     const c = containerRef.current;
     if (!c) return v;
     const cell = useStore.getState().grid.cell;
-    const S = MAP_CELLS * cell * v.scale;
-    const keepX = Math.min(c.clientWidth * 0.5, S);
-    const keepY = Math.min(c.clientHeight * 0.5, S);
-    return {
-      scale: v.scale,
-      x: Math.min(c.clientWidth - keepX, Math.max(keepX - S, v.x)),
-      y: Math.min(c.clientHeight - keepY, Math.max(keepY - S, v.y)),
-    };
+    const S0 = MAP_CELLS * cell;
+    const cw = c.clientWidth, ch = c.clientHeight;
+    const fitScale = Math.min(cw / S0, ch / S0); // whole board visible — no zooming out further
+    const scale = Math.min(SCALE_MAX, Math.max(fitScale, v.scale));
+    const S = S0 * scale;
+    // Edges flush when the board overflows the viewport; centred when it fits.
+    const clampAxis = (pos: number, vp: number) =>
+      S >= vp ? Math.min(0, Math.max(vp - S, pos)) : (vp - S) / 2;
+    return { scale, x: clampAxis(v.x, cw), y: clampAxis(v.y, ch) };
   }, []);
   const setView = useCallback(
     (updater: BoardView | ((prev: BoardView) => BoardView)) => {
