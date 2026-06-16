@@ -963,7 +963,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 
       {/* Bounded grid (board space) — a finite MAP_CELLS × MAP_CELLS play area */}
       <div style={stageStyle}>
-        <BoundedGrid grid={grid} />
+        <BoundedGrid grid={grid} scale={view.scale} />
       </div>
 
       {/* Content stage — pieces + tokens live ABOVE the grid */}
@@ -1078,18 +1078,23 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 
 export const MAP_SIZE = (cell: number) => MAP_CELLS * cell;
 
-function BoundedGrid({ grid }: { grid: GridState }) {
+function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
   if (!grid.visible) return null;
   const S = MAP_CELLS * grid.cell;
+  // Draw lines 1/scale board-px wide so that, once the stage scales by `scale`,
+  // every line is exactly 1 screen-px. A flat `1px` board line becomes a
+  // sub-pixel fraction at most zooms and flickers into a stray "weird line"
+  // wherever it happens to snap to a device-pixel boundary.
+  const lw = 1 / scale;
   return (
     <div
       aria-hidden="true"
       style={{
         position: 'absolute', left: 0, top: 0, width: S, height: S, pointerEvents: 'none',
-        backgroundImage: `linear-gradient(0deg, ${grid.color} 1px, transparent 1px), linear-gradient(90deg, ${grid.color} 1px, transparent 1px)`,
+        backgroundImage: `linear-gradient(0deg, ${grid.color} ${lw}px, transparent ${lw}px), linear-gradient(90deg, ${grid.color} ${lw}px, transparent ${lw}px)`,
         backgroundSize: `${grid.cell}px ${grid.cell}px, ${grid.cell}px ${grid.cell}px`,
         // The playable area border helps orient against the dark void around it.
-        outline: '2px solid #ffffff2e',
+        outline: `${Math.max(1, 2 / scale)}px solid #ffffff2e`,
       }}
     />
   );
