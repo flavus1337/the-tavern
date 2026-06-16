@@ -1102,40 +1102,74 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 
 export const MAP_SIZE = (cell: number) => MAP_CELLS * cell;
 
+// The "Lit Table" frame — a leather gaming table around the play field, per the
+// design handoff. The field [0,S] is the recessed felt; the rim is painted just
+// outside it. Everything is sized in `u` = one screen-pixel (1/scale) so the rim
+// keeps the handoff's exact proportions (14px rim, brass reveal, bolts) at any
+// zoom while sitting flush to the felt. The felt stays transparent so the map
+// below shows through — the wood ring is masked to the rim only.
 function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
-  if (!grid.visible) return null;
   const S = MAP_CELLS * grid.cell;
-  // Draw lines 1/scale board-px wide so that, once the stage scales by `scale`,
-  // every line is exactly 1 screen-px. A flat `1px` board line becomes a
-  // sub-pixel fraction at most zooms and flickers into a stray "weird line"
-  // wherever it happens to snap to a device-pixel boundary.
-  const lw = 1 / scale;
-  // `u` = one screen-pixel in board units, so the table edge keeps a constant
-  // visual weight at any zoom. The play area is the field box [0,S]; the wooden
-  // frame is painted just outside it with stacked spread-shadows: a warm
-  // candlelit lip, a few wood tones stepping darker for a bevelled moulding,
-  // then a soft cast shadow so the table sits above the dark void.
   const u = 1 / scale;
-  const tableEdge = [
-    `inset 0 0 ${10 * u}px ${0}px #00000047`,   // play area gently recessed
-    `0 0 0 ${1 * u}px #f0c98a66`,               // warm inner lip catching the candlelight
-    `0 0 0 ${3 * u}px #8a5e36`,                 // light wood bevel
-    `0 0 0 ${11 * u}px #5d3f25`,                // main plank tone
-    `0 0 0 ${16 * u}px #3a2616`,                // shaded wood
-    `0 0 0 ${18 * u}px #150c06`,                // dark outer rim
-    `0 ${10 * u}px ${28 * u}px ${4 * u}px #000000bf`, // table casts onto the void
-  ].join(', ');
+  const rim = 14 * u;
+  const FW = S + 2 * rim;
+
+  const gridBg: React.CSSProperties = grid.visible
+    ? {
+        backgroundImage: `linear-gradient(0deg, ${grid.color} ${u}px, transparent ${u}px), linear-gradient(90deg, ${grid.color} ${u}px, transparent ${u}px)`,
+        backgroundSize: `${grid.cell}px ${grid.cell}px, ${grid.cell}px ${grid.cell}px`,
+      }
+    : {};
+
+  const ringMask = `linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)`;
+  const bolt = (corner: React.CSSProperties): React.CSSProperties => ({
+    position: 'absolute', width: 13 * u, height: 13 * u, borderRadius: '50%', zIndex: 2,
+    background: 'radial-gradient(circle at 36% 30%, #f5d790, #bd8e44 52%, #6f4e22)',
+    boxShadow: `0 ${u}px ${2 * u}px #000000aa, inset 0 ${u}px ${u}px #ffe7af, inset 0 -${u}px ${2 * u}px #00000088`,
+    ...corner,
+  });
+
   return (
     <div
       aria-hidden="true"
       style={{
-        position: 'absolute', left: 0, top: 0, width: S, height: S, pointerEvents: 'none',
-        backgroundImage: `linear-gradient(0deg, ${grid.color} ${lw}px, transparent ${lw}px), linear-gradient(90deg, ${grid.color} ${lw}px, transparent ${lw}px)`,
-        backgroundSize: `${grid.cell}px ${grid.cell}px, ${grid.cell}px ${grid.cell}px`,
-        borderRadius: `${5 * u}px`,
-        boxShadow: tableEdge,
+        position: 'absolute', left: -rim, top: -rim, width: FW, height: FW, pointerEvents: 'none',
+        borderRadius: 28 * u,
+        // Tight contact edge + the two deep shadows that float the table over the room.
+        boxShadow: `0 ${u}px 0 ${u}px #00000070, 0 ${34 * u}px ${60 * u}px -${22 * u}px #000000dd, 0 ${90 * u}px ${120 * u}px -${50 * u}px #000000aa`,
       }}
-    />
+    >
+      {/* Wood rim — filled leather, masked to the rim ring so the felt stays clear. */}
+      <div style={{
+        position: 'absolute', inset: 0, borderRadius: 'inherit', padding: rim, boxSizing: 'border-box',
+        background: 'linear-gradient(180deg, #5a2f27 0%, #3c1c17 42%, #24100d 100%), #33170f',
+        boxShadow: `inset 0 ${2 * u}px 0 #9a564455, inset 0 -${14 * u}px ${26 * u}px -${10 * u}px #00000099, inset 0 0 0 ${u}px #00000040`,
+        WebkitMask: ringMask, WebkitMaskComposite: 'xor', mask: ringMask, maskComposite: 'exclude',
+      }}>
+        {/* leather grain */}
+        <div style={{ position: 'absolute', inset: 0, borderRadius: 'inherit',
+          background: `radial-gradient(#0000000d ${u}px, transparent ${1.4 * u}px)`, backgroundSize: `${5 * u}px ${5 * u}px`,
+          opacity: 0.6, mixBlendMode: 'soft-light' }} />
+        {/* stitched seam */}
+        <div style={{ position: 'absolute', inset: rim - 11 * u, borderRadius: 16 * u,
+          border: `${1.5 * u}px dashed #caa06866`, opacity: 0.8 }} />
+      </div>
+
+      {/* Recessed felt — the play field. Transparent (map shows through); the
+          rim casts a shadow onto it and a brass reveal line rings its edge. */}
+      <div style={{
+        position: 'absolute', left: rim, top: rim, width: S, height: S,
+        borderRadius: 13 * u, overflow: 'hidden',
+        boxShadow: `0 0 0 ${1.5 * u}px #caa06877, 0 0 0 ${4 * u}px #00000073, inset 0 ${14 * u}px ${30 * u}px -${8 * u}px #000000cc, inset 0 -${2 * u}px ${14 * u}px -${4 * u}px #00000080, inset 0 0 0 ${u}px #00000080`,
+        ...gridBg,
+      }} />
+
+      {/* corner bolts */}
+      <span style={bolt({ top: rim / 2, left: rim / 2, transform: 'translate(-50%,-50%)' })} />
+      <span style={bolt({ top: rim / 2, right: rim / 2, transform: 'translate(50%,-50%)' })} />
+      <span style={bolt({ bottom: rim / 2, left: rim / 2, transform: 'translate(-50%,50%)' })} />
+      <span style={bolt({ bottom: rim / 2, right: rim / 2, transform: 'translate(50%,50%)' })} />
+    </div>
   );
 }
 
