@@ -132,6 +132,10 @@ export class TableConnection {
         store.setUploadsLocked(msg.uploadsLocked);
         break;
 
+      case 'mapLockUpdated':
+        store.setMapLocked(msg.locked);
+        break;
+
       case 'rollResult':
         store.addRollEntry(msg.entry);
         break;

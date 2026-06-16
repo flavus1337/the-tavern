@@ -61,6 +61,8 @@ export interface MapTemplate {
 export interface RuntimeState {
   board: BoardItem[];
   uploadsLocked: boolean;
+  /** when true the background/board is locked from moving — even for the DM */
+  mapLocked: boolean;
   /** documents explicitly shared with the table — visible/fetchable by all members */
   sharedDocumentIds: string[];
   tokens: Token[];
@@ -95,6 +97,7 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
   let state: RuntimeState = {
     board: [],
     uploadsLocked: false,
+    mapLocked: false,
     sharedDocumentIds: [],
     tokens: [],
     grid: { ...DEFAULT_GRID },
@@ -155,6 +158,7 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     state = {
       board,
       uploadsLocked: typeof parsed['uploadsLocked'] === 'boolean' ? parsed['uploadsLocked'] : false,
+      mapLocked: typeof parsed['mapLocked'] === 'boolean' ? parsed['mapLocked'] : false,
       sharedDocumentIds: Array.isArray(parsed['sharedDocumentIds'])
         ? (parsed['sharedDocumentIds'] as string[])
         : [],

@@ -199,6 +199,12 @@ export interface ClientSetUploadsLockedPayload {
   locked: boolean;
 }
 
+export interface ClientSetMapLockedPayload {
+  type: 'setMapLocked';
+  /** DM only: when true nobody (including the DM) can move/resize the background */
+  locked: boolean;
+}
+
 export interface ClientSetDocumentSharingPayload {
   type: 'setDocumentSharing';
   /** must reference an assetKind 'document' asset; owner or DM may change it */
@@ -355,6 +361,7 @@ export type ClientMessage =
   | ClientBoardRemovePayload
   | ClientBoardSetAccessPayload
   | ClientSetUploadsLockedPayload
+  | ClientSetMapLockedPayload
   | ClientSetDocumentSharingPayload
   | ClientSaveNotePayload
   | ClientDeleteNotePayload
@@ -400,6 +407,8 @@ export interface ServerSnapshotPayload {
   /** Board items currently pinned. */
   board: BoardItemView[];
   uploadsLocked: boolean;
+  /** when true the background is locked — nobody (incl. DM) can move/resize it */
+  mapLocked: boolean;
   presence: PresenceEntry[];
   /** All campaign members (online or not) — for share pickers + owner dropdowns. */
   members: MemberEntry[];
@@ -439,6 +448,11 @@ export interface ServerBoardUpdatedPayload {
 export interface ServerSettingsUpdatedPayload {
   type: 'settingsUpdated';
   uploadsLocked: boolean;
+}
+
+export interface ServerMapLockUpdatedPayload {
+  type: 'mapLockUpdated';
+  locked: boolean;
 }
 
 export interface ServerRollResultPayload {
@@ -547,6 +561,7 @@ export type ServerMessage =
   | ServerPresencePayload
   | ServerBoardUpdatedPayload
   | ServerSettingsUpdatedPayload
+  | ServerMapLockUpdatedPayload
   | ServerRollResultPayload
   | ServerAssetsUpdatedPayload
   | ServerDocumentsUpdatedPayload

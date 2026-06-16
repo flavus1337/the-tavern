@@ -101,6 +101,9 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
       case 'setUploadsLocked':
         await handleSetUploadsLocked(session, msg);
         break;
+      case 'setMapLocked':
+        await handleSetMapLocked(session, msg);
+        break;
       case 'setDocumentSharing':
         await handleSetDocumentSharing(session, msg);
         break;
@@ -316,6 +319,12 @@ async function handleBoardMove(
     return;
   }
 
+  // A locked map can't be moved by anyone — not even the DM (unlock first).
+  if (entry.runtime.state.mapLocked) {
+    sendError(session, 'FORBIDDEN', 'The map is locked');
+    return;
+  }
+
   // DM always; players only when the DM unlocked this item for them.
   if (session.role !== 'dm' && !entry.runtime.state.board[idx]!.playersCanMove) {
     sendError(session, 'FORBIDDEN', 'The DM has not unlocked this item for players');
@@ -405,6 +414,25 @@ async function handleSetUploadsLocked(
   await persistState(entry.runtime);
 
   broadcast(campaignId, { type: 'settingsUpdated', uploadsLocked: msg.locked });
+}
+
+async function handleSetMapLocked(
+  session: WsSession,
+  msg: { type: 'setMapLocked'; locked: boolean },
+): Promise<void> {
+  if (session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', 'Only the DM can lock the map');
+    return;
+  }
+
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+
+  entry.runtime.state = { ...entry.runtime.state, mapLocked: msg.locked };
+  await persistState(entry.runtime);
+
+  broadcast(campaignId, { type: 'mapLockUpdated', locked: msg.locked });
 }
 
 async function handleSetDocumentSharing(

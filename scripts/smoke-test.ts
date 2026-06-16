@@ -2047,6 +2047,41 @@ async function main(): Promise<void> {
       }
     }
 
+    // O8–O10: map lock blocks board moves for everyone, including the DM.
+    send(adminWsO, { type: 'boardAdd', assetId, x: 0, y: 0 });
+    let lockItemId = '';
+    try {
+      const bu = await waitForMessage(
+        adminMsgsO,
+        (m) => m['type'] === 'boardUpdated' && (m['items'] as Array<{ assetId?: string }>).some((it) => it.assetId === assetId),
+        3000,
+      );
+      lockItemId = (bu['items'] as Array<{ id?: string; assetId?: string }>).find((it) => it.assetId === assetId)?.id ?? '';
+    } catch { fail('O8-pre: board item pinned for lock test', 'timeout'); }
+
+    send(adminWsO, { type: 'setMapLocked', locked: true });
+    try {
+      const lk = await waitForMessage(p1MsgsO, (m) => m['type'] === 'mapLockUpdated' && m['locked'] === true, 3000);
+      assert(!!lk, 'O8: setMapLocked broadcasts mapLockUpdated');
+    } catch { fail('O8: mapLockUpdated', 'timeout'); }
+
+    if (lockItemId) {
+      send(adminWsO, { type: 'boardMove', itemId: lockItemId, x: 99, y: 99, w: 400 });
+      try {
+        const forb = await waitForMessage(adminMsgsO, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN' && String(m['message']).includes('locked'), 2000);
+        assert(forb['code'] === 'FORBIDDEN', 'O9: DM boardMove on a locked map → FORBIDDEN');
+      } catch { fail('O9: locked map blocks DM move', 'timeout'); }
+
+      send(adminWsO, { type: 'setMapLocked', locked: false });
+      await waitForMessage(adminMsgsO, (m) => m['type'] === 'mapLockUpdated' && m['locked'] === false, 3000);
+      send(adminWsO, { type: 'boardMove', itemId: lockItemId, x: 50, y: 50, w: 400 });
+      try {
+        await waitForMessage(adminMsgsO, (m) => m['type'] === 'boardUpdated' && (m['items'] as Array<{ id?: string; x?: number }>).some((it) => it.id === lockItemId && it.x === 50), 3000);
+        pass('O10: unlocking the map lets the DM move it again');
+      } catch { fail('O10: unlock restores move', 'timeout'); }
+      send(adminWsO, { type: 'boardRemove', itemId: lockItemId });
+    }
+
     adminWsO.close();
     p1WsO.close();
 

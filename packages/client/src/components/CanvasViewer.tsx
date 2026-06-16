@@ -58,8 +58,10 @@ interface BoardItemProps {
 
 function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
   const [hovered, setHovered] = useState(false);
-  // DM always; players only when the DM unlocked this item.
-  const canManipulate = isDm || item.playersCanMove;
+  const mapLocked = useStore((s) => s.mapLocked);
+  // DM always; players only when the DM unlocked this item. A locked map blocks
+  // everyone (including the DM).
+  const canManipulate = (isDm || item.playersCanMove) && !mapLocked;
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
   const [localW, setLocalW] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);

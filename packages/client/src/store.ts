@@ -146,6 +146,8 @@ interface TableSlice {
   members: MemberEntry[];
   board: BoardItemView[];
   uploadsLocked: boolean;
+  /** when true the background is locked from moving — even for the DM */
+  mapLocked: boolean;
   /** View transform shared across the whole board (pan + zoom). */
   boardView: BoardView;
   rollLog: RollLogEntry[];
@@ -203,6 +205,7 @@ interface TableSlice {
   setPresence: (entries: PresenceEntry[]) => void;
   setBoard: (items: BoardItemView[]) => void;
   setUploadsLocked: (locked: boolean) => void;
+  setMapLocked: (locked: boolean) => void;
   setBoardView: (view: BoardView) => void;
   addRollEntry: (entry: RollLogEntry) => void;
   dismissRollToast: (id: string) => void;
@@ -262,6 +265,7 @@ const tableDefaults = {
   members: [] as MemberEntry[],
   board: [] as BoardItemView[],
   uploadsLocked: false,
+  mapLocked: false,
   boardView: { x: 0, y: 0, scale: 1 } as BoardView,
   rollLog: [],
   assets: null,
@@ -348,6 +352,7 @@ export const useStore = create<StoreState>()((set) => ({
       campaignName: snap.campaign.name,
       board: snap.board,
       uploadsLocked: snap.uploadsLocked,
+      mapLocked: snap.mapLocked,
       presence: snap.presence,
       members: snap.members,
       rollLog: snap.rollLog.slice(0, ROLL_LOG_MAX),
@@ -366,6 +371,7 @@ export const useStore = create<StoreState>()((set) => ({
   setPresence: (entries) => set({ presence: entries }),
   setBoard: (items) => set({ board: items }),
   setUploadsLocked: (locked) => set({ uploadsLocked: locked }),
+  setMapLocked: (locked) => set({ mapLocked: locked }),
   setBoardView: (view) => set({ boardView: view }),
 
   addRollEntry: (entry) =>

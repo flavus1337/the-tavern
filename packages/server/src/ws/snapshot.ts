@@ -133,6 +133,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     },
     board,
     uploadsLocked: runtime.state.uploadsLocked,
+    mapLocked: runtime.state.mapLocked,
     presence,
     members,
     rollLog,

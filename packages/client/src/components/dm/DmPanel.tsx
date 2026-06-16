@@ -65,6 +65,7 @@ const GRID_COLORS = ['#ffffff22', '#ffffff44', '#e08a4b55', '#69b7a655', '#00000
 
 function BoardControls() {
   const grid = useStore((s) => s.grid);
+  const mapLocked = useStore((s) => s.mapLocked);
   const openTokenPanel = useStore((s) => s.openTokenPanel);
   const connection = useStore((s) => s.connection);
   const disabled = connection !== 'open';
@@ -84,6 +85,8 @@ function BoardControls() {
       >
         + Add token
       </button>
+
+      <Toggle label="Lock map" checked={mapLocked} onChange={(v) => sendWs({ type: 'setMapLocked', locked: v })} disabled={disabled} />
 
       <div className="space-y-3">
         <p className="eyebrow">Grid</p>
