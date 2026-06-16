@@ -6,8 +6,8 @@
    the camera. Lazy-loaded so three stays out of the initial bundle.
    ============================================================ */
 import * as THREE from 'three';
-import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
-import { diceGrid, DICE_SPACING, DICE_ROWGAP } from './diceLayout';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import { diceGrid, DICE_SPACING, DICE_ROWGAP } from './diceLayout.js';
 
 /** A real d10 / d100 die: the 10-faced pentagonal trapezohedron, as a convex hull. */
 function d10Geometry(): THREE.BufferGeometry {
