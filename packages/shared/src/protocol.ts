@@ -305,8 +305,14 @@ export interface ClientSetGridPayload {
   grid: Partial<GridState>;
 }
 
+/** A ruler or D&D AoE template. All shapes are defined by an origin (x1,y1) and
+ *  a dragged-to point (x2,y2): ruler = line+distance, circle = centre+radius,
+ *  cone = apex+length (5e: far-edge width == length), line = origin+length (1
+ *  cell wide), square = centre+half-extent. Ephemeral — broadcast, never saved. */
+export type MeasureKind = 'ruler' | 'circle' | 'cone' | 'line' | 'square';
+
 export type ClientMeasurePayload =
-  | { type: 'measure'; kind: 'ruler'; x1: number; y1: number; x2: number; y2: number }
+  | { type: 'measure'; kind: MeasureKind; x1: number; y1: number; x2: number; y2: number }
   | { type: 'measure'; kind: 'clear' };
 
 // Map piece messages — DM only.
@@ -538,7 +544,7 @@ export interface ServerTemplatesUpdatedPayload {
 }
 
 export type ServerMeasureSharedPayload =
-  | { type: 'measureShared'; kind: 'ruler'; x1: number; y1: number; x2: number; y2: number; by: string }
+  | { type: 'measureShared'; kind: MeasureKind; x1: number; y1: number; x2: number; y2: number; by: string }
   | { type: 'measureShared'; kind: 'clear'; by: string };
 
 export type WsErrorCode =

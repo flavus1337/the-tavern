@@ -190,7 +190,7 @@ export class TableConnection {
           store.clearSharedMeasure(msg.by);
         } else {
           store.setSharedMeasure(msg.by, {
-            kind: 'ruler',
+            kind: msg.kind,
             x1: msg.x1, y1: msg.y1, x2: msg.x2, y2: msg.y2,
             by: msg.by,
           });

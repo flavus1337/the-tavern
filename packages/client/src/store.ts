@@ -14,6 +14,7 @@ import type {
   MapPiece,
   MapMeta,
   MapTemplateSummary,
+  MeasureKind,
 } from '@vtt/shared';
 
 /** A transient join-notification toast */
@@ -28,18 +29,25 @@ export interface ShareToast {
   docTitle: string;
 }
 
-/** Shared measurement from another user */
-export interface SharedMeasure {
-  kind: 'ruler';
+/** A ruler or AoE template, owned or shared, in board-space coords. */
+export interface OwnMeasure {
+  kind: MeasureKind;
   x1: number;
   y1: number;
   x2: number;
   y2: number;
+}
+
+/** Shared measurement from another user */
+export interface SharedMeasure extends OwnMeasure {
   by: string;
 }
 
+/** D&D AoE template shapes selectable under the AoE tool. */
+export type AoeShape = Exclude<MeasureKind, 'ruler'>;
+
 /** Active board interaction tool (local UI — not broadcast) */
-export type BoardTool = 'select' | 'move' | 'measure' | 'stamp' | 'erase' | 'calibrate';
+export type BoardTool = 'select' | 'move' | 'measure' | 'aoe' | 'stamp' | 'erase' | 'calibrate';
 
 /** Build vs Play mode (DM-only, local UI). */
 export type EditorMode = 'play' | 'build';
@@ -175,8 +183,10 @@ interface TableSlice {
   grid: GridState;
   /** Active board tool (local UI state — not persisted or broadcast) */
   boardTool: BoardTool;
-  /** This user's own private measurement (board-space coords) */
-  ownMeasure: { x1: number; y1: number; x2: number; y2: number } | null;
+  /** Selected AoE template shape (used while the AoE tool is active) */
+  aoeShape: AoeShape;
+  /** This user's own ruler / AoE template (board-space coords) */
+  ownMeasure: OwnMeasure | null;
   /** Whether own measurement is currently shown to the table */
   ownMeasureShared: boolean;
   /** Shared measurements from other users — keyed by username */
@@ -235,7 +245,8 @@ interface TableSlice {
   setTokens: (tokens: TokenView[]) => void;
   setGrid: (grid: GridState) => void;
   setBoardTool: (tool: BoardTool) => void;
-  setOwnMeasure: (measure: { x1: number; y1: number; x2: number; y2: number } | null) => void;
+  setAoeShape: (shape: AoeShape) => void;
+  setOwnMeasure: (measure: OwnMeasure | null) => void;
   setOwnMeasureShared: (shared: boolean) => void;
   setSharedMeasure: (by: string, measure: SharedMeasure | null) => void;
   clearSharedMeasure: (by: string) => void;
@@ -282,7 +293,8 @@ const tableDefaults = {
   tokens: [] as TokenView[],
   grid: { ...DEFAULT_GRID } as GridState,
   boardTool: 'select' as BoardTool,
-  ownMeasure: null as null | { x1: number; y1: number; x2: number; y2: number },
+  aoeShape: 'circle' as AoeShape,
+  ownMeasure: null as OwnMeasure | null,
   ownMeasureShared: false,
   sharedMeasures: {} as Record<string, SharedMeasure>,
   selectedTokenId: null as string | null,
@@ -507,6 +519,7 @@ export const useStore = create<StoreState>()((set) => ({
   setTokens: (tokens) => set({ tokens }),
   setGrid: (grid) => set({ grid }),
   setBoardTool: (tool) => set({ boardTool: tool }),
+  setAoeShape: (shape) => set({ aoeShape: shape }),
   setOwnMeasure: (measure) => set({ ownMeasure: measure }),
   setOwnMeasureShared: (shared) => set({ ownMeasureShared: shared }),
   setSharedMeasure: (by, measure) =>

@@ -8,6 +8,7 @@ import type {
   Sharing,
   MapPiece,
   MapMeta,
+  MeasureKind,
 } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import { send, broadcast, broadcastPresence, getSessionsInRoom } from './hub.js';
@@ -860,31 +861,32 @@ async function handleSetGrid(
 async function handleMeasure(
   session: WsSession,
   msg: { type: 'measure' } & (
-    | { kind: 'ruler'; x1: number; y1: number; x2: number; y2: number }
+    | { kind: MeasureKind; x1: number; y1: number; x2: number; y2: number }
     | { kind: 'clear' }
   ),
 ): Promise<void> {
   const campaignId = session.campaignId!;
 
-  // Ephemeral: broadcast to all OTHER sessions in the room (like mediaControl).
-  if (msg.kind === 'ruler') {
+  // Ephemeral: broadcast rulers + AoE templates to all OTHER sessions in the
+  // room (like mediaControl). The shape `kind` is relayed verbatim.
+  if (msg.kind === 'clear') {
+    broadcast(
+      campaignId,
+      { type: 'measureShared', kind: 'clear', by: session.username },
+      (s) => s !== session,
+    );
+  } else {
     broadcast(
       campaignId,
       {
         type: 'measureShared',
-        kind: 'ruler',
+        kind: msg.kind,
         x1: msg.x1,
         y1: msg.y1,
         x2: msg.x2,
         y2: msg.y2,
         by: session.username,
       },
-      (s) => s !== session,
-    );
-  } else {
-    broadcast(
-      campaignId,
-      { type: 'measureShared', kind: 'clear', by: session.username },
       (s) => s !== session,
     );
   }

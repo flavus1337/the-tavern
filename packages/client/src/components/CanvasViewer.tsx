@@ -7,9 +7,9 @@ import {
   type PointerEvent,
 } from 'react';
 import { BOARD_CELLS, clampToField } from '@vtt/shared';
-import type { BoardItemView, ClientMessage, TokenView, GridState, MapPiece } from '@vtt/shared';
+import type { BoardItemView, ClientMessage, TokenView, GridState, MapPiece, MeasureKind } from '@vtt/shared';
 import { useStore } from '../store';
-import type { BoardView, BoardTool, EditorMode } from '../store';
+import type { BoardView, BoardTool, EditorMode, AoeShape } from '../store';
 import { BoardMoments } from './RollLog';
 import { inkSprite } from '../lib/inkArt';
 
@@ -679,7 +679,11 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const isDm = self?.role === 'dm';
   const selfUserId = self?.userId ?? null;
   const isBuild = editorMode === 'build' && isDm;
+  const aoeShape = useStore((s) => s.aoeShape);
   const measuring = boardTool === 'measure';
+  const aoeing = boardTool === 'aoe';
+  // Ruler + AoE share the same drag→broadcast machinery; this is the shape they emit.
+  const measureKind: MeasureKind | null = measuring ? 'ruler' : aoeing ? aoeShape : null;
   const stamping = isBuild && boardTool === 'stamp' && !!activePalettePiece;
   const erasing = isBuild && boardTool === 'erase';
   const calibrating = isBuild && boardTool === 'calibrate';
@@ -740,9 +744,9 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Leaving the measure tool wipes our ruler (and tells the table to drop it).
+  // Leaving the ruler/AoE tools wipes our drawing (and tells the table to drop it).
   useEffect(() => {
-    if (boardTool !== 'measure' && ownMeasure) {
+    if (boardTool !== 'measure' && boardTool !== 'aoe' && ownMeasure) {
       setOwnMeasure(null);
       sendWs({ type: 'measure', kind: 'clear' });
     }
@@ -839,11 +843,11 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       return;
     }
 
-    if (measuring) {
+    if (measureKind) {
       const p = screenToBoard(e.clientX, e.clientY);
       measuringRef.current = true;
-      setOwnMeasure({ x1: p.x, y1: p.y, x2: p.x, y2: p.y });
-      sendWs({ type: 'measure', kind: 'ruler', x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+      setOwnMeasure({ kind: measureKind, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+      sendWs({ type: 'measure', kind: measureKind, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       return;
     }
@@ -879,8 +883,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       const p = screenToBoard(e.clientX, e.clientY);
       const m = useStore.getState().ownMeasure;
       if (!m) return;
-      setOwnMeasure({ x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
-      sendWs({ type: 'measure', kind: 'ruler', x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
+      setOwnMeasure({ kind: m.kind, x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
+      sendWs({ type: 'measure', kind: m.kind, x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
       return;
     }
     if (!draggingCanvas.current) return;
@@ -922,7 +926,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const sortedTokens = [...tokens].sort((a, b) => a.z - b.z);
   const sortedPieces = [...pieces].sort((a, b) => a.z - b.z).filter((p) => layerVisible[p.layer]);
   const isEmpty = board.length === 0 && tokens.length === 0 && pieces.length === 0;
-  const cursor = measuring || stamping || erasing || calibrating ? 'crosshair' : draggingCanvas.current ? 'grabbing' : 'grab';
+  const cursor = measuring || aoeing || stamping || erasing || calibrating ? 'crosshair' : draggingCanvas.current ? 'grabbing' : 'grab';
   // Two transform stages share this transform so the grid can sit between the
   // background (below) and the pieces/tokens (above).
   const stageStyle: React.CSSProperties = {
@@ -1119,56 +1123,121 @@ function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
 // Measurement overlay — own ruler (ember) + shared rulers (teal)
 // ---------------------------------------------------------------------------
 
-interface Ruler { x1: number; y1: number; x2: number; y2: number }
+interface MeasureShape { kind: MeasureKind; x1: number; y1: number; x2: number; y2: number }
 
 function MeasureOverlay({
   view, grid, own, shared,
 }: {
   view: BoardView;
   grid: GridState;
-  own: Ruler | null;
-  shared: Record<string, { x1: number; y1: number; x2: number; y2: number; by: string }>;
+  own: MeasureShape | null;
+  shared: Record<string, MeasureShape & { by: string }>;
 }) {
   const sharedList = Object.values(shared);
   if (!own && sharedList.length === 0) return null;
 
-  const toScreen = (bx: number, by: number) => ({ x: bx * view.scale + view.x, y: by * view.scale + view.y });
+  const sc = (bx: number, by: number) => ({ x: bx * view.scale + view.x, y: by * view.scale + view.y });
   const perCell = grid.unit === 'ft' ? 5 : 1.5;
-  const label = (r: Ruler): string => {
-    const cells = Math.hypot(r.x2 - r.x1, r.y2 - r.y1) / grid.cell;
-    const dist = cells * perCell;
-    return `${dist.toFixed(grid.unit === 'ft' ? 0 : 1)} ${grid.unit}`;
-  };
+  const fmt = (cells: number) => `${(cells * perCell).toFixed(grid.unit === 'ft' ? 0 : 1)} ${grid.unit}`;
 
-  function Line({ r, shared: isShared, by }: { r: Ruler; shared?: boolean; by?: string }) {
-    const a = toScreen(r.x1, r.y1);
-    const b = toScreen(r.x2, r.y2);
-    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const cls = isShared ? 'shared' : '';
-    const txt = `${label(r)}${by ? ` · ${by}` : ''}`;
-    const fs = 17;
-    const w = Math.max(64, txt.length * fs * 0.62 + 18);
-    const h = fs + 12;
+  // A rounded label chip centred on (x,y).
+  function Pill({ x, y, txt, color }: { x: number; y: number; txt: string; color: string }) {
+    const fs = 16;
+    const w = Math.max(56, txt.length * fs * 0.6 + 16);
+    const h = fs + 11;
+    return (
+      <g transform={`translate(${x}, ${y})`}>
+        <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={7} fill="#000000cc" />
+        <text x={0} y={fs * 0.35} textAnchor="middle" fontFamily="var(--mono)" fontSize={fs} fontWeight={600} fill={color}>{txt}</text>
+      </g>
+    );
+  }
+
+  function ShapeEl({ s, isShared, by }: { s: MeasureShape; isShared?: boolean; by?: string }) {
+    const color = isShared ? 'var(--teal)' : 'var(--ember)';
+    const a = sc(s.x1, s.y1);
+    const b = sc(s.x2, s.y2);
+    const distB = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    const cells = distB / grid.cell;
+    const tag = by ? ` · ${by}` : '';
+    const area = { fill: color, fillOpacity: 0.16, stroke: color, strokeWidth: 2 } as const;
+
+    if (s.kind === 'ruler') {
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const cls = isShared ? 'shared' : '';
+      return (
+        <g>
+          <line className={`meas-line ${cls}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
+          <circle className={`meas-end ${cls}`} cx={a.x} cy={a.y} r={4} />
+          <circle className={`meas-end ${cls}`} cx={b.x} cy={b.y} r={4} />
+          <Pill x={mid.x} y={mid.y - 18} txt={`${fmt(cells)}${tag}`} color={color} />
+        </g>
+      );
+    }
+
+    if (s.kind === 'circle') {
+      const r = distB * view.scale;
+      return (
+        <g>
+          <circle cx={a.x} cy={a.y} r={r} {...area} />
+          <circle cx={a.x} cy={a.y} r={3} fill={color} />
+          <Pill x={a.x} y={a.y - r - 14} txt={`${fmt(cells)} R${tag}`} color={color} />
+        </g>
+      );
+    }
+
+    if (distB < 1) return null; // cone/line/square need a drag direction to size
+
+    const ux = (s.x2 - s.x1) / distB, uy = (s.y2 - s.y1) / distB; // unit direction
+    const px = -uy, py = ux;                                       // perpendicular
+
+    if (s.kind === 'cone') {
+      // 5e cone: at distance L the width equals L, so the far edge spans ±L/2.
+      const L = distB, hw = L / 2;
+      const fx = s.x1 + ux * L, fy = s.y1 + uy * L;
+      const p1 = sc(fx + px * hw, fy + py * hw);
+      const p2 = sc(fx - px * hw, fy - py * hw);
+      const fc = sc(fx, fy);
+      return (
+        <g>
+          <polygon points={`${a.x},${a.y} ${p1.x},${p1.y} ${p2.x},${p2.y}`} {...area} strokeLinejoin="round" />
+          <Pill x={fc.x} y={fc.y} txt={`${fmt(cells)}${tag}`} color={color} />
+        </g>
+      );
+    }
+
+    if (s.kind === 'line') {
+      const hw = grid.cell / 2; // one cell wide (5 ft / 1.5 m)
+      const ex = s.x1 + ux * distB, ey = s.y1 + uy * distB;
+      const c1 = sc(s.x1 + px * hw, s.y1 + py * hw);
+      const c2 = sc(s.x1 - px * hw, s.y1 - py * hw);
+      const c3 = sc(ex - px * hw, ey - py * hw);
+      const c4 = sc(ex + px * hw, ey + py * hw);
+      const mid = sc(s.x1 + ux * distB / 2, s.y1 + uy * distB / 2);
+      return (
+        <g>
+          <polygon points={`${c1.x},${c1.y} ${c2.x},${c2.y} ${c3.x},${c3.y} ${c4.x},${c4.y}`} {...area} strokeLinejoin="round" />
+          <Pill x={mid.x} y={mid.y} txt={`${fmt(cells)}${tag}`} color={color} />
+        </g>
+      );
+    }
+
+    // square / cube — centred on the origin, half-extent = drag distance.
+    const tl = sc(s.x1 - distB, s.y1 - distB);
+    const br = sc(s.x1 + distB, s.y1 + distB);
     return (
       <g>
-        <line className={`meas-line ${cls}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />
-        <circle className={`meas-end ${cls}`} cx={a.x} cy={a.y} r={4} />
-        <circle className={`meas-end ${cls}`} cx={b.x} cy={b.y} r={4} />
-        <g transform={`translate(${mid.x}, ${mid.y - 18})`}>
-          <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={8} fill="#000000cc" />
-          <text x={0} y={fs * 0.35} textAnchor="middle" fontFamily="var(--mono)" fontSize={fs} fontWeight={600}
-            fill={isShared ? 'var(--teal)' : 'var(--ember)'}>
-            {txt}
-          </text>
-        </g>
+        <rect x={tl.x} y={tl.y} width={br.x - tl.x} height={br.y - tl.y} {...area} />
+        <circle cx={a.x} cy={a.y} r={3} fill={color} />
+        <Pill x={a.x} y={tl.y - 14} txt={`${fmt(2 * cells)}${tag}`} color={color} />
       </g>
     );
   }
 
   return (
     <svg style={{ position: 'absolute', inset: 0, pointerEvents: 'none', width: '100%', height: '100%' }}>
-      {sharedList.map((r) => <Line key={r.by} r={r} shared by={r.by} />)}
-      {own && <Line r={own} />}
+      {sharedList.map((s) => <ShapeEl key={s.by} s={s} isShared by={s.by} />)}
+      {own && <ShapeEl s={own} />}
     </svg>
   );
 }
@@ -1180,6 +1249,8 @@ function MeasureOverlay({
 function ToolDock({ build }: { build: boolean }) {
   const boardTool = useStore((s) => s.boardTool);
   const setBoardTool = useStore((s) => s.setBoardTool);
+  const aoeShape = useStore((s) => s.aoeShape);
+  const setAoeShape = useStore((s) => s.setAoeShape);
   const openTokenPanel = useStore((s) => s.openTokenPanel);
 
   const SELECT = { id: 'select' as BoardTool, label: 'Select', icon: (
@@ -1197,20 +1268,36 @@ function ToolDock({ build }: { build: boolean }) {
   const ERASE = { id: 'erase' as BoardTool, label: 'Erase', icon: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="w-4 h-4"><path d="M6 16l-2-2a1.8 1.8 0 0 1 0-2.6l7-7a1.8 1.8 0 0 1 2.6 0l4 4a1.8 1.8 0 0 1 0 2.6L11 18H7z" strokeLinejoin="round" /><path d="M9 19h11" /></svg>
   ) };
+  const AOE = { id: 'aoe' as BoardTool, label: 'AoE', icon: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="w-4 h-4"><circle cx="12" cy="12" r="8.5" strokeDasharray="2.5 2.5" /><path d="M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z" /></svg>
+  ) };
 
   const tools: Array<{ id: BoardTool; label: string; icon: ReactNode }> = build
-    ? [SELECT, PAN, STAMP, ERASE, MEASURE]
-    : [SELECT, PAN, MEASURE];
+    ? [SELECT, PAN, STAMP, ERASE, MEASURE, AOE]
+    : [SELECT, PAN, MEASURE, AOE];
+
+  // AoE template shapes shown as a sub-row while the AoE tool is active.
+  const AOE_SHAPES: Array<{ id: AoeShape; label: string; icon: ReactNode }> = [
+    { id: 'circle', label: 'Circle / sphere', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4"><circle cx="12" cy="12" r="8" /></svg> },
+    { id: 'cone', label: 'Cone', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4"><path d="M12 4l7 16H5L12 4z" strokeLinejoin="round" /></svg> },
+    { id: 'line', label: 'Line', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4"><rect x="9.5" y="3.5" width="5" height="17" rx="1.5" /></svg> },
+    { id: 'square', label: 'Square / cube', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4"><rect x="4.5" y="4.5" width="15" height="15" rx="1.5" /></svg> },
+  ];
+
+  const rowStyle: React.CSSProperties = {
+    display: 'flex', gap: 2, background: 'var(--surface)', border: '1px solid var(--border)',
+    borderRadius: 10, padding: 4, boxShadow: '0 12px 30px -12px #000b',
+  };
 
   return (
     <div
       style={{
         position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', gap: 2, background: 'var(--surface)', border: '1px solid var(--border)',
-        borderRadius: 10, padding: 4, zIndex: 5, boxShadow: '0 12px 30px -12px #000b',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, zIndex: 5,
       }}
       onPointerDown={(e) => e.stopPropagation()}
     >
+      <div style={rowStyle}>
       {tools.map((t) => {
         const active = boardTool === t.id;
         return (
@@ -1253,6 +1340,34 @@ function ToolDock({ build }: { build: boolean }) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M12 5v14M5 12h14" strokeLinecap="round" /></svg>
         Token
       </button>}
+      </div>
+
+      {boardTool === 'aoe' && (
+        <div style={rowStyle}>
+          {AOE_SHAPES.map((sh) => {
+            const active = aoeShape === sh.id;
+            return (
+              <button
+                key={sh.id}
+                type="button"
+                onClick={() => setAoeShape(sh.id)}
+                title={sh.label}
+                aria-label={sh.label}
+                aria-pressed={active}
+                style={{
+                  display: 'flex', alignItems: 'center', padding: '6px 9px', borderRadius: 7,
+                  border: 'none', cursor: 'pointer',
+                  background: active ? 'var(--ember)' : 'transparent',
+                  color: active ? 'var(--ink)' : 'var(--mid)',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+              >
+                {sh.icon}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
