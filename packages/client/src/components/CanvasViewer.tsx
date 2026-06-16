@@ -1086,6 +1086,21 @@ function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
   // sub-pixel fraction at most zooms and flickers into a stray "weird line"
   // wherever it happens to snap to a device-pixel boundary.
   const lw = 1 / scale;
+  // `u` = one screen-pixel in board units, so the table edge keeps a constant
+  // visual weight at any zoom. The play area is the field box [0,S]; the wooden
+  // frame is painted just outside it with stacked spread-shadows: a warm
+  // candlelit lip, a few wood tones stepping darker for a bevelled moulding,
+  // then a soft cast shadow so the table sits above the dark void.
+  const u = 1 / scale;
+  const tableEdge = [
+    `inset 0 0 ${10 * u}px ${0}px #00000047`,   // play area gently recessed
+    `0 0 0 ${1 * u}px #f0c98a66`,               // warm inner lip catching the candlelight
+    `0 0 0 ${3 * u}px #8a5e36`,                 // light wood bevel
+    `0 0 0 ${11 * u}px #5d3f25`,                // main plank tone
+    `0 0 0 ${16 * u}px #3a2616`,                // shaded wood
+    `0 0 0 ${18 * u}px #150c06`,                // dark outer rim
+    `0 ${10 * u}px ${28 * u}px ${4 * u}px #000000bf`, // table casts onto the void
+  ].join(', ');
   return (
     <div
       aria-hidden="true"
@@ -1093,8 +1108,8 @@ function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
         position: 'absolute', left: 0, top: 0, width: S, height: S, pointerEvents: 'none',
         backgroundImage: `linear-gradient(0deg, ${grid.color} ${lw}px, transparent ${lw}px), linear-gradient(90deg, ${grid.color} ${lw}px, transparent ${lw}px)`,
         backgroundSize: `${grid.cell}px ${grid.cell}px, ${grid.cell}px ${grid.cell}px`,
-        // The playable area border helps orient against the dark void around it.
-        outline: `${Math.max(1, 2 / scale)}px solid #ffffff2e`,
+        borderRadius: `${5 * u}px`,
+        boxShadow: tableEdge,
       }}
     />
   );
