@@ -6,6 +6,7 @@ import {
   type ReactNode,
   type PointerEvent,
 } from 'react';
+import { BOARD_CELLS, clampToField } from '@vtt/shared';
 import type { BoardItemView, ClientMessage, TokenView, GridState, MapPiece } from '@vtt/shared';
 import { useStore } from '../store';
 import type { BoardView, BoardTool, EditorMode } from '../store';
@@ -32,14 +33,9 @@ function snapTo(value: number, cell: number, offset: number): number {
 const SCALE_MIN = 0.05;
 const SCALE_MAX = 8;
 const FIT_MARGIN = 0.9;
-// The board is a finite MAP_CELLS × MAP_CELLS square (no endless panning).
-const MAP_CELLS = 120;
-
-// Keep a w×h object's top-left inside the board square — nothing leaves the field.
-function clampToBoard(x: number, y: number, w: number, h: number, cell: number): { x: number; y: number } {
-  const S = MAP_CELLS * cell;
-  return { x: Math.min(Math.max(0, x), Math.max(0, S - w)), y: Math.min(Math.max(0, y), Math.max(0, S - h)) };
-}
+// The board is a finite BOARD_CELLS × BOARD_CELLS square (no endless panning).
+const MAP_CELLS = BOARD_CELLS;
+const clampToBoard = clampToField;
 
 interface CanvasViewerProps {
   children?: ReactNode;
@@ -134,7 +130,8 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
     const dy = (e.clientY - startClientY) / scale;
 
     if (mode === 'move') {
-      setLocalPos({ x: origX + dx, y: origY + dy });
+      const cell = useStore.getState().grid.cell;
+      setLocalPos(clampToBoard(origX + dx, origY + dy, displayW, displayH, cell));
     } else {
       const newW = Math.min(8000, Math.max(40, origW + dx));
       setLocalW(newW);

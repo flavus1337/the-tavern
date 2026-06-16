@@ -874,6 +874,22 @@ async function main(): Promise<void> {
       } catch {
         fail('E16d: player can move unlocked item', 'timeout');
       }
+
+      // E16e: server clamps an out-of-bounds move to the field origin (hard boundary).
+      send(adminWs, { type: 'boardMove', itemId: pinnedItemId, x: -99999, y: -99999, w: 500 });
+      try {
+        const clamped = await waitForMessage(
+          adminMessages,
+          (m) => m['type'] === 'boardUpdated' &&
+            (m['items'] as Array<{ id?: string; x?: number; y?: number }>).some(
+              (it) => it.id === pinnedItemId && it.x === 0 && it.y === 0,
+            ),
+          3000,
+        );
+        assert(!!clamped, 'E16e: server clamps out-of-bounds boardMove to field origin');
+      } catch {
+        fail('E16e: server clamps out-of-bounds boardMove to field origin', 'timeout');
+      }
     }
 
     if (pinnedItemId) {

@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, randomId, SCHEMA_VERSIONS, parseSharing, defaultSharing } from '@vtt/shared';
+import { PROTOCOL_VERSION, randomId, SCHEMA_VERSIONS, parseSharing, defaultSharing, clampToField } from '@vtt/shared';
 import type {
   ClientMessage,
   WsErrorCode,
@@ -29,6 +29,9 @@ function viewerOf(session: WsSession): Viewer {
 
 const BOARD_W_MIN = 40;
 const BOARD_W_MAX = 8000;
+
+// Token footprint in grid cells by size — keep in sync with the client's TOKEN_CELLS.
+const TOKEN_CELLS: Record<'S' | 'M' | 'L' | 'H', number> = { S: 1, M: 1, L: 2, H: 3 };
 
 function sendError(
   session: WsSession,
@@ -287,11 +290,14 @@ async function handleBoardAdd(
     : Math.min(naturalW, 1200);
   const maxZ = entry.runtime.state.board.reduce((acc, item) => Math.max(acc, item.z), 0);
 
+  const aspect = manifest.width && manifest.height ? manifest.height / manifest.width : 1;
+  const pos = clampToField(msg.x, msg.y, w, w * aspect, entry.runtime.state.grid.cell);
+
   const newItem = {
     id: randomId('bi'),
     assetId: msg.assetId,
-    x: msg.x,
-    y: msg.y,
+    x: pos.x,
+    y: pos.y,
     w,
     z: maxZ + 1,
   };
@@ -333,9 +339,12 @@ async function handleBoardMove(
 
   // Clamp w to [40, 8000].
   const w = Math.min(BOARD_W_MAX, Math.max(BOARD_W_MIN, msg.w));
+  const manifest = entry.store.assets.get(entry.runtime.state.board[idx]!.assetId);
+  const aspect = manifest?.width && manifest.height ? manifest.height / manifest.width : 1;
+  const pos = clampToField(msg.x, msg.y, w, w * aspect, entry.runtime.state.grid.cell);
 
   const updated = [...entry.runtime.state.board];
-  updated[idx] = { ...updated[idx]!, x: msg.x, y: msg.y, w };
+  updated[idx] = { ...updated[idx]!, x: pos.x, y: pos.y, w };
   entry.runtime.state = { ...entry.runtime.state, board: updated };
   await persistState(entry.runtime);
 
@@ -659,6 +668,8 @@ async function handleTokenAdd(
   const ownerUserId = isDm ? (msg.ownerUserId ?? null) : session.userId;
   const dmOnly = isDm ? (msg.dmOnly ?? false) : false;
 
+  const tpx = TOKEN_CELLS[msg.size] * entry.runtime.state.grid.cell;
+  const tpos = clampToField(msg.x, msg.y, tpx, tpx, entry.runtime.state.grid.cell);
   const newToken: Token = {
     id: randomId('tok'),
     name: msg.name || 'Token',
@@ -666,8 +677,8 @@ async function handleTokenAdd(
     allegiance: msg.allegiance,
     ownerUserId,
     size: msg.size,
-    x: msg.x,
-    y: msg.y,
+    x: tpos.x,
+    y: tpos.y,
     z: maxZ + 1,
     assetId: msg.assetId ?? null,
     fill: msg.fill ?? null,
@@ -711,8 +722,10 @@ async function handleTokenMove(
   // Bring-to-front: give it the highest z.
   const maxZ = entry.runtime.state.tokens.reduce((acc, t) => Math.max(acc, t.z), 0);
 
+  const tpx = TOKEN_CELLS[token.size] * entry.runtime.state.grid.cell;
+  const tpos = clampToField(msg.x, msg.y, tpx, tpx, entry.runtime.state.grid.cell);
   const updated = [...entry.runtime.state.tokens];
-  updated[idx] = { ...token, x: msg.x, y: msg.y, z: maxZ + 1 };
+  updated[idx] = { ...token, x: tpos.x, y: tpos.y, z: maxZ + 1 };
   entry.runtime.state = { ...entry.runtime.state, tokens: updated };
   await persistState(entry.runtime);
 
@@ -928,15 +941,17 @@ async function handlePieceAdd(
   }
 
   const maxZ = entry.runtime.state.pieces.reduce((acc, p) => Math.max(acc, p.z), 0);
+  const pw = clampSize(msg.w), ph = clampSize(msg.h);
+  const ppos = clampToField(msg.x, msg.y, pw, ph, entry.runtime.state.grid.cell);
   const newPiece: MapPiece = {
     id: randomId('pc'),
     builtin: msg.builtin ?? null,
     assetId: msg.assetId ?? null,
     imageUrl: null,
-    x: msg.x,
-    y: msg.y,
-    w: clampSize(msg.w),
-    h: clampSize(msg.h),
+    x: ppos.x,
+    y: ppos.y,
+    w: pw,
+    h: ph,
     rotation: msg.rotation ?? 0,
     z: maxZ + 1,
     layer: msg.layer,
@@ -968,8 +983,10 @@ async function handlePieceMove(
     sendError(session, 'UNKNOWN_PIECE', `Piece "${msg.id}" not found`);
     return;
   }
+  const cur = entry.runtime.state.pieces[idx]!;
+  const ppos = clampToField(msg.x, msg.y, cur.w, cur.h, entry.runtime.state.grid.cell);
   const updated = [...entry.runtime.state.pieces];
-  updated[idx] = { ...updated[idx]!, x: msg.x, y: msg.y };
+  updated[idx] = { ...cur, x: ppos.x, y: ppos.y };
   entry.runtime.state = { ...entry.runtime.state, pieces: updated };
   await persistState(entry.runtime);
   broadcastPiecesUpdated(campaignId, entry);

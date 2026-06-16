@@ -3,6 +3,20 @@ import type { AssetManifest, Sharing } from './campaign.js';
 
 export const PROTOCOL_VERSION = 6;
 
+/** The board is a finite BOARD_CELLS × BOARD_CELLS square — the hard playing-field boundary. */
+export const BOARD_CELLS = 120;
+
+/** Clamp a w×h object's top-left so it stays inside the BOARD_CELLS² field. Bigger-than-field
+ *  objects (e.g. a full background) are clamped to keep covering it instead of being pushed out. */
+export function clampToField(
+  x: number, y: number, w: number, h: number, cell: number,
+): { x: number; y: number } {
+  const S = BOARD_CELLS * cell;
+  const axis = (pos: number, size: number) =>
+    size <= S ? Math.min(Math.max(0, pos), S - size) : Math.min(Math.max(S - size, pos), 0);
+  return { x: axis(x, w), y: axis(y, h) };
+}
+
 export type Role = 'dm' | 'player';
 
 /** A campaign member (online or not) — powers share pickers + owner dropdowns. */
