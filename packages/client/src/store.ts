@@ -171,6 +171,8 @@ interface TableSlice {
   audioDock: { assetId: string; minimized: boolean } | null;
   /** transient roll-result popups shown over the canvas */
   rollToasts: RollLogEntry[];
+  /** rolls awaiting the cinematic dice overlay — fed only by live rolls, never the snapshot */
+  rollQueue: RollLogEntry[];
   /** transient presence-join popups */
   joinToasts: JoinToast[];
   /** transient nat-20 board moment IDs (ring sweep) */
@@ -225,6 +227,7 @@ interface TableSlice {
   setBoardView: (view: BoardView) => void;
   addRollEntry: (entry: RollLogEntry) => void;
   dismissRollToast: (id: string) => void;
+  shiftRollQueue: () => void;
   addJoinToast: (entry: PresenceEntry) => void;
   dismissJoinToast: (id: string) => void;
   addBoardMoment: (id: string) => void;
@@ -293,6 +296,7 @@ const tableDefaults = {
   mediaSync: {},
   audioDock: null,
   rollToasts: [],
+  rollQueue: [],
   joinToasts: [] as JoinToast[],
   boardMoments: [] as string[],
   shareToasts: [] as ShareToast[],
@@ -403,10 +407,16 @@ export const useStore = create<StoreState>()((set) => ({
       rollLog: [entry, ...s.rollLog].slice(0, ROLL_LOG_MAX),
       // Every received roll also pops a transient toast (max 3 stacked).
       rollToasts: [...s.rollToasts, entry].slice(-3),
+      // …and queues the cinematic overlay. Only LIVE rolls land here (the
+      // snapshot sets rollLog wholesale and never touches this), so joining a
+      // campaign never replays past rolls. Cap so a flurry can't back up forever.
+      rollQueue: [...s.rollQueue, entry].slice(-8),
     })),
 
   dismissRollToast: (id) =>
     set((s) => ({ rollToasts: s.rollToasts.filter((t) => t.id !== id) })),
+
+  shiftRollQueue: () => set((s) => ({ rollQueue: s.rollQueue.slice(1) })),
 
   addJoinToast: (entry) =>
     set((s) => ({

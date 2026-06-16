@@ -4,13 +4,13 @@
 //   X ∈ {4,6,8,10,12,20,100}
 //   kh suffix = keep highest (rolls N dice, keeps the single highest result)
 //   kl suffix = keep lowest  (rolls N dice, keeps the single lowest result)
-// Limits: N ≤ 100 per term, ≤ 10 terms total, modifier |value| ≤ 1000.
+// Limits: N ≤ 10 dice per term, ≤ 10 terms total, modifier |value| ≤ 1000.
 // Case-insensitive, whitespace-tolerant.
 
 import type { DieSides, RollPart } from './protocol.js';
 
 const VALID_SIDES: ReadonlySet<number> = new Set([4, 6, 8, 10, 12, 20, 100]);
-const MAX_DICE_PER_TERM = 100;
+const MAX_DICE_PER_TERM = 10;
 const MAX_TERMS = 10;
 const MAX_MODIFIER = 1000;
 
@@ -134,7 +134,7 @@ export function parseDiceExpression(
       }
 
       if (count > MAX_DICE_PER_TERM) {
-        return { ok: false, error: `too many dice in one term (max ${MAX_DICE_PER_TERM})` };
+        return { ok: false, error: `too many dice — max ${MAX_DICE_PER_TERM} per roll` };
       }
 
       // Check for optional 'kh' / 'kl' suffix (keep highest / lowest)

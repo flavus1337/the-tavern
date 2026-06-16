@@ -7,6 +7,7 @@ import { DocumentViewer } from './DocumentViewer';
 import { NoteEditor } from './NoteEditor';
 import { TokenEditor } from './TokenEditor';
 import { RollToasts } from './RollToasts';
+import { DiceOverlay } from './DiceOverlay';
 import { AudioDock } from './AudioDock';
 import { DiceRoller } from './DiceRoller';
 import { RollLog } from './RollLog';
@@ -354,6 +355,7 @@ export function TableLayout() {
       </div>
 
       {genDialog && <GenDialog />}
+      <DiceOverlay />
     </div>
   );
 }
