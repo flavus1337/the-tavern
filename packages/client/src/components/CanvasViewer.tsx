@@ -716,7 +716,10 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     const cell = useStore.getState().grid.cell;
     const S0 = MAP_CELLS * cell;
     const cw = c.clientWidth, ch = c.clientHeight;
-    const fitScale = Math.min(cw / S0, ch / S0); // whole board visible — no zooming out further
+    // Leave a margin so the wooden table edge stays visible on every side at min
+    // zoom (otherwise the field fills the short axis and the border is clipped).
+    const M = 60;
+    const fitScale = Math.max(0.02, Math.min((cw - 2 * M) / S0, (ch - 2 * M) / S0));
     const scale = Math.min(SCALE_MAX, Math.max(fitScale, v.scale));
     const S = S0 * scale;
     // Edges flush when the board overflows the viewport; centred when it fits.
