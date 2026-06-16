@@ -2063,6 +2063,66 @@ async function main(): Promise<void> {
       }
     }
 
+    // O7a: a player can place a persistent AoE template (everyone may place).
+    let aoeId = '';
+    send(p1WsO, { type: 'aoeAdd', kind: 'circle', x1: 100, y1: 100, x2: 200, y2: 100 });
+    try {
+      const upd = await waitForMessage(
+        adminMsgsO,
+        (m) => m['type'] === 'aoesUpdated' && (m['aoes'] as Array<{ kind?: string }>).some((a) => a.kind === 'circle'),
+        3000,
+      );
+      aoeId = ((upd['aoes'] as Array<{ id?: string; kind?: string }>).find((a) => a.kind === 'circle')?.id) ?? '';
+      assert(aoeId !== '', 'O7a: player places an AoE → broadcast to table');
+    } catch {
+      fail('O7a: player places an AoE', 'timeout');
+    }
+
+    // O7b: the DM cannot have their templates removed by another player.
+    send(adminWsO, { type: 'aoeAdd', kind: 'cone', x1: 0, y1: 0, x2: 100, y2: 0 });
+    let dmAoeId = '';
+    try {
+      const upd = await waitForMessage(adminMsgsO, (m) => m['type'] === 'aoesUpdated' && (m['aoes'] as Array<{ kind?: string }>).some((a) => a.kind === 'cone'), 3000);
+      dmAoeId = ((upd['aoes'] as Array<{ id?: string; kind?: string }>).find((a) => a.kind === 'cone')?.id) ?? '';
+    } catch { /* covered below */ }
+    if (dmAoeId) {
+      send(p1WsO, { type: 'aoeRemove', id: dmAoeId });
+      try {
+        const forb = await waitForMessage(p1MsgsO, (m) => m['type'] === 'error' && m['code'] === 'FORBIDDEN', 2000);
+        assert(forb['code'] === 'FORBIDDEN', "O7b: player can't remove the DM's AoE → FORBIDDEN");
+      } catch {
+        fail("O7b: player can't remove the DM's AoE", 'timeout');
+      }
+    }
+
+    // O7c: aoeAdd persists into the snapshot (survives reconnect).
+    {
+      const { ws: probeWs, messages: probeMsgs } = await openWs(wsUrl2, player1Jar);
+      send(probeWs, { type: 'join', protocolVersion: 6, campaignId });
+      try {
+        const snap = await waitForMessage(probeMsgs, (m) => m['type'] === 'snapshot', 3000);
+        const list = (snap['aoes'] as Array<{ id?: string }>) || [];
+        assert(Array.isArray(snap['aoes']) && list.some((a) => a.id === aoeId), 'O7c: AoE template persists in snapshot');
+      } catch {
+        fail('O7c: AoE persists in snapshot', 'timeout');
+      } finally {
+        probeWs.close();
+      }
+    }
+
+    // O7d: the DM clears all AoE templates.
+    send(adminWsO, { type: 'aoeClear' });
+    try {
+      await waitForMessage(
+        p1MsgsO,
+        (m) => m['type'] === 'aoesUpdated' && (m['aoes'] as unknown[]).length === 0,
+        3000,
+      );
+      pass('O7d: DM aoeClear removes every template');
+    } catch {
+      fail('O7d: DM aoeClear removes every template', 'timeout');
+    }
+
     // O8–O10: map lock blocks board moves for everyone, including the DM.
     send(adminWsO, { type: 'boardAdd', assetId, x: 0, y: 0 });
     let lockItemId = '';

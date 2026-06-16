@@ -177,6 +177,10 @@ export class TableConnection {
         store.setPieces(msg.pieces);
         break;
 
+      case 'aoesUpdated':
+        store.setAoes(msg.aoes);
+        break;
+
       case 'mapMetaUpdated':
         store.setMapMeta(msg.mapMeta);
         break;

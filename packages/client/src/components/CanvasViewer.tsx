@@ -7,7 +7,7 @@ import {
   type PointerEvent,
 } from 'react';
 import { BOARD_CELLS, clampToField } from '@vtt/shared';
-import type { BoardItemView, ClientMessage, TokenView, GridState, MapPiece, MeasureKind } from '@vtt/shared';
+import type { BoardItemView, ClientMessage, TokenView, GridState, MapPiece, MeasureKind, AoeTemplate, AoeKind } from '@vtt/shared';
 import { useStore } from '../store';
 import type { BoardView, BoardTool, EditorMode, AoeShape } from '../store';
 import { BoardMoments } from './RollLog';
@@ -670,6 +670,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const sharedMeasures = useStore((s) => s.sharedMeasures);
   const setSelectedTokenId = useStore((s) => s.setSelectedTokenId);
   const pieces = useStore((s) => s.pieces);
+  const aoes = useStore((s) => s.aoes);
   const editorMode = useStore((s) => s.editorMode);
   const activePalettePiece = useStore((s) => s.activePalettePiece);
   const layerVisible = useStore((s) => s.layerVisible);
@@ -847,7 +848,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       const p = screenToBoard(e.clientX, e.clientY);
       measuringRef.current = true;
       setOwnMeasure({ kind: measureKind, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
-      sendWs({ type: 'measure', kind: measureKind, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+      // Ruler broadcasts live; an AoE is only a local preview until released.
+      if (measuring) sendWs({ type: 'measure', kind: 'ruler', x1: p.x, y1: p.y, x2: p.x, y2: p.y });
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       return;
     }
@@ -884,7 +886,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       const m = useStore.getState().ownMeasure;
       if (!m) return;
       setOwnMeasure({ kind: m.kind, x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
-      sendWs({ type: 'measure', kind: m.kind, x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
+      if (measuring) sendWs({ type: 'measure', kind: 'ruler', x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
       return;
     }
     if (!draggingCanvas.current) return;
@@ -900,7 +902,18 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       if (calibBox && calibBox.w > 4) setCalibPrompt(true);
       return;
     }
-    measuringRef.current = false;
+    if (measuringRef.current) {
+      measuringRef.current = false;
+      // Releasing an AoE drag commits a persistent template (everyone sees it,
+      // and you can place more). The ruler just stays as the live measure.
+      if (aoeing) {
+        const m = useStore.getState().ownMeasure;
+        if (m && Math.hypot(m.x2 - m.x1, m.y2 - m.y1) > 4) {
+          sendWs({ type: 'aoeAdd', kind: m.kind as AoeKind, x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2 });
+        }
+        setOwnMeasure(null);
+      }
+    }
     draggingCanvas.current = false;
   }
 
@@ -1012,7 +1025,11 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       </div>
 
       {/* Measurement rulers (screen-space overlay) */}
-      <MeasureOverlay view={view} grid={grid} own={ownMeasure} shared={sharedMeasures} />
+      <MeasureOverlay
+        view={view} grid={grid} own={ownMeasure} shared={sharedMeasures}
+        aoes={aoes} selfUserId={selfUserId} canEditAoe={aoeing} isDm={isDm}
+        onRemoveAoe={(id) => sendWs({ type: 'aoeRemove', id })}
+      />
 
       {/* Grid calibration box + prompt (build mode) */}
       {calibBox && (
@@ -1126,15 +1143,20 @@ function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
 interface MeasureShape { kind: MeasureKind; x1: number; y1: number; x2: number; y2: number }
 
 function MeasureOverlay({
-  view, grid, own, shared,
+  view, grid, own, shared, aoes, selfUserId, canEditAoe, isDm, onRemoveAoe,
 }: {
   view: BoardView;
   grid: GridState;
   own: MeasureShape | null;
   shared: Record<string, MeasureShape & { by: string }>;
+  aoes: AoeTemplate[];
+  selfUserId: string | null;
+  canEditAoe: boolean;
+  isDm: boolean;
+  onRemoveAoe: (id: string) => void;
 }) {
   const sharedList = Object.values(shared);
-  if (!own && sharedList.length === 0) return null;
+  if (!own && sharedList.length === 0 && aoes.length === 0) return null;
 
   const sc = (bx: number, by: number) => ({ x: bx * view.scale + view.x, y: by * view.scale + view.y });
   const perCell = grid.unit === 'ft' ? 5 : 1.5;
@@ -1234,10 +1256,28 @@ function MeasureOverlay({
     );
   }
 
+  // A small ✕ button at an AoE's origin, shown to those who may remove it.
+  function RemoveHandle({ a }: { a: AoeTemplate }) {
+    const p = sc(a.x1, a.y1);
+    return (
+      <g transform={`translate(${p.x}, ${p.y})`} style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+        onPointerDown={(e) => { e.stopPropagation(); onRemoveAoe(a.id); }}>
+        <circle r={9} fill="#1a1310ee" stroke="var(--ember)" strokeWidth={1.5} />
+        <path d="M-3.5 -3.5 L3.5 3.5 M3.5 -3.5 L-3.5 3.5" stroke="#f4efe9" strokeWidth={1.6} strokeLinecap="round" />
+      </g>
+    );
+  }
+
   return (
     <svg style={{ position: 'absolute', inset: 0, pointerEvents: 'none', width: '100%', height: '100%' }}>
+      {/* Persisted AoE templates — visible to everyone, your own ember, others teal */}
+      {aoes.map((a) => <ShapeEl key={a.id} s={a} isShared={a.ownerUserId !== selfUserId} />)}
       {sharedList.map((s) => <ShapeEl key={s.by} s={s} isShared by={s.by} />)}
       {own && <ShapeEl s={own} />}
+      {/* Removal affordances only while the AoE tool is active, for owner or DM */}
+      {canEditAoe && aoes.filter((a) => isDm || a.ownerUserId === selfUserId).map((a) => (
+        <RemoveHandle key={`rm-${a.id}`} a={a} />
+      ))}
     </svg>
   );
 }
@@ -1366,6 +1406,22 @@ function ToolDock({ build }: { build: boolean }) {
               </button>
             );
           })}
+          <div style={{ width: 1, height: 18, background: 'var(--border)', alignSelf: 'center', margin: '0 2px' }} aria-hidden="true" />
+          <button
+            type="button"
+            onClick={() => sendWs({ type: 'aoeClear' })}
+            title="Clear AoE templates"
+            aria-label="Clear AoE templates"
+            style={{
+              display: 'flex', alignItems: 'center', padding: '6px 9px', borderRadius: 7,
+              border: 'none', cursor: 'pointer', background: 'transparent', color: 'var(--mid)',
+              transition: 'background 0.12s, color 0.12s',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--ember)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--mid)'; }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="w-4 h-4"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
         </div>
       )}
     </div>

@@ -15,6 +15,7 @@ import type {
   MapMeta,
   MapTemplateSummary,
   MeasureKind,
+  AoeTemplate,
 } from '@vtt/shared';
 
 /** A transient join-notification toast */
@@ -196,6 +197,8 @@ interface TableSlice {
 
   // Map creation (build mode)
   pieces: MapPiece[];
+  /** Placed AoE templates (spell/effect areas) — shared, persist through play */
+  aoes: AoeTemplate[];
   mapMeta: MapMeta;
   features: { imageGenEnabled: boolean };
   editorMode: EditorMode;
@@ -254,6 +257,7 @@ interface TableSlice {
 
   // Map creation actions
   setPieces: (pieces: MapPiece[]) => void;
+  setAoes: (aoes: AoeTemplate[]) => void;
   setMapMeta: (meta: MapMeta) => void;
   setEditorMode: (mode: EditorMode) => void;
   setSelectedPieceId: (id: string | null) => void;
@@ -299,6 +303,7 @@ const tableDefaults = {
   sharedMeasures: {} as Record<string, SharedMeasure>,
   selectedTokenId: null as string | null,
   pieces: [] as MapPiece[],
+  aoes: [] as AoeTemplate[],
   mapMeta: { name: 'Untitled map', areaTag: '' } as MapMeta,
   features: { imageGenEnabled: false },
   editorMode: 'play' as EditorMode,
@@ -374,6 +379,7 @@ export const useStore = create<StoreState>()((set) => ({
       tokens: snap.tokens,
       grid: snap.grid,
       pieces: snap.pieces,
+      aoes: snap.aoes ?? [],
       mapMeta: snap.mapMeta,
       features: snap.features,
       templates: snap.templates,
@@ -536,6 +542,7 @@ export const useStore = create<StoreState>()((set) => ({
 
   // Map creation
   setPieces: (pieces) => set({ pieces }),
+  setAoes: (aoes) => set({ aoes }),
   setMapMeta: (mapMeta) => set({ mapMeta }),
   setEditorMode: (editorMode) =>
     set((s) => ({

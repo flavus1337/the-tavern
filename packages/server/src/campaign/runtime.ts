@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../log.js';
 import { randomId, parseSharing } from '@vtt/shared';
-import type { RollLogEntry, GridState, Sharing, MapPiece, MapMeta } from '@vtt/shared';
+import type { RollLogEntry, GridState, Sharing, MapPiece, MapMeta, AoeTemplate } from '@vtt/shared';
 
 export interface BoardItem {
   id: string;
@@ -69,6 +69,8 @@ export interface RuntimeState {
   grid: GridState;
   /** placed map pieces (terrain/props) authored in build mode */
   pieces: MapPiece[];
+  /** placed AoE templates (spell/effect areas) — persist through the session */
+  aoes: AoeTemplate[];
   mapMeta: MapMeta;
   /** saved reusable maps */
   mapTemplates: MapTemplate[];
@@ -102,6 +104,7 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     tokens: [],
     grid: { ...DEFAULT_GRID },
     pieces: [],
+    aoes: [],
     mapMeta: { ...DEFAULT_MAP_META },
     mapTemplates: [],
   };
@@ -150,6 +153,9 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     const pieces: MapPiece[] = Array.isArray(parsed['pieces'])
       ? (parsed['pieces'] as MapPiece[])
       : [];
+    const aoes: AoeTemplate[] = Array.isArray(parsed['aoes'])
+      ? (parsed['aoes'] as AoeTemplate[])
+      : [];
     const mapMeta: MapMeta =
       parsed['mapMeta'] != null && typeof parsed['mapMeta'] === 'object'
         ? { ...DEFAULT_MAP_META, ...(parsed['mapMeta'] as Partial<MapMeta>) }
@@ -165,6 +171,7 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
       tokens,
       grid,
       pieces,
+      aoes,
       mapMeta,
       mapTemplates: Array.isArray(parsed['mapTemplates']) ? (parsed['mapTemplates'] as MapTemplate[]) : [],
     };

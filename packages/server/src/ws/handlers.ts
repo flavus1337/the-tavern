@@ -9,6 +9,8 @@ import type {
   MapPiece,
   MapMeta,
   MeasureKind,
+  AoeTemplate,
+  AoeKind,
 } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import { send, broadcast, broadcastPresence, getSessionsInRoom } from './hub.js';
@@ -152,6 +154,15 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
         break;
       case 'pieceRemove':
         await handlePieceRemove(session, msg);
+        break;
+      case 'aoeAdd':
+        await handleAoeAdd(session, msg);
+        break;
+      case 'aoeRemove':
+        await handleAoeRemove(session, msg);
+        break;
+      case 'aoeClear':
+        await handleAoeClear(session);
         break;
       case 'setMapMeta':
         await handleSetMapMeta(session, msg);
@@ -901,6 +912,67 @@ function broadcastPiecesUpdated(campaignId: string, entry: NonNullable<ReturnTyp
     makePieceView(campaignId, p, entry),
   );
   broadcast(campaignId, { type: 'piecesUpdated', pieces });
+}
+
+function broadcastAoesUpdated(campaignId: string, entry: NonNullable<ReturnType<typeof getCampaign>>): void {
+  broadcast(campaignId, { type: 'aoesUpdated', aoes: entry.runtime.state.aoes });
+}
+
+const AOE_MAX = 100; // sanity cap so the board can't be flooded
+
+// Anyone at the table can place an AoE template (like a ruler), and it persists.
+async function handleAoeAdd(
+  session: WsSession,
+  msg: { type: 'aoeAdd'; kind: AoeKind; x1: number; y1: number; x2: number; y2: number },
+): Promise<void> {
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+  if (entry.runtime.state.aoes.length >= AOE_MAX) {
+    sendError(session, 'TOO_MANY', 'Too many AoE templates on the board — clear some first');
+    return;
+  }
+  const aoe: AoeTemplate = {
+    id: randomId('aoe'),
+    kind: msg.kind,
+    x1: msg.x1, y1: msg.y1, x2: msg.x2, y2: msg.y2,
+    ownerUserId: session.userId,
+  };
+  entry.runtime.state = { ...entry.runtime.state, aoes: [...entry.runtime.state.aoes, aoe] };
+  await persistState(entry.runtime);
+  broadcastAoesUpdated(campaignId, entry);
+}
+
+// The placer or the DM may remove a template.
+async function handleAoeRemove(
+  session: WsSession,
+  msg: { type: 'aoeRemove'; id: string },
+): Promise<void> {
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+  const aoe = entry.runtime.state.aoes.find((a) => a.id === msg.id);
+  if (!aoe) return;
+  if (session.role !== 'dm' && aoe.ownerUserId !== session.userId) {
+    sendError(session, 'FORBIDDEN', 'You can only remove your own AoE templates');
+    return;
+  }
+  entry.runtime.state = { ...entry.runtime.state, aoes: entry.runtime.state.aoes.filter((a) => a.id !== msg.id) };
+  await persistState(entry.runtime);
+  broadcastAoesUpdated(campaignId, entry);
+}
+
+// DM clears every template; a player clears only their own.
+async function handleAoeClear(session: WsSession): Promise<void> {
+  const campaignId = session.campaignId!;
+  const entry = getCampaign(campaignId);
+  if (!entry) return;
+  const remaining = session.role === 'dm'
+    ? []
+    : entry.runtime.state.aoes.filter((a) => a.ownerUserId !== session.userId);
+  entry.runtime.state = { ...entry.runtime.state, aoes: remaining };
+  await persistState(entry.runtime);
+  broadcastAoesUpdated(campaignId, entry);
 }
 
 const PIECE_MIN = 8;

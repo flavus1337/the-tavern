@@ -315,6 +315,37 @@ export type ClientMeasurePayload =
   | { type: 'measure'; kind: MeasureKind; x1: number; y1: number; x2: number; y2: number }
   | { type: 'measure'; kind: 'clear' };
 
+/** A placed AoE template that persists on the board (unlike the live ruler).
+ *  Same origin→drag geometry as a measure, minus the 'ruler' kind. */
+export type AoeKind = Exclude<MeasureKind, 'ruler'>;
+export interface AoeTemplate {
+  id: string;
+  kind: AoeKind;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  /** who placed it — null for the DM's legacy entries; used for removal rights + colour */
+  ownerUserId: string | null;
+}
+
+export interface ClientAoeAddPayload {
+  type: 'aoeAdd';
+  kind: AoeKind;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+export interface ClientAoeRemovePayload {
+  type: 'aoeRemove';
+  id: string;
+}
+/** DM clears all; a player clears only their own. */
+export interface ClientAoeClearPayload {
+  type: 'aoeClear';
+}
+
 // Map piece messages — DM only.
 export interface ClientPieceAddPayload {
   type: 'pieceAdd';
@@ -397,6 +428,9 @@ export type ClientMessage =
   | ClientPieceMovePayload
   | ClientPieceUpdatePayload
   | ClientPieceRemovePayload
+  | ClientAoeAddPayload
+  | ClientAoeRemovePayload
+  | ClientAoeClearPayload
   | ClientSetMapMetaPayload
   | ClientSaveMapTemplatePayload
   | ClientLoadMapTemplatePayload
@@ -447,6 +481,8 @@ export interface ServerSnapshotPayload {
   grid: GridState;
   /** Placed map pieces (terrain/props) — visible to everyone. */
   pieces: MapPiece[];
+  /** Placed AoE templates (spell/effect areas) — visible to everyone. */
+  aoes: AoeTemplate[];
   /** Map metadata (name + area tag) shown in the build-mode top bar. */
   mapMeta: MapMeta;
   /** Server capability flags derived from config. */
@@ -533,6 +569,11 @@ export interface ServerPiecesUpdatedPayload {
   pieces: MapPiece[];
 }
 
+export interface ServerAoesUpdatedPayload {
+  type: 'aoesUpdated';
+  aoes: AoeTemplate[];
+}
+
 export interface ServerMapMetaUpdatedPayload {
   type: 'mapMetaUpdated';
   mapMeta: MapMeta;
@@ -561,6 +602,7 @@ export type WsErrorCode =
   | 'UNKNOWN_PIECE'
   | 'UNKNOWN_TEMPLATE'
   | 'UPLOADS_LOCKED'
+  | 'TOO_MANY'
   | 'INTERNAL';
 
 export interface ServerErrorPayload {
@@ -592,6 +634,7 @@ export type ServerMessage =
   | ServerTokensUpdatedPayload
   | ServerGridUpdatedPayload
   | ServerPiecesUpdatedPayload
+  | ServerAoesUpdatedPayload
   | ServerMapMetaUpdatedPayload
   | ServerTemplatesUpdatedPayload
   | ServerMeasureSharedPayload

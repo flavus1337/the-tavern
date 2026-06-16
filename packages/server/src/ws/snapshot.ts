@@ -151,6 +151,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     tokens,
     grid,
     pieces: runtime.state.pieces.map((p) => makePieceView(campaignId, p, entry)),
+    aoes: runtime.state.aoes,
     mapMeta: runtime.state.mapMeta,
     features: { imageGenEnabled: config.LLM_API_KEY != null },
     templates: runtime.state.mapTemplates.map((t) => ({ id: t.id, name: t.name, createdAt: t.createdAt })),
