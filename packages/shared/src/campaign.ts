@@ -4,7 +4,7 @@ export const SCHEMA_VERSIONS = {
   campaign: 1,
   chapter: 1,
   character: 1,
-  note: 2,
+  note: 3,
   asset: 2,
 } as const;
 
@@ -131,6 +131,15 @@ export interface Character {
   body?: string;
 }
 
+/**
+ * Note content type — distinct from sharing/visibility. `secret` is DM-only
+ * prep, `readaloud` is boxed text read to the table, `handout` is a player
+ * document. Drives the editor/list treatment; `sharing` still governs access.
+ */
+export const NOTE_KINDS = ['secret', 'readaloud', 'handout'] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
+export const isNoteKind = (x: unknown): x is NoteKind => NOTE_KINDS.includes(x as NoteKind);
+
 export interface NoteEntity {
   type: 'note';
   schemaVersion: number;
@@ -141,6 +150,10 @@ export interface NoteEntity {
   ownerUsername: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Chapter membership et al. — `chapter:<id>` entries link a note to chapters. */
+  tags: string[];
+  /** Content type; defaults to 'secret' (DM prep) when absent. */
+  noteKind?: NoteKind;
 }
 
 export interface AssetManifest {
@@ -278,6 +291,10 @@ function applyDefaults(expectedType: EntityType, raw: Record<string, unknown>): 
           typeof raw['ownerUsername'] === 'string' ? raw['ownerUsername'] : null,
         createdAt: typeof raw['createdAt'] === 'string' ? raw['createdAt'] : now,
         updatedAt: typeof raw['updatedAt'] === 'string' ? raw['updatedAt'] : now,
+        tags: Array.isArray(raw['tags'])
+          ? (raw['tags'] as unknown[]).filter((x): x is string => typeof x === 'string')
+          : [],
+        ...(isNoteKind(raw['noteKind']) ? { noteKind: raw['noteKind'] } : {}),
       } as NoteEntity;
     }
 

@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, randomId, SCHEMA_VERSIONS, parseSharing, defaultSharing, clampToField } from '@vtt/shared';
+import { PROTOCOL_VERSION, randomId, slugify, SCHEMA_VERSIONS, parseSharing, defaultSharing, clampToField } from '@vtt/shared';
 import type {
   ClientMessage,
   WsErrorCode,
@@ -14,10 +14,10 @@ import type {
   TokenStatBlock,
   InitiativeState,
 } from '@vtt/shared';
-import { CONDITIONS } from '@vtt/shared';
+import { CONDITIONS, isNoteKind } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import { send, broadcast, broadcastPresence, getSessionsInRoom } from './hub.js';
-import { buildSnapshot, makeBoardItemView, makeTokenView, makePieceView, redactStatBlock } from './snapshot.js';
+import { buildSnapshot, makeBoardItemView, makeTokenView, makePieceView, redactStatBlock, chapterViews, characterViews, noteToWire } from './snapshot.js';
 import { broadcastDocuments } from './documents.js';
 import { canAccessShared, canControlToken, documentSharing, type Viewer } from './sharing.js';
 import { getCampaign } from '../campaign/registry.js';
@@ -25,9 +25,9 @@ import { getRole } from '../auth/memberships.js';
 import { roll } from '../dice/roller.js';
 import { appendRollLog, persistState } from '../campaign/runtime.js';
 import type { Token, MapTemplate } from '../campaign/runtime.js';
-import { saveNote, deleteNote, saveAssetManifest } from '../campaign/writer.js';
+import { saveNote, deleteNote, saveAssetManifest, saveChapter, deleteChapter, saveCharacter } from '../campaign/writer.js';
 import { log } from '../log.js';
-import type { NoteEntity } from '@vtt/shared';
+import type { NoteEntity, NoteKind, Chapter } from '@vtt/shared';
 
 function viewerOf(session: WsSession): Viewer {
   return { userId: session.userId, username: session.username, role: session.role! };
@@ -123,6 +123,18 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
         break;
       case 'deleteNote':
         await handleDeleteNote(session, msg);
+        break;
+      case 'saveChapter':
+        await handleSaveChapter(session, msg);
+        break;
+      case 'deleteChapter':
+        await handleDeleteChapter(session, msg);
+        break;
+      case 'reorderChapters':
+        await handleReorderChapters(session, msg);
+        break;
+      case 'setEntityChapters':
+        await handleSetEntityChapters(session, msg);
         break;
       case 'mediaControl':
         await handleMediaControl(session, msg);
@@ -511,7 +523,15 @@ async function handleSetDocumentSharing(
 
 async function handleSaveNote(
   session: WsSession,
-  msg: { type: 'saveNote'; noteId?: string; title: string; body: string; sharing: Sharing },
+  msg: {
+    type: 'saveNote';
+    noteId?: string;
+    title: string;
+    body: string;
+    sharing: Sharing;
+    tags?: string[];
+    noteKind?: NoteKind;
+  },
 ): Promise<void> {
   const campaignId = session.campaignId!;
   const entry = getCampaign(campaignId);
@@ -519,6 +539,11 @@ async function handleSaveNote(
 
   const isDm = session.role === 'dm';
   const sharing = parseSharing(msg.sharing);
+  // Omitted tags/noteKind leave the existing values untouched on edit.
+  const tags = Array.isArray(msg.tags)
+    ? msg.tags.filter((t): t is string => typeof t === 'string')
+    : undefined;
+  const noteKind = isNoteKind(msg.noteKind) ? msg.noteKind : undefined;
 
   let note: NoteEntity;
   const now = new Date().toISOString();
@@ -530,7 +555,15 @@ async function handleSaveNote(
         sendError(session, 'FORBIDDEN', 'You can only edit your own notes');
         return;
       }
-      note = { ...existing, title: msg.title, body: msg.body, sharing, updatedAt: now };
+      note = {
+        ...existing,
+        title: msg.title,
+        body: msg.body,
+        sharing,
+        updatedAt: now,
+        ...(tags !== undefined ? { tags } : {}),
+        ...(noteKind !== undefined ? { noteKind } : {}),
+      };
     } else {
       note = {
         type: 'note',
@@ -542,6 +575,8 @@ async function handleSaveNote(
         ownerUsername: session.username,
         createdAt: now,
         updatedAt: now,
+        tags: tags ?? [],
+        ...(noteKind !== undefined ? { noteKind } : {}),
       };
     }
   } else {
@@ -555,26 +590,25 @@ async function handleSaveNote(
       ownerUsername: session.username,
       createdAt: now,
       updatedAt: now,
+      tags: tags ?? [],
+      ...(noteKind !== undefined ? { noteKind } : {}),
     };
   }
 
   await saveNote(entry.store, note);
+  broadcastNote(campaignId, note);
+}
 
-  const wireNote = {
-    id: note.id,
-    title: note.title,
-    body: note.body,
-    sharing: note.sharing,
-    ownerUsername: note.ownerUsername,
-    createdAt: note.createdAt,
-    updatedAt: note.updatedAt,
-  };
-
-  // Push to everyone who may see it; tell everyone else to drop it (handles a
-  // scope being narrowed, e.g. shared → private, in one pass).
+/**
+ * Push a note to everyone who may see it; tell everyone else to drop it (handles
+ * a scope being narrowed, e.g. shared → private, in one pass). Shared by
+ * handleSaveNote and the chapter handlers that retag notes.
+ */
+function broadcastNote(campaignId: string, note: NoteEntity): void {
+  const wire = noteToWire(note);
   for (const s of getSessionsInRoom(campaignId)) {
     if (canAccessShared(viewerOf(s), note.ownerUsername, note.sharing)) {
-      send(s.ws, { type: 'noteSaved', note: wireNote });
+      send(s.ws, { type: 'noteSaved', note: wire });
     } else {
       send(s.ws, { type: 'noteDeleted', noteId: note.id });
     }
@@ -642,6 +676,179 @@ async function handleDeleteNote(
   await deleteNote(entry.store, msg.noteId);
 
   broadcast(campaignId, { type: 'noteDeleted', noteId: msg.noteId });
+}
+
+// ---------------------------------------------------------------------------
+// Chapter handlers (DM only) — chapters are the DM panel's organizing spine.
+// ---------------------------------------------------------------------------
+
+const dmOnly = (s: WsSession): boolean => s.role === 'dm';
+
+/** Resolve the campaign and assert the DM role; sends FORBIDDEN and returns null otherwise. */
+function requireDm(session: WsSession, action: string): NonNullable<ReturnType<typeof getCampaign>> | null {
+  const entry = getCampaign(session.campaignId!);
+  if (!entry) return null;
+  if (session.role !== 'dm') {
+    sendError(session, 'FORBIDDEN', `Only the DM can ${action}`);
+    return null;
+  }
+  return entry;
+}
+
+/** Broadcast the full chapter list to DM sockets. */
+function broadcastChapters(campaignId: string, entry: ReturnType<typeof getCampaign>): void {
+  if (!entry) return;
+  broadcast(campaignId, { type: 'chaptersUpdated', chapters: chapterViews(entry.store) }, dmOnly);
+}
+
+/** Replace an entity's `chapter:<id>` tags, keeping any non-chapter tags. */
+function withChapterTags(tags: string[], chapterIds: string[]): string[] {
+  const base = tags.filter((t) => !t.startsWith('chapter:'));
+  return [...base, ...chapterIds.map((id) => `chapter:${id}`)];
+}
+
+async function handleSaveChapter(
+  session: WsSession,
+  msg: { type: 'saveChapter'; chapterId?: string; title: string; summary?: string; body?: string },
+): Promise<void> {
+  const entry = requireDm(session, 'edit chapters');
+  if (!entry) return;
+  const title = (msg.title ?? '').trim();
+  if (!title) {
+    sendError(session, 'BAD_CHAPTER', 'A chapter title is required');
+    return;
+  }
+  const summary = typeof msg.summary === 'string' ? msg.summary : undefined;
+  const body = typeof msg.body === 'string' ? msg.body : undefined;
+
+  let chapter: Chapter;
+  if (msg.chapterId && entry.store.chapters.has(msg.chapterId)) {
+    const existing = entry.store.chapters.get(msg.chapterId)!;
+    chapter = { ...existing, title, summary, body };
+  } else {
+    // New chapter: derive a unique slug id, append after the last order.
+    const base = slugify(title) || 'chapter';
+    let id = base;
+    for (let i = 2; entry.store.chapters.has(id); i++) id = `${base}-${i}`;
+    const maxOrder = [...entry.store.chapters.values()].reduce((m, c) => Math.max(m, c.order), -1);
+    chapter = {
+      type: 'chapter',
+      schemaVersion: SCHEMA_VERSIONS.chapter,
+      id,
+      title,
+      order: maxOrder + 1,
+      summary,
+      body,
+      scenes: [],
+    };
+  }
+
+  await saveChapter(entry.store, chapter);
+  broadcastChapters(session.campaignId!, entry);
+}
+
+async function handleDeleteChapter(
+  session: WsSession,
+  msg: { type: 'deleteChapter'; chapterId: string },
+): Promise<void> {
+  const campaignId = session.campaignId!;
+  const entry = requireDm(session, 'delete chapters');
+  if (!entry) return;
+  if (!entry.store.chapters.has(msg.chapterId)) {
+    sendError(session, 'UNKNOWN_CHAPTER', `Chapter "${msg.chapterId}" not found`);
+    return;
+  }
+  const tag = `chapter:${msg.chapterId}`;
+
+  await deleteChapter(entry.store, msg.chapterId);
+
+  // Strip the tag from every entity; items left with no chapter become unfiled.
+  const changedNotes: NoteEntity[] = [];
+  for (const ch of entry.store.characters.values()) {
+    if (ch.tags.includes(tag)) {
+      await saveCharacter(entry.store, { ...ch, tags: ch.tags.filter((t) => t !== tag) });
+    }
+  }
+  for (const asset of entry.store.assets.values()) {
+    if (asset.tags.includes(tag)) {
+      await saveAssetManifest(entry.store, { ...asset, tags: asset.tags.filter((t) => t !== tag) });
+    }
+  }
+  for (const note of entry.store.notes.values()) {
+    if (note.tags.includes(tag)) {
+      const updated = { ...note, tags: note.tags.filter((t) => t !== tag) };
+      await saveNote(entry.store, updated);
+      changedNotes.push(updated);
+    }
+  }
+
+  broadcastChapters(campaignId, entry);
+  broadcast(campaignId, { type: 'charactersUpdated', characters: characterViews(entry.store) }, dmOnly);
+  broadcastAssets(campaignId, entry);
+  broadcastChangedNotes(campaignId, changedNotes);
+}
+
+async function handleReorderChapters(
+  session: WsSession,
+  msg: { type: 'reorderChapters'; orderedIds: string[] },
+): Promise<void> {
+  const entry = requireDm(session, 'reorder chapters');
+  if (!entry) return;
+  let order = 0;
+  for (const id of msg.orderedIds) {
+    const ch = entry.store.chapters.get(id);
+    if (ch && ch.order !== order) {
+      await saveChapter(entry.store, { ...ch, order });
+    }
+    if (ch) order++;
+  }
+  broadcastChapters(session.campaignId!, entry);
+}
+
+async function handleSetEntityChapters(
+  session: WsSession,
+  msg: { type: 'setEntityChapters'; entityId: string; entityType: 'note' | 'character' | 'asset'; chapterIds: string[] },
+): Promise<void> {
+  const campaignId = session.campaignId!;
+  const entry = requireDm(session, 'file items into chapters');
+  if (!entry) return;
+  // Keep only ids that point at a real chapter.
+  const chapterIds = [...new Set(msg.chapterIds)].filter((id) => entry.store.chapters.has(id));
+
+  switch (msg.entityType) {
+    case 'character': {
+      const ch = entry.store.characters.get(msg.entityId);
+      if (!ch) return;
+      await saveCharacter(entry.store, { ...ch, tags: withChapterTags(ch.tags, chapterIds) });
+      broadcast(campaignId, { type: 'charactersUpdated', characters: characterViews(entry.store) }, dmOnly);
+      break;
+    }
+    case 'asset': {
+      const a = entry.store.assets.get(msg.entityId);
+      if (!a) return;
+      await saveAssetManifest(entry.store, { ...a, tags: withChapterTags(a.tags, chapterIds) });
+      broadcastAssets(campaignId, entry);
+      break;
+    }
+    case 'note': {
+      const n = entry.store.notes.get(msg.entityId);
+      if (!n) return;
+      const updated = { ...n, tags: withChapterTags(n.tags, chapterIds) };
+      await saveNote(entry.store, updated);
+      broadcastChangedNotes(campaignId, [updated]);
+      break;
+    }
+  }
+}
+
+/** Push the DM image-asset list to DM sockets. */
+function broadcastAssets(campaignId: string, entry: NonNullable<ReturnType<typeof getCampaign>>): void {
+  const assets = [...entry.store.assets.values()].filter((a) => a.assetKind !== 'document');
+  broadcast(campaignId, { type: 'assetsUpdated', assets }, dmOnly);
+}
+
+function broadcastChangedNotes(campaignId: string, notes: NoteEntity[]): void {
+  for (const note of notes) broadcastNote(campaignId, note);
 }
 
 // ---------------------------------------------------------------------------

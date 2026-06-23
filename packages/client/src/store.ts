@@ -7,6 +7,8 @@ import type {
   RollLogEntry,
   AssetManifest,
   Note,
+  ChapterView,
+  CharacterView,
   ServerSnapshotPayload,
   TokenView,
   GridState,
@@ -180,6 +182,10 @@ interface TableSlice {
   /** transient document-share toasts */
   shareToasts: ShareToast[];
   myNotes: Note[];
+  /** Campaign chapters (ordered) — DM only; empty for players. */
+  chapters: ChapterView[];
+  /** Campaign NPCs & monsters — DM only; empty for players. */
+  characters: CharacterView[];
   lastErrorMessage: string | null;
 
   // Token & grid state
@@ -247,6 +253,8 @@ interface TableSlice {
   setAudioDockMinimized: (minimized: boolean) => void;
   upsertNote: (note: Note) => void;
   removeNote: (noteId: string) => void;
+  setChapters: (chapters: ChapterView[]) => void;
+  setCharacters: (characters: CharacterView[]) => void;
   setLastErrorMessage: (msg: string | null) => void;
   resetTable: () => void;
 
@@ -301,6 +309,8 @@ const tableDefaults = {
   boardMoments: [] as string[],
   shareToasts: [] as ShareToast[],
   myNotes: [],
+  chapters: [] as ChapterView[],
+  characters: [] as CharacterView[],
   lastErrorMessage: null,
   tokens: [] as TokenView[],
   grid: { ...DEFAULT_GRID } as GridState,
@@ -385,6 +395,8 @@ export const useStore = create<StoreState>()((set) => ({
       assets: snap.assets,
       documents: snap.documents,
       myNotes: snap.myNotes,
+      chapters: snap.chapters,
+      characters: snap.characters,
       tokens: snap.tokens,
       grid: snap.grid,
       pieces: snap.pieces,
@@ -532,6 +544,10 @@ export const useStore = create<StoreState>()((set) => ({
       // Close any panel showing the deleted note.
       openPanels: s.openPanels.filter((p) => !(p.kind === 'note' && p.noteId === noteId)),
     })),
+
+  setChapters: (chapters) => set({ chapters }),
+
+  setCharacters: (characters) => set({ characters }),
 
   setLastErrorMessage: (msg) => set({ lastErrorMessage: msg }),
 

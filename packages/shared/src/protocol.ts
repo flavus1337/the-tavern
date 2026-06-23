@@ -1,5 +1,5 @@
 // WebSocket protocol types — the wire contract between server and client.
-import type { AssetManifest, Sharing } from './campaign.js';
+import type { AssetManifest, Sharing, NoteKind } from './campaign.js';
 
 export const PROTOCOL_VERSION = 6;
 
@@ -182,6 +182,31 @@ export interface Note {
   ownerUsername: string | null;
   createdAt: string;
   updatedAt: string;
+  /** `chapter:<id>` entries link a note to chapters. */
+  tags: string[];
+  /** Content type — drives list/editor treatment; absent ⇒ 'secret'. */
+  noteKind?: NoteKind;
+}
+
+/** Chapter as sent to the DM panel — prep body included, scenes omitted (v1). */
+export interface ChapterView {
+  id: string;
+  title: string;
+  order: number;
+  summary?: string;
+  /** Markdown prep notes. */
+  body?: string;
+}
+
+/** Character as sent to the DM panel (NPCs & monsters list). DM only. */
+export interface CharacterView {
+  id: string;
+  name: string;
+  /** Includes `chapter:<id>` membership entries. */
+  tags: string[];
+  portraitAssetId?: string | null;
+  /** Challenge rating, when the character has a stat block. */
+  cr?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,11 +283,44 @@ export interface ClientSaveNotePayload {
   title: string;
   body: string;
   sharing: Sharing;
+  /** `chapter:<id>` entries link the note to chapters. Omitted ⇒ unchanged/empty. */
+  tags?: string[];
+  noteKind?: NoteKind;
 }
 
 export interface ClientDeleteNotePayload {
   type: 'deleteNote';
   noteId: string;
+}
+
+export interface ClientSaveChapterPayload {
+  type: 'saveChapter';
+  /** Omit to create; order is assigned server-side (appended). */
+  chapterId?: string;
+  title: string;
+  summary?: string;
+  /** Markdown prep notes (written to the chapter's .md sidecar). */
+  body?: string;
+}
+
+export interface ClientDeleteChapterPayload {
+  type: 'deleteChapter';
+  /** Items lose this chapter's tag; those with no remaining chapter become unfiled. */
+  chapterId: string;
+}
+
+export interface ClientReorderChaptersPayload {
+  type: 'reorderChapters';
+  /** Chapter ids in the new display order. */
+  orderedIds: string[];
+}
+
+export interface ClientSetEntityChaptersPayload {
+  type: 'setEntityChapters';
+  entityId: string;
+  entityType: 'note' | 'character' | 'asset';
+  /** Replaces the entity's `chapter:<id>` membership. */
+  chapterIds: string[];
 }
 
 export interface ClientMediaControlPayload {
@@ -468,6 +526,10 @@ export type ClientMessage =
   | ClientSetDocumentSharingPayload
   | ClientSaveNotePayload
   | ClientDeleteNotePayload
+  | ClientSaveChapterPayload
+  | ClientDeleteChapterPayload
+  | ClientReorderChaptersPayload
+  | ClientSetEntityChaptersPayload
   | ClientMediaControlPayload
   | ClientPingPayload
   | ClientTokenAddPayload
@@ -526,6 +588,10 @@ export interface ServerSnapshotPayload {
   /** kind==='document' assets — ALL members see these. */
   documents: AssetManifest[];
   myNotes: Note[];
+  /** Campaign chapters (ordered) — DM only; empty for players. */
+  chapters: ChapterView[];
+  /** Campaign NPCs & monsters — DM only; empty for players. */
+  characters: CharacterView[];
   /** active table playback, if any — late joiners sync from this */
   media: { assetId: string; action: 'play' | 'pause'; time: number; elapsedMs: number } | null;
   /** Tokens on the board — dmOnly tokens filtered out for non-DM. */
@@ -601,6 +667,18 @@ export interface ServerNoteDeletedPayload {
   noteId: string;
 }
 
+export interface ServerChaptersUpdatedPayload {
+  type: 'chaptersUpdated';
+  /** Full ordered list — DM sockets only. */
+  chapters: ChapterView[];
+}
+
+export interface ServerCharactersUpdatedPayload {
+  type: 'charactersUpdated';
+  /** Full list — DM sockets only. */
+  characters: CharacterView[];
+}
+
 export interface ServerMediaControlPayload {
   type: 'mediaControl';
   assetId: string;
@@ -657,6 +735,8 @@ export type WsErrorCode =
   | 'UNKNOWN_CAMPAIGN'
   | 'UNKNOWN_ASSET'
   | 'UNKNOWN_NOTE'
+  | 'UNKNOWN_CHAPTER'
+  | 'BAD_CHAPTER'
   | 'UNKNOWN_ITEM'
   | 'UNKNOWN_TOKEN'
   | 'UNKNOWN_PIECE'
@@ -690,6 +770,8 @@ export type ServerMessage =
   | ServerDocumentSharedPayload
   | ServerNoteSavedPayload
   | ServerNoteDeletedPayload
+  | ServerChaptersUpdatedPayload
+  | ServerCharactersUpdatedPayload
   | ServerMediaControlPayload
   | ServerTokensUpdatedPayload
   | ServerGridUpdatedPayload

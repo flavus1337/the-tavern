@@ -1,6 +1,7 @@
-import type { ServerSnapshotPayload, BoardItemView, Note, TokenView, GridState, MemberEntry, MapPiece } from '@vtt/shared';
+import type { ServerSnapshotPayload, BoardItemView, Note, NoteEntity, ChapterView, CharacterView, Character, TokenView, GridState, MemberEntry, MapPiece } from '@vtt/shared';
 import type { WsSession } from './hub.js';
 import type { CampaignEntry } from '../campaign/registry.js';
+import type { CampaignStore } from '../campaign/loader.js';
 import type { Token } from '../campaign/runtime.js';
 import { config } from '../config.js';
 import { getPresenceEntries } from './hub.js';
@@ -118,6 +119,10 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     }
   }
 
+  // Chapters & characters: DM-only prep. Players get none.
+  const chapters: ChapterView[] = isDm ? chapterViews(store) : [];
+  const characters: CharacterView[] = isDm ? characterViews(store) : [];
+
   // Tokens: DM sees all; players only see non-dmOnly tokens, and stat blocks
   // are redacted to the ones they own.
   const tokens: TokenView[] = runtime.state.tokens
@@ -150,6 +155,8 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
     assets,
     documents,
     myNotes,
+    chapters,
+    characters,
     media: entry.media
       ? {
           assetId: entry.media.assetId,
@@ -171,15 +178,29 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
 
 export { makeBoardItemView, makeTokenView };
 
-function noteToWire(note: {
-  id: string;
-  title: string;
-  body: string;
-  sharing: Note['sharing'];
-  ownerUsername: string | null;
-  createdAt: string;
-  updatedAt: string;
-}): Note {
+function characterToWire(c: Character): CharacterView {
+  return {
+    id: c.id,
+    name: c.name,
+    tags: c.tags,
+    portraitAssetId: c.portraitAssetId ?? null,
+    cr: c.statBlock?.cr,
+  };
+}
+
+/** Ordered chapter views — shared by the snapshot and chaptersUpdated broadcasts. */
+export function chapterViews(store: CampaignStore): ChapterView[] {
+  return [...store.chapters.values()]
+    .sort((a, b) => a.order - b.order)
+    .map((c) => ({ id: c.id, title: c.title, order: c.order, summary: c.summary, body: c.body }));
+}
+
+/** Character views — shared by the snapshot and charactersUpdated broadcasts. */
+export function characterViews(store: CampaignStore): CharacterView[] {
+  return [...store.characters.values()].map(characterToWire);
+}
+
+export function noteToWire(note: NoteEntity): Note {
   return {
     id: note.id,
     title: note.title,
@@ -188,5 +209,7 @@ function noteToWire(note: {
     ownerUsername: note.ownerUsername,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
+    tags: note.tags,
+    noteKind: note.noteKind,
   };
 }

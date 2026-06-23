@@ -3,6 +3,7 @@ import type { ClientMessage, GridState } from '@vtt/shared';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { AssetPicker } from './AssetPicker';
 import { InviteManager } from './InviteManager';
+import { ChaptersPanel } from './ChaptersPanel';
 import { useStore } from '../../store';
 
 function sendWs(msg: ClientMessage): void {
@@ -11,7 +12,7 @@ function sendWs(msg: ClientMessage): void {
 }
 
 export function DmPanel() {
-  const [tab, setTab] = useState<'assets' | 'board' | 'invites'>('assets');
+  const [tab, setTab] = useState<'chapters' | 'assets' | 'board' | 'invites'>('chapters');
   const uploadsLocked = useStore((s) => s.uploadsLocked);
   const connection = useStore((s) => s.connection);
 
@@ -24,6 +25,7 @@ export function DmPanel() {
       <div className="p-3 border-b border-[var(--border)] space-y-2">
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList className="w-full">
+            <TabsTrigger value="chapters">Chapters</TabsTrigger>
             <TabsTrigger value="assets">Assets</TabsTrigger>
             <TabsTrigger value="board">Board</TabsTrigger>
             <TabsTrigger value="invites">Invites</TabsTrigger>
@@ -53,6 +55,7 @@ export function DmPanel() {
         </label>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
+        {tab === 'chapters' && <ChaptersPanel />}
         {tab === 'assets' && <AssetPicker />}
         {tab === 'board' && <BoardControls />}
         {tab === 'invites' && <InviteManager />}

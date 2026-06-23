@@ -165,6 +165,14 @@ export class TableConnection {
         store.removeNote(msg.noteId);
         break;
 
+      case 'chaptersUpdated':
+        store.setChapters(msg.chapters);
+        break;
+
+      case 'charactersUpdated':
+        store.setCharacters(msg.characters);
+        break;
+
       case 'tokensUpdated':
         store.setTokens(msg.tokens);
         break;
