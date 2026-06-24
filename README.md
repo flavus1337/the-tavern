@@ -8,9 +8,11 @@ It is built for small groups: one DM, a few players — shared maps, tokens, dic
 
 ## Features
 
-🗺️ **Shared board.** A finite, framed play surface — a wooden "table" with a 120×120 square grid — that everyone sees from their own seat. Pin maps, handouts, and character art; drag, resize, rotate, and layer them live. Lock the map so nothing shifts mid-fight, or unlock single items so players move their own pieces. Pan and zoom stay local; the board stays in sync.
+🗺️ **Shared board.** A finite, framed play surface — the "Lit Table", a lamplit leather-and-felt gaming table with a 120×120 square grid — that everyone sees from their own seat. Pin maps, handouts, and character art; drag, resize, rotate, and layer them live. Lock the map so nothing shifts mid-fight, or unlock single items so players move their own pieces. Pan and zoom stay local; the board stays in sync.
 
-🧙 **Tokens.** Drop combat tokens for PCs and monsters — sized S/M/L/H, colored or backed by an uploaded image, with allegiance (ally / enemy / neutral) and optional HP bars. The DM can hand control of a token to a player so they move only their own, and snap-to-grid keeps everyone aligned.
+🧙 **Tokens.** Drop combat tokens for PCs and monsters — sized S/M/L/H, colored or backed by an uploaded image, with allegiance (ally / enemy / neutral) and optional HP bars. Tag them with the 15 standard D&D **conditions** (shown as badges to everyone) and attach a lightweight **stat block** (AC, speed, ability scores, notes) that the DM always sees but a player sees only for tokens they own. The DM can hand control of a token to a player so they move only their own, and snap-to-grid keeps everyone aligned.
+
+⚔️ **Combat tracker.** A shared **initiative** order in its own Combat tab: the DM adds tokens, auto-rolls d20+DEX, and steps through turns (start/end, next/prev, edit, clear). Everyone sees the order; the active combatant is highlighted in the panel and gets a gold ring on the board. Persisted across sessions.
 
 🏗️ **Build mode — make your own maps.** A full map editor for the DM: set a battlemap background, stamp terrain and props, and calibrate the grid to any image so one square means one square. Move, scale, rotate, and lock pieces, then **save the whole map as a reusable template** and drop it onto the table whenever you need it.
 
@@ -18,13 +20,15 @@ It is built for small groups: one DM, a few players — shared maps, tokens, dic
 
 📐 **Measurement & AoE templates.** A ruler shows live distance in your grid's units (metric or imperial). Standard D&D area-of-effect templates — **circle/sphere, cone, line, and square/cube** — drop onto the board with a single drag, labeled with radius/length/side. Place several at once; they sync to the whole table and **stay until you clear them**, so lingering effects like a wall of fire persist across rounds.
 
-🎲 **Dice.** Quick rolls for d4 to d100, expressions like `2d6+3` or `2d20kh`, and Advantage/Disadvantage checkboxes that show both throws with the kept die highlighted. Rolls happen server side, land in a shared roll log, and the DM can roll privately. Natural 20s get a short gold flash on the board.
+🎲 **Dice.** Quick rolls for d4 to d100, expressions like `2d6+3` or `2d20kh`, and Advantage/Disadvantage checkboxes that show both throws with the kept die highlighted. Rolls happen server side, land in a shared roll log, and the DM can roll privately. A **BG3-style 3D dice overlay** (real tumbling d4–d20, true percentile d100) plays the throw for the whole table and settles on the server-resolved value, with a gold/garnet flourish on crits and fumbles.
 
 📜 **Documents, private until shared.** Players upload character sheets, handouts, anything (PDF, images, text). Only the uploader sees a file until they share it. Sharing is fine-grained — keep it private, show only the DM, pick specific players, or open it to the whole table. Shared files open for everyone in floating, draggable panels. PDFs render in-app in every browser.
 
 🎵 **Synced audio.** Upload ambience or battle music and play it for the whole table. The DM (or the uploader) controls playback, players only control their own volume, and late joiners enter the track at the current position. The player sits in a small dock at the bottom and can be minimized.
 
-📝 **Notes.** Personal session notes with a markdown toolbar and preview, DM-only prep notes, and optional sharing of single notes with the party. Notes are stored as part of the campaign.
+📝 **Notes.** Personal session notes with a markdown toolbar and preview, DM-only prep notes (secret / read-aloud / handout), and optional sharing of single notes with the party. Notes are stored as part of the campaign.
+
+📖 **Chapters (DM).** The DM panel's organizing spine: a chapter rail scopes maps, NPCs, and notes to the part of the adventure they belong to, with an Unfiled bucket so nothing goes missing. Per-chapter prep bodies persist to Markdown sidecars. DM-only — players never see it.
 
 🔑 **Invite links.** No open signup. The DM generates a link, a friend opens it, picks a name and password, and joins the campaign. Role-based visibility is enforced on the server: players never see DM-only content, non-members see nothing at all.
 
@@ -101,7 +105,7 @@ deploy/     start.mjs (cross-platform launcher), systemd unit
 scripts/    smoke-test.ts, an end-to-end test against a real server instance
 ```
 
-Single Node process, JSON files for persistence, WebSockets for live sync, scrypt plus httpOnly-cookie sessions for auth. The board (maps, tokens, pieces, AoE templates, grid) is server-authoritative and broadcast to everyone live. No database, no Docker required, no external services at game time (AI generation is the only optional outbound call).
+Single Node process, JSON files for persistence, WebSockets for live sync, scrypt plus httpOnly-cookie sessions for auth. The board (maps, tokens, pieces, AoE templates, initiative, grid) is server-authoritative and broadcast to everyone live. No database, no Docker required, no external services at game time (AI generation is the only optional outbound call).
 
 ```bash
 pnpm -r typecheck && pnpm -r build && pnpm smoke   # full verification suite (200+ assertions)
@@ -110,7 +114,6 @@ pnpm -r typecheck && pnpm -r build && pnpm smoke   # full verification suite (20
 ## Roadmap
 
 - Fog of war (DM-controlled vision masking)
-- Initiative and condition tracker
 - PDF campaign auto-import: feed a campaign PDF to an LLM pipeline that writes the campaign folder
 
 ## License

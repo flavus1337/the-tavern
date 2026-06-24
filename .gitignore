@@ -1,5 +1,6 @@
 node_modules
 dist
+*.tsbuildinfo
 /data/
 packages/server/data/
 campaigns/*/.runtime/
