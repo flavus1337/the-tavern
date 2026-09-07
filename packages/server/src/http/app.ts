@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import { validateId } from './validate.js';
 import { log } from '../log.js';
 import { requireAuth } from '../auth/middleware.js';
 import { previewInvite, redeemInvite } from '../auth/invites.js';
@@ -16,6 +17,7 @@ import { asyncRoute } from './asyncRoute.js';
 
 export function createApp(): express.Application {
   const app = express();
+  app.param('token', validateId);
 
   app.set('trust proxy', 1);
   // Image generation routes carry base64 bodies and bring their own larger JSON

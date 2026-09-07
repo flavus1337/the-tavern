@@ -1,7 +1,23 @@
 import path from 'node:path';
+import { isSafeId } from '@vtt/shared';
 import type { NoteEntity, AssetManifest, Chapter, Character } from '@vtt/shared';
 import type { CampaignStore } from './loader.js';
 import { withCampaignFiles, writeCampaignFile, updateCampaignMemory } from './commit.js';
+
+/** Every entity filename is a basename inside its own collection, even for internal callers. */
+function entityPath(dir: string, id: string, extension: string): string {
+  if (!isSafeId(id)) throw new Error('invalid entity identifier');
+  return collectionPath(dir, `${id}.${extension}`);
+}
+
+function collectionPath(dir: string, filename: string): string {
+  if (!filename || filename.length > 255 || filename.includes('\\') || filename.includes('\0') || path.basename(filename) !== filename || filename === '.' || filename === '..') {
+    throw new Error('invalid asset filename');
+  }
+  const file = path.resolve(dir, filename);
+  if (path.dirname(file) !== path.resolve(dir)) throw new Error('file is outside its collection');
+  return file;
+}
 
 /**
  * Persist an entity whose `body` lives in a same-basename `.md` sidecar (chapters,
@@ -15,8 +31,8 @@ async function writeWithSidecar(
   entity: { body?: string },
 ): Promise<void> {
   const { body, ...rest } = entity;
-  await writeCampaignFile(campaignDir, path.join(dir, `${id}.json`), JSON.stringify(rest, null, 2));
-  const sidecar = path.join(dir, `${id}.md`);
+  await writeCampaignFile(campaignDir, entityPath(dir, id, 'json'), JSON.stringify(rest, null, 2));
+  const sidecar = entityPath(dir, id, 'md');
   if (body && body.trim()) {
     await writeCampaignFile(campaignDir, sidecar, body);
   } else {
@@ -34,8 +50,8 @@ export async function saveChapter(store: CampaignStore, chapter: Chapter): Promi
 export async function deleteChapter(store: CampaignStore, chapterId: string): Promise<void> {
   await withCampaignFiles(store.dir, async () => {
     const dir = path.join(store.dir, 'chapters');
-    for (const f of [`${chapterId}.json`, `${chapterId}.md`]) {
-      await writeCampaignFile(store.dir, path.join(dir, f), null);
+    for (const ext of ['json', 'md']) {
+      await writeCampaignFile(store.dir, entityPath(dir, chapterId, ext), null);
     }
     updateCampaignMemory(() => store.chapters.delete(chapterId));
   });
@@ -50,14 +66,14 @@ export async function saveCharacter(store: CampaignStore, character: Character):
 
 export async function saveNote(store: CampaignStore, note: NoteEntity): Promise<void> {
   await withCampaignFiles(store.dir, async () => {
-    await writeCampaignFile(store.dir, path.join(store.dir, 'notes', `${note.id}.json`), JSON.stringify(note, null, 2));
+    await writeCampaignFile(store.dir, entityPath(path.join(store.dir, 'notes'), note.id, 'json'), JSON.stringify(note, null, 2));
     updateCampaignMemory(() => store.notes.set(note.id, note));
   });
 }
 
 export async function deleteNote(store: CampaignStore, noteId: string): Promise<void> {
   await withCampaignFiles(store.dir, async () => {
-    await writeCampaignFile(store.dir, path.join(store.dir, 'notes', `${noteId}.json`), null);
+    await writeCampaignFile(store.dir, entityPath(path.join(store.dir, 'notes'), noteId, 'json'), null);
     updateCampaignMemory(() => store.notes.delete(noteId));
   });
 }
@@ -67,9 +83,11 @@ export async function saveAssetManifest(
   manifest: AssetManifest,
 ): Promise<void> {
   // Derive manifest filename from the binary file's basename.
+  if (!isSafeId(manifest.id)) throw new Error('invalid asset identifier');
+  collectionPath(path.join(store.dir, 'assets'), manifest.file);
   const ext = path.extname(manifest.file);
   const base = path.basename(manifest.file, ext);
-  const filePath = path.join(store.dir, 'assets', `${base}.json`);
+  const filePath = collectionPath(path.join(store.dir, 'assets'), `${base}.json`);
   await withCampaignFiles(store.dir, async () => {
     await writeCampaignFile(store.dir, filePath, JSON.stringify(manifest, null, 2));
     updateCampaignMemory(() => store.assets.set(manifest.id, manifest));
@@ -80,10 +98,12 @@ export async function deleteAssetFiles(
   store: CampaignStore,
   manifest: AssetManifest,
 ): Promise<void> {
+  if (!isSafeId(manifest.id)) throw new Error('invalid asset identifier');
+  collectionPath(path.join(store.dir, 'assets'), manifest.file);
   const ext = path.extname(manifest.file);
   const base = path.basename(manifest.file, ext);
-  const binaryPath = path.join(store.dir, 'assets', manifest.file);
-  const manifestPath = path.join(store.dir, 'assets', `${base}.json`);
+  const binaryPath = collectionPath(path.join(store.dir, 'assets'), manifest.file);
+  const manifestPath = collectionPath(path.join(store.dir, 'assets'), `${base}.json`);
 
   await withCampaignFiles(store.dir, async () => {
     for (const file of [binaryPath, manifestPath]) {

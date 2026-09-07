@@ -3,6 +3,7 @@ import { parseDiceExpression, randomId } from '@vtt/shared';
 import type { DieSides, RollVisibility } from '@vtt/shared';
 import { useStore } from '../store';
 import { Input } from './ui/input';
+import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
 const QUICK_DICE: DieSides[] = [4, 6, 8, 10, 12, 20, 100];
 
@@ -16,18 +17,14 @@ export function DiceRoller() {
   const [advantage, setAdvantage] = useState(false);
   const [disadvantage, setDisadvantage] = useState(false);
   const [expressionError, setExpressionError] = useState<string | null>(null);
+  const save = useSaveCommand();
 
   const isDm = self?.role === 'dm';
-  const disabled = connection !== 'open';
+  const disabled = connection !== 'open' || save.saving || save.blocked;
 
-  function getConn() {
-    return (window as unknown as { __vttConn?: { send: (msg: unknown) => void } }).__vttConn;
-  }
-
-  function sendRoll(expr: string, lbl?: string) {
-    const conn = getConn();
-    if (!conn || connection !== 'open') return;
-    conn.send({
+  async function sendRoll(expr: string, lbl?: string) {
+    if (disabled) return;
+    await save.run({
       type: 'roll',
       requestId: randomId('req'),
       expression: expr,
@@ -62,6 +59,7 @@ export function DiceRoller() {
 
   return (
     <div style={{ padding: 14 }} className="space-y-4">
+      <SaveFeedback save={save} conflicts={[]} latest={{}} onUseTable={() => {}} onKeepChanges={() => {}} />
 
       {/* Quick Roll */}
       <div>

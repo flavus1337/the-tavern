@@ -1,15 +1,12 @@
+import { sendWs } from '../../ws/connection';
 import { useState } from 'react';
-import type { ClientMessage, GridState } from '@vtt/shared';
+import type { GridState } from '@vtt/shared';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { AssetPicker } from './AssetPicker';
 import { InviteManager } from './InviteManager';
 import { ChaptersPanel } from './ChaptersPanel';
 import { useStore } from '../../store';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 export function DmPanel() {
   const [tab, setTab] = useState<'chapters' | 'assets' | 'board' | 'invites'>('chapters');

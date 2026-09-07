@@ -1,7 +1,7 @@
 // WebSocket protocol types — the wire contract between server and client.
 import type { AssetManifest, Sharing, NoteKind } from './campaign.js';
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /** The board is a finite BOARD_CELLS × BOARD_CELLS square — the hard playing-field boundary. */
 export const BOARD_CELLS = 120;
@@ -76,6 +76,7 @@ export type Condition = (typeof CONDITIONS)[number];
 
 export interface TokenView {
   id: string;
+  revision: number;
   name: string;
   shape: 'round' | 'square';
   allegiance: 'ally' | 'enemy' | 'neutral';
@@ -176,6 +177,7 @@ export interface RollLogEntry {
 
 export interface Note {
   id: string;
+  revision: number;
   title: string;
   body: string;
   sharing: Sharing;
@@ -191,6 +193,7 @@ export interface Note {
 /** Chapter as sent to the DM panel — prep body included, scenes omitted (v1). */
 export interface ChapterView {
   id: string;
+  revision: number;
   title: string;
   order: number;
   summary?: string;
@@ -277,15 +280,17 @@ export interface ClientSetDocumentSharingPayload {
   sharing: Sharing;
 }
 
-export interface ClientSaveNotePayload {
+export type NoteChanges = Pick<Note, 'title' | 'body' | 'sharing' | 'tags' | 'noteKind'>;
+export type ChapterChanges = Pick<ChapterView, 'title' | 'summary' | 'body'>;
+export type TokenChanges = Pick<TokenView, 'name' | 'shape' | 'allegiance' | 'ownerUserId' | 'size' | 'fill' | 'hp' | 'maxHp' | 'dmOnly' | 'sharing' | 'conditions' | 'statBlock'>;
+
+export interface ClientSaveNotePayload extends Partial<NoteChanges> {
   type: 'saveNote';
+  /** Omit to create; an existing ID never creates a replacement. */
   noteId?: string;
-  title: string;
-  body: string;
-  sharing: Sharing;
-  /** `chapter:<id>` entries link the note to chapters. Omitted ⇒ unchanged/empty. */
-  tags?: string[];
-  noteKind?: NoteKind;
+  baseRevision?: number;
+  /** Original values for changed fields; permits a disjoint stale edit to merge. */
+  expected?: Partial<NoteChanges>;
 }
 
 export interface ClientDeleteNotePayload {
@@ -293,14 +298,11 @@ export interface ClientDeleteNotePayload {
   noteId: string;
 }
 
-export interface ClientSaveChapterPayload {
+export interface ClientSaveChapterPayload extends Partial<ChapterChanges> {
   type: 'saveChapter';
-  /** Omit to create; order is assigned server-side (appended). */
   chapterId?: string;
-  title: string;
-  summary?: string;
-  /** Markdown prep notes (written to the chapter's .md sidecar). */
-  body?: string;
+  baseRevision?: number;
+  expected?: Partial<ChapterChanges>;
 }
 
 export interface ClientDeleteChapterPayload {
@@ -366,21 +368,11 @@ export interface ClientTokenMovePayload {
   y: number;
 }
 
-export interface ClientTokenUpdatePayload {
+export interface ClientTokenUpdatePayload extends Partial<TokenChanges> {
   type: 'tokenUpdate';
   tokenId: string;
-  name?: string;
-  shape?: 'round' | 'square';
-  allegiance?: 'ally' | 'enemy' | 'neutral';
-  ownerUserId?: string | null;
-  size?: 'S' | 'M' | 'L' | 'H';
-  fill?: string | null;
-  hp?: number | null;
-  maxHp?: number | null;
-  dmOnly?: boolean;
-  sharing?: Sharing;
-  conditions?: string[];
-  statBlock?: TokenStatBlock | null;
+  baseRevision: number;
+  expected?: Partial<TokenChanges>;
 }
 
 export interface ClientTokenRemovePayload {
@@ -480,6 +472,9 @@ export interface ClientPieceMovePayload {
 export interface ClientPieceUpdatePayload {
   type: 'pieceUpdate';
   id: string;
+  /** Full resize transform can update origin and dimensions atomically. */
+  x?: number;
+  y?: number;
   w?: number;
   h?: number;
   rotation?: number;
@@ -514,7 +509,7 @@ export interface ClientDeleteMapTemplatePayload {
   id: string;
 }
 
-export type ClientMessage =
+export type ClientMessage = (
   | ClientJoinPayload
   | ClientRollPayload
   | ClientBoardAddPayload
@@ -549,7 +544,12 @@ export type ClientMessage =
   | ClientSetMapMetaPayload
   | ClientSaveMapTemplatePayload
   | ClientLoadMapTemplatePayload
-  | ClientDeleteMapTemplatePayload;
+  | ClientDeleteMapTemplatePayload
+) & { requestId?: string };
+
+export function isDurableMessage(msg: { type: string }): boolean {
+  return !['join', 'ping', 'measure'].includes(msg.type);
+}
 
 // ---------------------------------------------------------------------------
 // Server → Client messages
@@ -727,6 +727,9 @@ export type ServerMeasureSharedPayload =
   | { type: 'measureShared'; kind: 'clear'; by: string };
 
 export type WsErrorCode =
+  | 'BAD_MESSAGE'
+  | 'CONFLICT'
+  | 'ALREADY_JOINED'
   | 'NOT_MEMBER'
   | 'FORBIDDEN'
   | 'NOT_JOINED'
@@ -747,9 +750,18 @@ export type WsErrorCode =
 
 export interface ServerErrorPayload {
   type: 'error';
+  requestId?: string;
   code: WsErrorCode;
   message: string;
   fatal?: boolean;
+}
+
+/** Sent only after the authoritative update and its durable commit. */
+export interface ServerCommandAckPayload {
+  type: 'commandAck';
+  requestId: string;
+  entityId?: string;
+  revision?: number;
 }
 
 export interface ServerPongPayload {
@@ -758,6 +770,7 @@ export interface ServerPongPayload {
 }
 
 export type ServerMessage =
+  | ServerCommandAckPayload
   | ServerJoinedPayload
   | ServerSnapshotPayload
   | ServerPresencePayload

@@ -1,4 +1,5 @@
-import { PROTOCOL_VERSION, randomId, slugify, SCHEMA_VERSIONS, parseSharing, defaultSharing, clampToField } from '@vtt/shared';
+import { isDeepStrictEqual } from 'node:util';
+import { parseClientMessage, isRecord, isSafeId, isDurableMessage, PROTOCOL_VERSION, randomId, slugify, SCHEMA_VERSIONS, parseSharing, defaultSharing, clampToField } from '@vtt/shared';
 import type {
   ClientMessage,
   WsErrorCode,
@@ -13,6 +14,10 @@ import type {
   AoeKind,
   TokenStatBlock,
   InitiativeState,
+  ClientSaveNotePayload,
+  ClientSaveChapterPayload,
+  ClientTokenUpdatePayload,
+  ServerCommandAckPayload,
 } from '@vtt/shared';
 import { CONDITIONS, isNoteKind } from '@vtt/shared';
 import type { WsSession } from './hub.js';
@@ -21,7 +26,7 @@ import { buildSnapshot, makeBoardItemView, makeTokenView, makePieceView, redactS
 import { broadcastDocuments } from './documents.js';
 import { canAccessShared, canControlToken, documentSharing, type Viewer } from './sharing.js';
 import { getCampaign } from '../campaign/registry.js';
-import { afterCampaignCommit, mutateCampaign } from '../campaign/commit.js';
+import { mutateCampaign } from '../campaign/commit.js';
 import { getRole } from '../auth/memberships.js';
 import { roll } from '../dice/roller.js';
 import { appendRollLog, persistState } from '../campaign/runtime.js';
@@ -40,17 +45,30 @@ const BOARD_W_MAX = 8000;
 // Token footprint in grid cells by size — keep in sync with the client's TOKEN_CELLS.
 const TOKEN_CELLS: Record<'S' | 'M' | 'L' | 'H', number> = { S: 1, M: 1, L: 2, H: 3 };
 
-function sendError(
-  session: WsSession,
-  code: WsErrorCode,
-  message: string,
-  fatal = false,
-): void {
-  send(session.ws, { type: 'error', code, message, fatal });
-  if (fatal) {
-    afterCampaignCommit(() => session.ws.close(1008, code));
-  }
+class CommandRejection extends Error {
+  constructor(readonly code: WsErrorCode, message: string, readonly fatal = false) { super(message); }
 }
+
+type CommandOutcome = Pick<ServerCommandAckPayload, 'entityId' | 'revision'>;
+
+function sendError(_session: WsSession, code: WsErrorCode, message: string, fatal = false): never {
+  throw new CommandRejection(code, message, fatal);
+}
+
+function checkRevision<T extends { revision?: number }>(
+  current: T,
+  message: { baseRevision?: number; expected?: object },
+  changes: object,
+): void {
+  const revision = current.revision ?? 0;
+  if (message.baseRevision === revision) return;
+  const expected = message.expected as Record<string, unknown> | undefined;
+  const fields = Object.keys(changes);
+  if (message.baseRevision === undefined || message.baseRevision > revision || !expected || !fields.every((key) =>
+    Object.hasOwn(expected, key) && isDeepStrictEqual((current as Record<string, unknown>)[key], expected[key]),
+  )) throw new CommandRejection('CONFLICT', 'This item changed. Review the latest version before saving your draft.');
+}
+
 
 function broadcastBoardUpdated(campaignId: string, entry: { store: { meta: { id: string }; assets: Map<string, { id: string; file: string; title: string; width: number | null; height: number | null }> }; runtime: { state: { board: Array<{ id: string; assetId: string; x: number; y: number; w: number; z: number }> } } }): void {
   const items: BoardItemView[] = entry.runtime.state.board.map((item) =>
@@ -77,33 +95,40 @@ function broadcastTokensUpdated(
 }
 
 export async function handleMessage(session: WsSession, raw: unknown): Promise<void> {
-  if (typeof raw !== 'object' || raw === null || !('type' in raw)) {
-    // Unknown message — ignore.
-    return;
-  }
-
-  const msg = raw as ClientMessage;
-
-  // Before join, only allow 'join'.
-  if (!session.campaignId && msg.type !== 'join') {
-    sendError(session, 'NOT_JOINED', 'You must join a campaign first');
-    return;
-  }
-
+  const requestId = isRecord(raw) && isSafeId(raw['requestId']) ? raw['requestId'] : undefined;
+  let reservedJoin = false;
   try {
-    const entry = getCampaign(msg.type === 'join' ? msg.campaignId : session.campaignId!);
-    if (entry && msg.type !== 'ping' && msg.type !== 'measure') {
-      await mutateCampaign(entry, () => dispatchMessage(session, msg));
-    } else {
-      await dispatchMessage(session, msg);
+    const parsed = parseClientMessage(raw);
+    if (!parsed.ok) throw new CommandRejection('BAD_MESSAGE', parsed.reason);
+    const msg = parsed.message;
+    if (msg.type === 'join') {
+      if (session.campaignId || session.joining) throw new CommandRejection('ALREADY_JOINED', 'A socket can join only one campaign', true);
+      session.joining = true;
+      reservedJoin = true;
+    } else if (!session.campaignId) {
+      throw new CommandRejection('NOT_JOINED', 'You must join a campaign first');
     }
+    const entry = getCampaign(msg.type === 'join' ? msg.campaignId : session.campaignId!);
+    if (!entry && msg.type !== 'join') throw new CommandRejection('UNKNOWN_CAMPAIGN', 'Campaign is unavailable');
+    const result = entry && msg.type !== 'ping' && msg.type !== 'measure'
+      ? await mutateCampaign(entry, () => dispatchMessage(session, msg))
+      : await dispatchMessage(session, msg);
+    if (isDurableMessage(msg)) send(session.ws, { type: 'commandAck', requestId: requestId!, ...result });
   } catch (err) {
-    log.error(`WS handler error: ${String(err)}`);
-    sendError(session, 'INTERNAL', 'Internal error');
+    if (!(err instanceof CommandRejection)) log.error(`WS handler error: ${String(err)}`);
+    send(session.ws, {
+      type: 'error', requestId,
+      code: err instanceof CommandRejection ? err.code : 'INTERNAL',
+      message: err instanceof CommandRejection ? err.message : 'Could not save this command',
+      fatal: err instanceof CommandRejection && err.fatal,
+    });
+    if (err instanceof CommandRejection && err.fatal) session.ws.close(1008, err.code);
+  } finally {
+    if (reservedJoin) session.joining = false;
   }
 }
 
-async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<void> {
+async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<CommandOutcome | void> {
     switch (msg.type) {
       case 'join':
         await handleJoin(session, msg);
@@ -133,14 +158,12 @@ async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<
         await handleSetDocumentSharing(session, msg);
         break;
       case 'saveNote':
-        await handleSaveNote(session, msg);
-        break;
+        return handleSaveNote(session, msg);
       case 'deleteNote':
         await handleDeleteNote(session, msg);
         break;
       case 'saveChapter':
-        await handleSaveChapter(session, msg);
-        break;
+        return handleSaveChapter(session, msg);
       case 'deleteChapter':
         await handleDeleteChapter(session, msg);
         break;
@@ -157,14 +180,12 @@ async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<
         send(session.ws, { type: 'pong', sentAt: msg.sentAt });
         break;
       case 'tokenAdd':
-        await handleTokenAdd(session, msg);
-        break;
+        return handleTokenAdd(session, msg);
       case 'tokenMove':
         await handleTokenMove(session, msg);
         break;
       case 'tokenUpdate':
-        await handleTokenUpdate(session, msg);
-        break;
+        return handleTokenUpdate(session, msg);
       case 'tokenRemove':
         await handleTokenRemove(session, msg);
         break;
@@ -211,7 +232,7 @@ async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<
         await handleDeleteMapTemplate(session, msg);
         break;
       default:
-        log.warn(`Unknown WS message type from ${session.username}: ${(msg as { type: string }).type}`);
+        throw new CommandRejection('BAD_MESSAGE', 'Unknown command');
     }
 }
 
@@ -240,6 +261,8 @@ async function handleJoin(
     sendError(session, 'NOT_MEMBER', 'You are not a member of this campaign', true);
     return;
   }
+
+  if (session.ws.readyState !== 1) throw new CommandRejection('NOT_JOINED', 'Socket closed before joining');
 
   // Bind session to campaign.
   session.campaignId = msg.campaignId;
@@ -280,13 +303,7 @@ async function handleRoll(
   });
 
   if (!result.ok) {
-    send(session.ws, {
-      type: 'error',
-      code: 'BAD_EXPRESSION',
-      message: result.error,
-      fatal: false,
-    });
-    return;
+    throw new CommandRejection('BAD_EXPRESSION', result.error);
   }
 
   const { entry } = result;
@@ -531,82 +548,33 @@ async function handleSetDocumentSharing(
   }
 }
 
-async function handleSaveNote(
-  session: WsSession,
-  msg: {
-    type: 'saveNote';
-    noteId?: string;
-    title: string;
-    body: string;
-    sharing: Sharing;
-    tags?: string[];
-    noteKind?: NoteKind;
-  },
-): Promise<void> {
+async function handleSaveNote(session: WsSession, msg: ClientSaveNotePayload): Promise<CommandOutcome> {
   const campaignId = session.campaignId!;
-  const entry = getCampaign(campaignId);
-  if (!entry) return;
-
-  const isDm = session.role === 'dm';
-  const sharing = parseSharing(msg.sharing);
-  // Omitted tags/noteKind leave the existing values untouched on edit.
-  const tags = Array.isArray(msg.tags)
-    ? msg.tags.filter((t): t is string => typeof t === 'string')
-    : undefined;
-  const noteKind = isNoteKind(msg.noteKind) ? msg.noteKind : undefined;
-
-  let note: NoteEntity;
+  const entry = getCampaign(campaignId)!;
+  const { type: _type, noteId, baseRevision: _base, expected: _expected, ...fields } = msg;
+  // Pick editable fields explicitly; protocol metadata must never reach disk.
+  const changes = Object.fromEntries(['title', 'body', 'sharing', 'tags', 'noteKind']
+    .filter((key) => (fields as Record<string, unknown>)[key] !== undefined)
+    .map((key) => [key, (fields as Record<string, unknown>)[key]]));
   const now = new Date().toISOString();
-
-  if (msg.noteId) {
-    const existing = entry.store.notes.get(msg.noteId);
-    if (existing) {
-      if (!isDm && existing.ownerUsername !== session.username) {
-        sendError(session, 'FORBIDDEN', 'You can only edit your own notes');
-        return;
-      }
-      note = {
-        ...existing,
-        title: msg.title,
-        body: msg.body,
-        sharing,
-        updatedAt: now,
-        ...(tags !== undefined ? { tags } : {}),
-        ...(noteKind !== undefined ? { noteKind } : {}),
-      };
-    } else {
-      note = {
-        type: 'note',
-        schemaVersion: SCHEMA_VERSIONS.note,
-        id: msg.noteId,
-        title: msg.title,
-        body: msg.body,
-        sharing,
-        ownerUsername: session.username,
-        createdAt: now,
-        updatedAt: now,
-        tags: tags ?? [],
-        ...(noteKind !== undefined ? { noteKind } : {}),
-      };
-    }
+  let note: NoteEntity;
+  if (noteId) {
+    const existing = entry.store.notes.get(noteId);
+    if (!existing) throw new CommandRejection('UNKNOWN_NOTE', 'Note no longer exists');
+    if (session.role !== 'dm' && existing.ownerUsername !== session.username) throw new CommandRejection('FORBIDDEN', 'You can only edit your own notes');
+    checkRevision({ ...existing, noteKind: existing.noteKind ?? 'secret' }, msg, changes);
+    note = { ...existing, ...changes, revision: (existing.revision ?? 0) + 1, updatedAt: now };
   } else {
     note = {
-      type: 'note',
-      schemaVersion: SCHEMA_VERSIONS.note,
-      id: randomId('note'),
-      title: msg.title,
-      body: msg.body,
-      sharing,
-      ownerUsername: session.username,
-      createdAt: now,
-      updatedAt: now,
-      tags: tags ?? [],
-      ...(noteKind !== undefined ? { noteKind } : {}),
+      type: 'note', schemaVersion: SCHEMA_VERSIONS.note, id: randomId('note'), revision: 1,
+      title: msg.title!, body: msg.body!, sharing: msg.sharing!, tags: msg.tags ?? [],
+      ownerUsername: session.username, createdAt: now, updatedAt: now,
+      ...(msg.noteKind !== undefined ? { noteKind: msg.noteKind } : {}),
     };
   }
-
   await saveNote(entry.store, note);
   broadcastNote(campaignId, note);
+  return { entityId: note.id, revision: note.revision };
 }
 
 /**
@@ -716,44 +684,28 @@ function withChapterTags(tags: string[], chapterIds: string[]): string[] {
   return [...base, ...chapterIds.map((id) => `chapter:${id}`)];
 }
 
-async function handleSaveChapter(
-  session: WsSession,
-  msg: { type: 'saveChapter'; chapterId?: string; title: string; summary?: string; body?: string },
-): Promise<void> {
-  const entry = requireDm(session, 'edit chapters');
-  if (!entry) return;
-  const title = (msg.title ?? '').trim();
-  if (!title) {
-    sendError(session, 'BAD_CHAPTER', 'A chapter title is required');
-    return;
-  }
-  const summary = typeof msg.summary === 'string' ? msg.summary : undefined;
-  const body = typeof msg.body === 'string' ? msg.body : undefined;
-
+async function handleSaveChapter(session: WsSession, msg: ClientSaveChapterPayload): Promise<CommandOutcome> {
+  const entry = requireDm(session, 'edit chapters')!;
+  const changes = Object.fromEntries(['title', 'summary', 'body']
+    .filter((key) => (msg as unknown as Record<string, unknown>)[key] !== undefined)
+    .map((key) => [key, (msg as unknown as Record<string, unknown>)[key]]));
   let chapter: Chapter;
-  if (msg.chapterId && entry.store.chapters.has(msg.chapterId)) {
-    const existing = entry.store.chapters.get(msg.chapterId)!;
-    chapter = { ...existing, title, summary, body };
+  if (msg.chapterId) {
+    const existing = entry.store.chapters.get(msg.chapterId);
+    if (!existing) throw new CommandRejection('UNKNOWN_CHAPTER', 'Chapter no longer exists');
+    checkRevision({ ...existing, summary: existing.summary ?? '', body: existing.body ?? '' }, msg, changes);
+    chapter = { ...existing, ...changes, revision: (existing.revision ?? 0) + 1 };
   } else {
-    // New chapter: derive a unique slug id, append after the last order.
-    const base = slugify(title) || 'chapter';
+    const base = slugify(msg.title!);
     let id = base;
     for (let i = 2; entry.store.chapters.has(id); i++) id = `${base}-${i}`;
     const maxOrder = [...entry.store.chapters.values()].reduce((m, c) => Math.max(m, c.order), -1);
-    chapter = {
-      type: 'chapter',
-      schemaVersion: SCHEMA_VERSIONS.chapter,
-      id,
-      title,
-      order: maxOrder + 1,
-      summary,
-      body,
-      scenes: [],
-    };
+    chapter = { type: 'chapter', schemaVersion: SCHEMA_VERSIONS.chapter, id, revision: 1,
+      title: msg.title!, summary: msg.summary, body: msg.body, order: maxOrder + 1, scenes: [] };
   }
-
   await saveChapter(entry.store, chapter);
   broadcastChapters(session.campaignId!, entry);
+  return { entityId: chapter.id, revision: chapter.revision };
 }
 
 async function handleDeleteChapter(
@@ -785,7 +737,7 @@ async function handleDeleteChapter(
   }
   for (const note of entry.store.notes.values()) {
     if (note.tags.includes(tag)) {
-      const updated = { ...note, tags: note.tags.filter((t) => t !== tag) };
+      const updated = { ...note, revision: (note.revision ?? 0) + 1, tags: note.tags.filter((t) => t !== tag) };
       await saveNote(entry.store, updated);
       changedNotes.push(updated);
     }
@@ -807,7 +759,7 @@ async function handleReorderChapters(
   for (const id of msg.orderedIds) {
     const ch = entry.store.chapters.get(id);
     if (ch && ch.order !== order) {
-      await saveChapter(entry.store, { ...ch, order });
+      await saveChapter(entry.store, { ...ch, order, revision: (ch.revision ?? 0) + 1 });
     }
     if (ch) order++;
   }
@@ -827,22 +779,22 @@ async function handleSetEntityChapters(
   switch (msg.entityType) {
     case 'character': {
       const ch = entry.store.characters.get(msg.entityId);
-      if (!ch) return;
+      if (!ch) throw new CommandRejection('BAD_MESSAGE', 'Character no longer exists');
       await saveCharacter(entry.store, { ...ch, tags: withChapterTags(ch.tags, chapterIds) });
       broadcast(campaignId, { type: 'charactersUpdated', characters: characterViews(entry.store) }, dmOnly);
       break;
     }
     case 'asset': {
       const a = entry.store.assets.get(msg.entityId);
-      if (!a) return;
+      if (!a) throw new CommandRejection('UNKNOWN_ASSET', 'Asset no longer exists');
       await saveAssetManifest(entry.store, { ...a, tags: withChapterTags(a.tags, chapterIds) });
       broadcastAssets(campaignId, entry);
       break;
     }
     case 'note': {
       const n = entry.store.notes.get(msg.entityId);
-      if (!n) return;
-      const updated = { ...n, tags: withChapterTags(n.tags, chapterIds) };
+      if (!n) throw new CommandRejection('UNKNOWN_NOTE', 'Note no longer exists');
+      const updated = { ...n, revision: (n.revision ?? 0) + 1, tags: withChapterTags(n.tags, chapterIds) };
       await saveNote(entry.store, updated);
       broadcastChangedNotes(campaignId, [updated]);
       break;
@@ -900,10 +852,10 @@ async function handleTokenAdd(
     conditions?: string[];
     statBlock?: TokenStatBlock | null;
   },
-): Promise<void> {
+): Promise<CommandOutcome> {
   const campaignId = session.campaignId!;
   const entry = getCampaign(campaignId);
-  if (!entry) return;
+  if (!entry) throw new CommandRejection('UNKNOWN_CAMPAIGN', 'Campaign unavailable');
 
   const isDm = session.role === 'dm';
 
@@ -911,7 +863,6 @@ async function handleTokenAdd(
     const manifest = entry.store.assets.get(msg.assetId);
     if (!manifest || manifest.assetKind === 'document') {
       sendError(session, 'UNKNOWN_ASSET', `Asset "${msg.assetId}" not found or is not an image`);
-      return;
     }
   }
 
@@ -926,6 +877,7 @@ async function handleTokenAdd(
   const tpos = clampToField(msg.x, msg.y, tpx, tpx, entry.runtime.state.grid.cell);
   const newToken: Token = {
     id: randomId('tok'),
+    revision: 1,
     name: msg.name || 'Token',
     shape: msg.shape,
     allegiance: msg.allegiance,
@@ -951,6 +903,7 @@ async function handleTokenAdd(
   await persistState(entry.runtime);
 
   broadcastTokensUpdated(campaignId, entry);
+  return { entityId: newToken.id, revision: newToken.revision };
 }
 
 async function handleTokenMove(
@@ -981,40 +934,21 @@ async function handleTokenMove(
   const tpx = TOKEN_CELLS[token.size] * entry.runtime.state.grid.cell;
   const tpos = clampToField(msg.x, msg.y, tpx, tpx, entry.runtime.state.grid.cell);
   const updated = [...entry.runtime.state.tokens];
-  updated[idx] = { ...token, x: tpos.x, y: tpos.y, z: maxZ + 1 };
+  updated[idx] = { ...token, revision: (token.revision ?? 0) + 1, x: tpos.x, y: tpos.y, z: maxZ + 1 };
   entry.runtime.state = { ...entry.runtime.state, tokens: updated };
   await persistState(entry.runtime);
 
   broadcastTokensUpdated(campaignId, entry);
 }
 
-async function handleTokenUpdate(
-  session: WsSession,
-  msg: {
-    type: 'tokenUpdate';
-    tokenId: string;
-    name?: string;
-    shape?: 'round' | 'square';
-    allegiance?: 'ally' | 'enemy' | 'neutral';
-    ownerUserId?: string | null;
-    size?: 'S' | 'M' | 'L' | 'H';
-    fill?: string | null;
-    hp?: number | null;
-    maxHp?: number | null;
-    dmOnly?: boolean;
-    sharing?: Sharing;
-    conditions?: string[];
-    statBlock?: TokenStatBlock | null;
-  },
-): Promise<void> {
+async function handleTokenUpdate(session: WsSession, msg: ClientTokenUpdatePayload): Promise<CommandOutcome> {
   const campaignId = session.campaignId!;
   const entry = getCampaign(campaignId);
-  if (!entry) return;
+  if (!entry) throw new CommandRejection('UNKNOWN_CAMPAIGN', 'Campaign unavailable');
 
   const idx = entry.runtime.state.tokens.findIndex((t) => t.id === msg.tokenId);
   if (idx === -1) {
     sendError(session, 'UNKNOWN_TOKEN', `Token "${msg.tokenId}" not found`);
-    return;
   }
 
   const existing = entry.runtime.state.tokens[idx]!;
@@ -1025,12 +959,17 @@ async function handleTokenUpdate(
   // ownerUserId are DM-only fields (a player can't hide a token or reassign it).
   if (!isDm && !isOwner) {
     sendError(session, 'FORBIDDEN', 'You can only edit your own tokens');
-    return;
   }
 
+  const changes = Object.fromEntries(['name', 'shape', 'allegiance', 'ownerUserId', 'size', 'fill', 'hp', 'maxHp', 'dmOnly', 'sharing', 'conditions', 'statBlock']
+    .filter((key) => (msg as unknown as Record<string, unknown>)[key] !== undefined)
+    .map((key) => [key, (msg as unknown as Record<string, unknown>)[key]]));
+  if (!isDm && ('ownerUserId' in changes || 'dmOnly' in changes)) throw new CommandRejection('FORBIDDEN', 'Only the DM can change token ownership or visibility');
+  checkRevision(existing, msg, changes);
   const updated = [...entry.runtime.state.tokens];
   updated[idx] = {
     ...existing,
+    revision: (existing.revision ?? 0) + 1,
     ...(msg.name !== undefined && { name: msg.name }),
     ...(msg.shape !== undefined && { shape: msg.shape }),
     ...(msg.allegiance !== undefined && { allegiance: msg.allegiance }),
@@ -1048,6 +987,7 @@ async function handleTokenUpdate(
   await persistState(entry.runtime);
 
   broadcastTokensUpdated(campaignId, entry);
+  return { entityId: existing.id, revision: updated[idx]!.revision };
 }
 
 async function handleTokenRemove(
@@ -1352,7 +1292,7 @@ async function handlePieceMove(
 
 async function handlePieceUpdate(
   session: WsSession,
-  msg: { type: 'pieceUpdate'; id: string; w?: number; h?: number; rotation?: number; layer?: 'terrain' | 'props'; z?: number },
+  msg: { type: 'pieceUpdate'; id: string; x?: number; y?: number; w?: number; h?: number; rotation?: number; layer?: 'terrain' | 'props'; z?: number },
 ): Promise<void> {
   if (session.role !== 'dm') {
     sendError(session, 'FORBIDDEN', 'Only the DM can edit the map');
@@ -1368,11 +1308,13 @@ async function handlePieceUpdate(
     return;
   }
   const existing = entry.runtime.state.pieces[idx]!;
+  const w = msg.w === undefined ? existing.w : clampSize(msg.w);
+  const h = msg.h === undefined ? existing.h : clampSize(msg.h);
+  const position = clampToField(msg.x ?? existing.x, msg.y ?? existing.y, w, h, entry.runtime.state.grid.cell);
   const updated = [...entry.runtime.state.pieces];
   updated[idx] = {
     ...existing,
-    ...(msg.w !== undefined && { w: clampSize(msg.w) }),
-    ...(msg.h !== undefined && { h: clampSize(msg.h) }),
+    ...position, w, h,
     ...(msg.rotation !== undefined && { rotation: msg.rotation }),
     ...(msg.layer !== undefined && { layer: msg.layer }),
     ...(msg.z !== undefined && { z: msg.z }),

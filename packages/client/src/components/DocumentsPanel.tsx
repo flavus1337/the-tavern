@@ -1,5 +1,6 @@
+import { sendWs } from '../ws/connection';
 import { useRef, type ChangeEvent, useState } from 'react';
-import type { AssetManifest, UploadAssetResponse, ClientMessage, Sharing } from '@vtt/shared';
+import type { AssetManifest, UploadAssetResponse, Sharing } from '@vtt/shared';
 import { api, apiUpload, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { ScrollArea } from './ui/scroll-area';
@@ -21,8 +22,7 @@ export function DocumentsPanel() {
   const connection = useStore((s) => s.connection);
 
   function setDocumentSharing(assetId: string, sharing: Sharing) {
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'setDocumentSharing', assetId, sharing });
+    sendWs({ type: 'setDocumentSharing', assetId, sharing });
   }
 
   const isDm = self?.role === 'dm';

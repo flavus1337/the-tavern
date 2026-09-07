@@ -17,6 +17,7 @@ export interface WsSession {
   campaignId: string | null;
   role: Role | null;
   isAlive: boolean;
+  joining?: boolean;
 }
 
 // Singleton WSS. maxPayload bounds a single frame (default is 100 MiB) so a
@@ -136,7 +137,7 @@ export function getSessionsInRoom(campaignId: string): WsSession[] {
   const out: WsSession[] = [];
   for (const sessId of entry.room) {
     const sess = sessions.get(sessId);
-    if (sess && sess.ws.readyState === WebSocket.OPEN) out.push(sess);
+    if (sess && sess.campaignId === campaignId && sess.ws.readyState === WebSocket.OPEN) out.push(sess);
   }
   return out;
 }

@@ -12,6 +12,8 @@ import { broadcastDocuments } from '../ws/documents.js';
 import { persistState } from '../campaign/runtime.js';
 import { mutateCampaign } from '../campaign/commit.js';
 import { asyncRoute } from './asyncRoute.js';
+import { validateBody, validateId } from './validate.js';
+import { object, text, finite, integer } from '@vtt/shared';
 import { deleteAssetFiles } from '../campaign/writer.js';
 import { config } from '../config.js';
 import { broadcast } from '../ws/hub.js';
@@ -27,6 +29,9 @@ import type {
 } from '@vtt/shared';
 
 const router = Router();
+router.param('id', validateId);
+router.param('token', validateId);
+router.param('assetId', validateId);
 
 // GET /api/campaigns — auth user's campaigns.
 router.get('/', requireAuth, (req: Request, res: Response) => {
@@ -50,6 +55,7 @@ router.get('/', requireAuth, (req: Request, res: Response) => {
 
 // POST /api/campaigns — admin only.
 router.post('/', requireAdmin, asyncRoute(async (req: Request, res: Response) => {
+  validateBody(req.body, object({ name: text(200, 1) }, { description: text(4000) }));
   const { name, description } = req.body as { name?: string; description?: string };
   if (!name) {
     res.status(400).json({ error: 'name is required' });
@@ -57,9 +63,7 @@ router.post('/', requireAdmin, asyncRoute(async (req: Request, res: Response) =>
   }
 
   try {
-    const meta = await createCampaign(name, description ?? '');
-    // Grant admin DM membership.
-    await addMembership(meta.id, req.user!.id, 'dm');
+    const meta = await createCampaign(name, description ?? '', (id) => addMembership(id, req.user!.id, 'dm'));
 
     const body: CreateCampaignResponse = {
       campaign: {
@@ -83,6 +87,7 @@ router.post('/', requireAdmin, asyncRoute(async (req: Request, res: Response) =>
 // POST /api/campaigns/:id/invites — dm.
 router.post('/:id/invites', requireMember('dm'), asyncRoute(async (req: Request, res: Response) => {
   const campaignId = param(req.params['id']);
+  validateBody(req.body, object({}, { expiresInHours: finite(0.01, 8760), maxUses: integer(1, 1_000_000) }));
   const { expiresInHours, maxUses } = req.body as {
     expiresInHours?: number;
     maxUses?: number;
@@ -128,7 +133,7 @@ router.get('/:id/files/assets/:filename', requireMember(), asyncRoute(async (req
   const filename = param(req.params['filename']);
 
   // Security: reject path traversal.
-  if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+  if (filename.length > 255 || filename.includes('\0') || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
     res.status(400).json({ error: 'Invalid filename' });
     return;
   }

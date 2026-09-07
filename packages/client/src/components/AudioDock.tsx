@@ -1,5 +1,5 @@
+import { sendWs } from '../ws/connection';
 import { useEffect, useRef, useState } from 'react';
-import type { ClientMessage } from '@vtt/shared';
 import { useStore } from '../store';
 
 function fmt(t: number): string {
@@ -38,8 +38,7 @@ export function AudioDock() {
 
   function emit(action: 'play' | 'pause' | 'stop', time?: number) {
     if (!canDrive || applyingRemote.current || !doc) return;
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'mediaControl', assetId: doc.id, action, time: time ?? audioRef.current?.currentTime ?? 0 });
+    sendWs({ type: 'mediaControl', assetId: doc.id, action, time: time ?? audioRef.current?.currentTime ?? 0 });
   }
 
   function syncedTime(cmd: { action: string; time: number; atMs: number }): number {

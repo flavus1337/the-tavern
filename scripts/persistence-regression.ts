@@ -19,8 +19,17 @@ async function main(): Promise<void> {
   const { loadCampaign } = await import('../packages/server/src/campaign/loader.js');
   const { saveNote, deleteNote, saveChapter, saveAssetManifest, deleteAssetFiles } = await import('../packages/server/src/campaign/writer.js');
   const { addCampaign, getCampaign, scanCampaigns } = await import('../packages/server/src/campaign/registry.js');
-  const { handleMessage } = await import('../packages/server/src/ws/handlers.js');
+  const { handleMessage: dispatch } = await import('../packages/server/src/ws/handlers.js');
   const { send, closeWebSockets } = await import('../packages/server/src/ws/hub.js');
+  let commandSequence = 0;
+  const handleMessage = (session: WsSession, raw: Record<string, unknown>) => {
+    const command = { requestId: `persistence_${++commandSequence}`, ...raw };
+    if (raw['type'] === 'saveNote' && typeof raw['noteId'] === 'string') {
+      const note = getCampaign(session.campaignId!)?.store.notes.get(raw['noteId']);
+      Object.assign(command, { baseRevision: note?.revision ?? 0, expected: Object.fromEntries(['title', 'body', 'sharing', 'tags', 'noteKind'].filter((key) => raw[key] !== undefined).map((key) => [key, (note as unknown as Record<string, unknown>)?.[key]])) });
+    }
+    return dispatch(session, command);
+  };
   const { PROTOCOL_VERSION, SCHEMA_VERSIONS } = await import('../packages/shared/src/index.js');
   const chapter: Chapter = { type: 'chapter', schemaVersion: SCHEMA_VERSIONS.chapter, id: 'chapter', title: 'Before', order: 0, scenes: [], body: 'old body' };
 
@@ -45,7 +54,7 @@ async function main(): Promise<void> {
   let passed = 0;
   const pass = (label: string): void => { console.log(`PASS ${++passed}: ${label}`); };
   const sent: ServerMessage[] = [];
-  const fakeSocket = { readyState: 1, send: (value: string) => sent.push(JSON.parse(value) as ServerMessage), close: () => {} };
+  const fakeSocket = { readyState: 1, send: (value: string) => { const message = JSON.parse(value) as ServerMessage; if (message.type !== 'commandAck') sent.push(message); }, close: () => {} };
   const session: WsSession = { id: 'test-ws', ws: fakeSocket as WsSession['ws'], userId: 'user', username: 'DM', campaignId: 'ordered', role: 'dm', isAlive: true };
   async function fixture(id: string): Promise<CampaignEntry> {
     const dir = path.join(tmp, 'campaigns', id);

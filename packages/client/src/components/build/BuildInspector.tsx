@@ -1,13 +1,10 @@
+import { sendCommand, sendWs } from '../../ws/connection';
 import { useRef, useState, type ChangeEvent } from 'react';
-import type { ClientMessage, UploadAssetResponse } from '@vtt/shared';
+import type { UploadAssetResponse } from '@vtt/shared';
 import { useStore } from '../../store';
 import { apiUpload, ApiRequestError } from '../../lib/api';
 import { centredPlacement } from '../../lib/view';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 const SIZE_PRESETS: Array<['S' | 'M' | 'L' | 'H', number]> = [['S', 0.6], ['M', 1], ['L', 1.6], ['H', 2.4]];
 
@@ -51,11 +48,11 @@ export function BuildInspector() {
 
   // Scale a background to 40 cells, drop it centred in the current view (grid
   // aligned), and set a clean, visible grid.
-  function placeBackground(assetId: string) {
+  async function placeBackground(assetId: string) {
     const w = 40 * grid.cell;
     const p = centredPlacement(w, w);
-    sendWs({ type: 'boardAdd', assetId, x: p.x, y: p.y, w });
-    sendWs({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
+    await sendCommand({ type: 'boardAdd', assetId, x: p.x, y: p.y, w });
+    await sendCommand({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
   }
 
   function resetGrid() {
@@ -77,7 +74,8 @@ export function BuildInspector() {
     setBgError(null);
     try {
       const res = await apiUpload<UploadAssetResponse>(`/api/campaigns/${campaignId}/assets`, file, { kind: 'map' });
-      placeBackground(res.asset.id);
+      try { await placeBackground(res.asset.id); }
+      catch { setBgError('Image saved in the background library. Placement was not confirmed. Check the map before placing it again.'); }
     } catch (err) {
       setBgError(err instanceof ApiRequestError ? err.message : 'Upload failed');
     } finally {
@@ -118,7 +116,7 @@ export function BuildInspector() {
           builtin={selected.builtin}
           onSize={(w) => sendWs({ type: 'pieceUpdate', id: selected.id, w, h: w })}
           onRotate={(r) => sendWs({ type: 'pieceUpdate', id: selected.id, rotation: r })}
-          onDelete={() => { sendWs({ type: 'pieceRemove', id: selected.id }); setSelectedPieceId(null); }}
+          onDelete={() => { void sendCommand({ type: 'pieceRemove', id: selected.id }).then(() => { if (useStore.getState().selectedPieceId === selected.id) setSelectedPieceId(null); }, () => {}); }}
         />
       )}
 
@@ -143,7 +141,7 @@ export function BuildInspector() {
                 <button
                   key={a.id}
                   type="button"
-                  onClick={() => placeBackground(a.id)}
+                  onClick={() => { void placeBackground(a.id).catch(() => {}); }}
                   title={`Use “${a.title}”`}
                   className="rounded-[8px] overflow-hidden"
                   style={{ aspectRatio: '1 / 1', border: '1px solid var(--border)', cursor: 'pointer', background: '#0008' }}

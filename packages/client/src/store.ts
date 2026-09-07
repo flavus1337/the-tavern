@@ -151,6 +151,9 @@ const DEFAULT_GRID: GridState = {
 
 interface TableSlice {
   connection: ConnectionState;
+  snapshotEpoch: number;
+  pendingCommands: number;
+  saveOutcome: 'idle' | 'saved' | 'failed' | 'unconfirmed';
   self: SelfInfo | null;
   campaignName: string;
   presence: PresenceEntry[];
@@ -289,6 +292,9 @@ type StoreState = AuthSlice & RouteSlice & LobbySlice & TableSlice;
 
 const tableDefaults = {
   connection: 'closed' as ConnectionState,
+  snapshotEpoch: 0,
+  pendingCommands: 0,
+  saveOutcome: 'idle' as const,
   self: null,
   campaignName: '',
   presence: [],
@@ -378,7 +384,11 @@ export const useStore = create<StoreState>()((set) => ({
   setSelf: (self) => set({ self }),
 
   applySnapshot: (snap) =>
-    set({
+    set((s) => ({
+      snapshotEpoch: s.snapshotEpoch + 1,
+      ownMeasure: null,
+      ownMeasureShared: false,
+      sharedMeasures: {},
       mediaSync: snap.media
         ? { [snap.media.assetId]: { action: snap.media.action, time: snap.media.time, atMs: Date.now() - snap.media.elapsedMs } }
         : {},
@@ -405,8 +415,7 @@ export const useStore = create<StoreState>()((set) => ({
       mapMeta: snap.mapMeta,
       features: snap.features,
       templates: snap.templates,
-      lastErrorMessage: null,
-    }),
+    })),
 
   setPresence: (entries) => set({ presence: entries }),
   setBoard: (items) => set({ board: items }),
@@ -541,8 +550,7 @@ export const useStore = create<StoreState>()((set) => ({
   removeNote: (noteId) =>
     set((s) => ({
       myNotes: s.myNotes.filter((n) => n.id !== noteId),
-      // Close any panel showing the deleted note.
-      openPanels: s.openPanels.filter((p) => !(p.kind === 'note' && p.noteId === noteId)),
+      // Editors retain drafts when another user deletes a note or revokes access.
     })),
 
   setChapters: (chapters) => set({ chapters }),

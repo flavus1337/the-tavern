@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { PresenceEntry } from '@vtt/shared';
 import { useStore } from '../store';
-import { TableConnection } from '../ws/connection';
+import { TableConnection, sendWs } from '../ws/connection';
 import { CanvasViewer } from './CanvasViewer';
 import { DocumentViewer } from './DocumentViewer';
 import { NoteEditor } from './NoteEditor';
@@ -20,7 +20,6 @@ import { BuildInspector } from './build/BuildInspector';
 import { GenDialog } from './build/GenDialog';
 import { D20Logo } from './D20Logo';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
-import type { ClientMessage } from '@vtt/shared';
 
 export function TableLayout() {
   const activeCampaignId = useStore((s) => s.activeCampaignId);
@@ -31,6 +30,8 @@ export function TableLayout() {
   const documents = useStore((s) => s.documents);
   const self = useStore((s) => s.self);
   const lastErrorMessage = useStore((s) => s.lastErrorMessage);
+  const pendingCommands = useStore((s) => s.pendingCommands);
+  const saveOutcome = useStore((s) => s.saveOutcome);
   const openPanels = useStore((s) => s.openPanels);
   const setRoute = useStore((s) => s.setRoute);
   const resetTable = useStore((s) => s.resetTable);
@@ -71,15 +72,6 @@ export function TableLayout() {
     setActiveCampaignId(null);
     setRoute('lobby');
   }
-
-  // Dismiss error toast after 5s
-  useEffect(() => {
-    if (!lastErrorMessage) return;
-    const t = setTimeout(() => {
-      useStore.getState().setLastErrorMessage(null);
-    }, 5000);
-    return () => clearTimeout(t);
-  }, [lastErrorMessage]);
 
   const handlePresenceJoin = useCallback((entry: PresenceEntry) => {
     addJoinToast(entry);
@@ -143,8 +135,7 @@ export function TableLayout() {
                 onBlur={(e) => {
                   const name = e.target.value.trim() || 'Untitled map';
                   if (name !== mapMeta.name) {
-                    const conn = (window as unknown as { __vttConn?: { send: (m: ClientMessage) => void } }).__vttConn;
-                    conn?.send({ type: 'setMapMeta', name });
+                    sendWs({ type: 'setMapMeta', name });
                   }
                 }}
                 aria-label="Map name"
@@ -207,9 +198,15 @@ export function TableLayout() {
             {isConnected ? 'Connected' : connection === 'connecting' ? 'Connecting…' : connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
           </div>
 
+          <span role="status" className="text-xs whitespace-nowrap" style={{ color: saveOutcome === 'failed' || saveOutcome === 'unconfirmed' ? 'var(--gold)' : 'var(--mid)' }}>
+            {pendingCommands ? `Saving ${pendingCommands > 1 ? `(${pendingCommands})` : ''}…` :
+              saveOutcome === 'saved' ? 'Saved' : saveOutcome === 'failed' ? 'Save failed' : saveOutcome === 'unconfirmed' ? 'Unconfirmed' : ''}
+          </span>
+
           <button
             type="button"
             onClick={handleLeave}
+            disabled={pendingCommands > 0}
             style={{
               background: 'none',
               border: 'none',
@@ -249,7 +246,7 @@ export function TableLayout() {
           <span>{lastErrorMessage}</span>
           <button
             type="button"
-            onClick={() => useStore.getState().setLastErrorMessage(null)}
+            onClick={() => useStore.setState({ lastErrorMessage: null, saveOutcome: 'idle' })}
             style={{ color: 'var(--garnet)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 12, fontSize: 16 }}
             aria-label="Dismiss error"
           >

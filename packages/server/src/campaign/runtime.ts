@@ -17,6 +17,7 @@ export interface BoardItem {
 }
 
 export interface Token {
+  revision?: number;
   id: string;
   name: string;
   shape: 'round' | 'square';
@@ -149,11 +150,14 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
       board = [];
     }
 
+    if (Array.isArray(parsed['tokens']) && parsed['tokens'].some((token: Token) => token.revision !== undefined && (!Number.isSafeInteger(token.revision) || token.revision < 0))) throw new Error('invalid token revision');
+
     // Lenient migration: tokens and grid may be absent in old state.json files;
     // pre-v5 tokens have no `sharing` field → default to private control.
     const tokens: Token[] = Array.isArray(parsed['tokens'])
       ? (parsed['tokens'] as Token[]).map((t) => ({
           ...t,
+          revision: t.revision ?? 0,
           sharing: parseSharing((t as { sharing?: unknown }).sharing),
           conditions: Array.isArray((t as { conditions?: unknown }).conditions)
             ? ((t as { conditions: unknown[] }).conditions.filter((c) => typeof c === 'string') as string[])

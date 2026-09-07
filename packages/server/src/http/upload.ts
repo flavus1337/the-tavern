@@ -9,6 +9,8 @@ import { getCampaign } from '../campaign/registry.js';
 import { saveAssetManifest } from '../campaign/writer.js';
 import { mutateCampaign, writeCampaignFile } from '../campaign/commit.js';
 import { asyncRoute } from './asyncRoute.js';
+import { validateBody, validateId } from './validate.js';
+import { object, text, oneOf } from '@vtt/shared';
 import { broadcast } from '../ws/hub.js';
 import { broadcastDocuments } from '../ws/documents.js';
 import { randomId, slugify, SCHEMA_VERSIONS } from '@vtt/shared';
@@ -21,6 +23,7 @@ const upload = multer({
 });
 
 const router = Router();
+router.param('id', validateId);
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_DIMENSION = 2560;
@@ -65,6 +68,7 @@ router.post(
       return;
     }
 
+    validateBody(req.body, object({}, { kind: oneOf(['map', 'art', 'handout', 'token']), dmOnly: oneOf(['true', 'false', '1', '0']), category: text(40) }));
     const isDm = req.campaignRole === 'dm';
 
     // Players: only token images, and only while uploads are unlocked.
@@ -105,6 +109,8 @@ router.post(
     const category = typeof categoryRaw === 'string' && categoryRaw.trim() ? categoryRaw.trim().slice(0, 40) : undefined;
 
     // Process with sharp: resize to max 2560, encode as webp q82.
+    validateBody(file.originalname, text(255, 1));
+    validateBody(file.mimetype, text(100, 1));
     const originalName = file.originalname;
     const baseName = path.basename(originalName, path.extname(originalName));
     const slug = slugify(baseName);
@@ -128,7 +134,7 @@ router.post(
       width = info.width;
       height = info.height;
     } catch (err) {
-      res.status(500).json({ error: `Image processing failed: ${String(err)}` });
+      res.status(400).json({ error: `Image processing failed: ${String(err)}` });
       return;
     }
 
@@ -178,6 +184,7 @@ router.post(
       return;
     }
 
+    validateBody(req.body, object({}));
     // Upload lock: non-DM members cannot upload while locked.
     if (entry.runtime.state.uploadsLocked && req.campaignRole !== 'dm') {
       res.status(403).json({ error: 'Uploads are locked by the DM', code: 'UPLOADS_LOCKED' });
@@ -195,9 +202,12 @@ router.post(
       return;
     }
 
+    validateBody(file.originalname, text(255, 1));
+    validateBody(file.mimetype, text(100, 1));
     const originalName = file.originalname;
     const rawExt = path.extname(originalName).slice(1).toLowerCase();
-    const ext = /^[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : 'bin';
+    // A .json binary would collide with its own JSON manifest sidecar.
+    const ext = rawExt !== 'json' && /^[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : 'bin';
     const mime = file.mimetype && file.mimetype !== '' ? file.mimetype : 'application/octet-stream';
 
     if (BLOCKED_DOC_MIMES.has(mime) || BLOCKED_DOC_EXTENSIONS.has(ext)) {

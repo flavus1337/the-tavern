@@ -8,6 +8,8 @@ import { getCampaign } from '../campaign/registry.js';
 import { saveAssetManifest } from '../campaign/writer.js';
 import { mutateCampaign, writeCampaignFile } from '../campaign/commit.js';
 import { asyncRoute } from './asyncRoute.js';
+import { validateBody, validateId } from './validate.js';
+import { object, text, oneOf } from '@vtt/shared';
 import { broadcast } from '../ws/hub.js';
 import { config } from '../config.js';
 import { generateImages, type GenKind } from '../services/imagegen.js';
@@ -15,6 +17,7 @@ import { randomId, slugify, SCHEMA_VERSIONS } from '@vtt/shared';
 import type { AssetManifest, UploadAssetResponse } from '@vtt/shared';
 
 const router = Router();
+router.param('id', validateId);
 // Generated/uploaded images arrive as base64 JSON — allow a larger body here
 // than the global 1 MB limit (this parser is scoped to these routes only).
 const bigJson = json({ limit: '20mb' });
@@ -66,6 +69,7 @@ async function makeBackgroundTransparent(buf: Buffer): Promise<Buffer> {
 // POST /api/campaigns/:id/generate — DM only. Returns N candidate images as
 // base64 (transient; the client holds them and saves the chosen one).
 router.post('/:id/generate', bigJson, requireMember('dm'), asyncRoute(async (req: Request, res: Response) => {
+  validateBody(req.body, object({ subject: text(2000, 1) }, { kind: oneOf(['prop', 'background']) }));
   if (!config.LLM_API_KEY) {
     res.status(503).json({ error: 'Image generation is off — no LLM_API_KEY configured', code: 'GEN_DISABLED' });
     return;
@@ -98,6 +102,7 @@ router.post('/:id/generate/save', bigJson, requireMember('dm'), asyncRoute(async
     return;
   }
 
+  validateBody(req.body, object({ base64: text(20_000_000, 1) }, { kind: oneOf(['prop', 'background']), title: text(200), category: text(40) }));
   const { base64, kind, title, category } = req.body as { base64?: string; kind?: string; title?: string; category?: string };
   if (!base64) {
     res.status(400).json({ error: 'base64 image data is required' });
@@ -106,6 +111,10 @@ router.post('/:id/generate/save', bigJson, requireMember('dm'), asyncRoute(async
   const genKind = parseKind(kind);
   // Strip an optional data: URL prefix.
   const raw = base64.includes(',') ? base64.slice(base64.indexOf(',') + 1) : base64;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw) || raw.length % 4 !== 0) {
+    res.status(400).json({ error: 'Invalid base64' });
+    return;
+  }
   let buf: Buffer;
   try {
     buf = Buffer.from(raw, 'base64');
@@ -130,7 +139,7 @@ router.post('/:id/generate/save', bigJson, requireMember('dm'), asyncRoute(async
     width = info.width;
     height = info.height;
   } catch (err) {
-    res.status(500).json({ error: `Image processing failed: ${String(err)}` });
+    res.status(400).json({ error: `Image processing failed: ${String(err)}` });
     return;
   }
 

@@ -1,5 +1,6 @@
+import { sendWs } from '../../ws/connection';
 import { useState, useRef, type ChangeEvent } from 'react';
-import type { AssetManifest, UploadAssetResponse, ClientMessage } from '@vtt/shared';
+import type { AssetManifest, UploadAssetResponse } from '@vtt/shared';
 import { api, apiUpload, ApiRequestError } from '../../lib/api';
 import { useStore } from '../../store';
 import { Button } from '../ui/button';
@@ -20,10 +21,6 @@ export function AssetPicker() {
   const [dmOnly, setDmOnly] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function sendWs(msg: ClientMessage): void {
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send(msg);
-  }
 
   /**
    * Compute the center of the current viewport in board-space coordinates,

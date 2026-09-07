@@ -4,3 +4,4 @@ export * from './protocol.js';
 export * from './api.js';
 export * from './dice.js';
 export * from './ids.js';
+export * from './validation.js';

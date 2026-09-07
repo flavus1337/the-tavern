@@ -1,5 +1,6 @@
+import { sendWs } from '../ws/connection';
 import { lazy, Suspense, useRef, useState, useEffect, type PointerEvent } from 'react';
-import type { AssetManifest, ClientMessage } from '@vtt/shared';
+import type { AssetManifest } from '@vtt/shared';
 import { useStore } from '../store';
 
 const PdfView = lazy(() => import('./PdfView').then((m) => ({ default: m.PdfView })));
@@ -31,8 +32,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
 
   function shareWithTable() {
     if (connection !== 'open') return;
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'setDocumentSharing', assetId: doc.id, sharing: { scope: 'all', userIds: [] } });
+    sendWs({ type: 'setDocumentSharing', assetId: doc.id, sharing: { scope: 'all', userIds: [] } });
     setShared(true);
 
     // Fire share toast

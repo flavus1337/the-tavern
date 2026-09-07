@@ -1,16 +1,15 @@
+import { sendWs } from '../../ws/connection';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import type { ClientMessage, ChapterView, CharacterView, AssetManifest, Note } from '@vtt/shared';
+import type { ChapterView, CharacterView, AssetManifest, Note } from '@vtt/shared';
 import { useStore } from '../../store';
 import { Button } from './../ui/button';
 import { Input } from './../ui/input';
 import { Label } from './../ui/label';
 import { ScrollArea } from './../ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader } from './../ui/dialog';
+import { draftPatch, useDraft } from '../../lib/draft';
+import { SaveFeedback, useSaveCommand } from '../SaveFeedback';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 const CHAPTER_PREFIX = 'chapter:';
 const chapterIdsOf = (tags: string[]): string[] =>
@@ -258,6 +257,7 @@ export function ChaptersPanel() {
 
       {editing && (
         <ChapterEditDialog
+          chapterId={editing.id}
           chapter={editing.id ? ordered.find((c) => c.id === editing.id) : undefined}
           canDelete={Boolean(editing.id)}
           onClose={() => setEditing(null)}
@@ -287,44 +287,53 @@ function RailPill({ label, title, active, onClick }: { label: string; title?: st
   );
 }
 
-function ChapterEditDialog({ chapter, canDelete, onClose }: { chapter?: ChapterView; canDelete: boolean; onClose: () => void }) {
-  const [title, setTitle] = useState(chapter?.title ?? '');
-  const [summary, setSummary] = useState(chapter?.summary ?? '');
-  const [body, setBody] = useState(chapter?.body ?? '');
+function ChapterEditDialog({ chapterId, chapter, canDelete, onClose }: { chapterId?: string; chapter?: ChapterView; canDelete: boolean; onClose: () => void }) {
+  const connection = useStore((s) => s.connection);
+  const latest = { title: chapter?.title ?? '', summary: chapter?.summary ?? '', body: chapter?.body ?? '' };
+  const draft = useDraft(latest, chapter?.revision ?? 0);
+  const { title, summary, body } = draft.draft;
+  const save = useSaveCommand();
+  const canSave = connection === 'open' && !save.saving && !save.blocked && (!chapterId || !!chapter);
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!title.trim()) return;
-    sendWs({ type: 'saveChapter', chapterId: chapter?.id, title: title.trim(), summary: summary.trim(), body });
-    onClose();
+    if (!title.trim() || !canSave) return;
+    const fields = { title: title.trim(), summary: summary.trim(), body };
+    const patch = draftPatch(draft.base, fields);
+    const ack = await save.run(chapterId
+      ? { type: 'saveChapter', chapterId, baseRevision: draft.revision, expected: patch.expected, ...patch.changes }
+      : { type: 'saveChapter', ...fields });
+    if (ack) onClose();
   }
-  function handleDelete() {
+  async function handleDelete() {
     if (chapter && window.confirm(`Delete "${chapter.title}"? Its items stay, but lose this chapter.`)) {
-      sendWs({ type: 'deleteChapter', chapterId: chapter.id });
-      onClose();
+      const ack = await save.run({ type: 'deleteChapter', chapterId: chapter.id });
+      if (ack) onClose();
     }
   }
 
   return (
-    <Dialog open onClose={onClose}>
+    <Dialog open onClose={() => { if (!save.saving) onClose(); }}>
       <DialogContent title={chapter ? 'Edit Chapter' : 'New Chapter'}>
         <DialogHeader title={chapter ? 'Edit Chapter' : 'New Chapter'} />
+        <SaveFeedback save={save} conflicts={draft.conflicts} latest={latest} onUseTable={draft.reset} onKeepChanges={draft.keepChanges} />
+        {chapterId && !chapter && <p role="alert">This chapter was removed. Your draft is kept here.</p>}
         <form onSubmit={handleSubmit}>
-          <div className="space-y-4">
+          <fieldset disabled={save.saving} className="space-y-4 min-w-0">
             <div className="space-y-1.5">
               <Label htmlFor="ch-title">Title</Label>
-              <Input id="ch-title" required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="The Ritual Chamber" />
+              <Input id="ch-title" required value={title} onChange={(e) => draft.setField('title', e.target.value)} placeholder="The Ritual Chamber" />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ch-summary">Summary <span className="text-[var(--low)] font-normal">(optional)</span></Label>
-              <Input id="ch-summary" value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="One line shown under the title" />
+              <Input id="ch-summary" value={summary} onChange={(e) => draft.setField('summary', e.target.value)} placeholder="One line shown under the title" />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ch-body">Prep notes <span className="text-[var(--low)] font-normal">(markdown)</span></Label>
               <textarea
                 id="ch-body"
                 value={body}
-                onChange={(e) => setBody(e.target.value)}
+                onChange={(e) => draft.setField('body', e.target.value)}
                 rows={6}
                 className="w-full px-3 py-2 rounded-[9px]"
                 style={{ background: '#100c0a', border: '1px solid var(--border)', color: 'var(--hi)', fontFamily: 'var(--mono)', fontSize: 13, resize: 'vertical' }}
@@ -333,12 +342,12 @@ function ChapterEditDialog({ chapter, canDelete, onClose }: { chapter?: ChapterV
             </div>
             <div className="flex gap-2 pt-1">
               {canDelete && (
-                <Button type="button" variant="destructive" size="sm" onClick={handleDelete}>Delete</Button>
+                <Button type="button" variant="destructive" size="sm" onClick={handleDelete} disabled={!canSave}>Delete</Button>
               )}
               <Button type="button" variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
-              <Button type="submit" className="flex-1">Save</Button>
+              <Button type="submit" className="flex-1" disabled={!canSave}>{save.saving ? 'Saving…' : save.error ? 'Retry save' : 'Save'}</Button>
             </div>
-          </div>
+          </fieldset>
         </form>
       </DialogContent>
     </Dialog>

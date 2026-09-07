@@ -1,3 +1,4 @@
+import { sendCommand, sendWs, type DurableCommand } from '../ws/connection';
 import {
   useState,
   useRef,
@@ -7,12 +8,14 @@ import {
   type PointerEvent,
 } from 'react';
 import { BOARD_CELLS, clampToField } from '@vtt/shared';
-import type { BoardItemView, ClientMessage, TokenView, GridState, MapPiece, MeasureKind, AoeTemplate, AoeKind } from '@vtt/shared';
+import type { BoardItemView, TokenView, GridState, MapPiece, MeasureKind, AoeTemplate, AoeKind } from '@vtt/shared';
 import { useStore } from '../store';
 import type { BoardView, BoardTool, EditorMode, AoeShape } from '../store';
 import { BoardMoments } from './RollLog';
 import { inkSprite } from '../lib/inkArt';
 import { activeEntry } from '../lib/initiative';
+import { gestureLifecycle } from '../lib/gesture';
+import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
 const TOKEN_CELLS: Record<TokenView['size'], number> = { S: 1, M: 1, L: 2, H: 3 };
 
@@ -46,14 +49,30 @@ function clampScale(s: number): number {
   return Math.min(SCALE_MAX, Math.max(SCALE_MIN, s));
 }
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 // ---------------------------------------------------------------------------
 // Individual board item
 // ---------------------------------------------------------------------------
+
+/** A previous acknowledgment must never clear the next gesture's preview. */
+function useGestureCommit(reset: () => void) {
+  const resetRef = useRef(reset);
+  resetRef.current = reset;
+  const lifecycle = useRef(gestureLifecycle(() => resetRef.current())).current;
+  const epoch = useStore((s) => s.snapshotEpoch);
+  const connected = useStore((s) => s.connection === 'open');
+  useEffect(() => { lifecycle.reconcile(); }, [epoch, connected]);
+  return {
+    connected,
+    begin: lifecycle.begin,
+    finish: lifecycle.finish,
+    cancel: lifecycle.reconcile,
+    submit: (message: DurableCommand) => {
+      const complete = lifecycle.submitted();
+      void sendCommand(message).then(complete, complete);
+    },
+  };
+}
 
 interface BoardItemProps {
   item: BoardItemView;
@@ -66,7 +85,8 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
   const mapLocked = useStore((s) => s.mapLocked);
   // DM always; players only when the DM unlocked this item. A locked map blocks
   // everyone (including the DM).
-  const canManipulate = (isDm || item.playersCanMove) && !mapLocked;
+  const connected = useStore((s) => s.connection === 'open');
+  const canManipulate = connected && (isDm || item.playersCanMove) && !mapLocked;
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
   const [localW, setLocalW] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -80,6 +100,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
     origW: number;
     naturalAspect: number;
   } | null>(null);
+  const commit = useGestureCommit(() => { dragRef.current = null; setIsDragging(false); setLocalPos(null); setLocalW(null); });
 
   const naturalAspect =
     item.naturalWidth && item.naturalHeight ? item.naturalHeight / item.naturalWidth : 1;
@@ -95,15 +116,16 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
     if (!canManipulate) return;
     e.stopPropagation();
     if (e.button !== 0) return;
+    commit.begin();
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
     setIsDragging(true);
     dragRef.current = {
       mode: 'move',
       startClientX: e.clientX,
       startClientY: e.clientY,
-      origX: item.x,
-      origY: item.y,
-      origW: item.w,
+      origX: displayX,
+      origY: displayY,
+      origW: displayW,
       naturalAspect,
     };
   }
@@ -112,14 +134,15 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
     if (!canManipulate) return;
     e.stopPropagation();
     if (e.button !== 0) return;
+    commit.begin();
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
     dragRef.current = {
       mode: 'resize',
       startClientX: e.clientX,
       startClientY: e.clientY,
-      origX: item.x,
-      origY: item.y,
-      origW: item.w,
+      origX: displayX,
+      origY: displayY,
+      origW: displayW,
       naturalAspect,
     };
   }
@@ -145,24 +168,13 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
     dragRef.current = null;
     setIsDragging(false);
 
-    // Keep the optimistic local position/size after release — clearing it here
-    // would snap the item back to the stale server position for a frame or two
-    // until boardUpdated echoes the move. The effect below clears the overrides
-    // once the item props change.
+    // Keep this preview until its own acknowledgment; an older echo may arrive first.
     if (mode === 'move' && localPos) {
-      sendWs({ type: 'boardMove', itemId: item.id, x: localPos.x, y: localPos.y, w: localW ?? item.w });
+      commit.submit({ type: 'boardMove', itemId: item.id, x: localPos.x, y: localPos.y, w: localW ?? item.w });
     } else if (mode === 'resize' && localW !== null) {
-      sendWs({ type: 'boardMove', itemId: item.id, x: item.x, y: item.y, w: localW });
-    }
+      commit.submit({ type: 'boardMove', itemId: item.id, x: displayX, y: displayY, w: localW });
+    } else commit.finish();
   }
-
-  // Server confirmed (or someone else moved the item) — drop local overrides,
-  // but never mid-drag.
-  useEffect(() => {
-    if (dragRef.current) return;
-    setLocalPos(null);
-    setLocalW(null);
-  }, [item.x, item.y, item.w]);
 
   const shadowLifted = isDragging
     ? '0 40px 80px -16px #000f'
@@ -192,6 +204,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
       onPointerDown={canManipulate ? onItemPointerDown : undefined}
       onPointerMove={canManipulate ? onPointerMove : undefined}
       onPointerUp={canManipulate ? onPointerUp : undefined}
+      onPointerCancel={commit.cancel}
       onPointerLeave={canManipulate ? onPointerUp : undefined}
       onMouseEnter={canManipulate ? () => setHovered(true) : undefined}
       onMouseLeave={canManipulate ? () => { setHovered(false); } : undefined}
@@ -355,13 +368,14 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
   const [isDragging, setIsDragging] = useState(false);
   const [hovered, setHovered] = useState(false);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; alt: boolean } | null>(null);
+  const commit = useGestureCommit(() => { dragRef.current = null; setIsDragging(false); setLocalPos(null); });
 
   const mine = !!token.ownerUserId && token.ownerUserId === selfUserId;
   // Move/control: DM, owner, or anyone the token is shared-to-control.
   const sharedControl =
     token.sharing.scope === 'all' ||
     (token.sharing.scope === 'users' && !!selfUserId && token.sharing.userIds.includes(selfUserId));
-  const canMove = isDm || mine || sharedControl;
+  const canMove = commit.connected && (isDm || mine || sharedControl);
   // Edit/remove (properties, deletion) stays owner + DM only.
   const canEdit = isDm || mine;
   const cells = TOKEN_CELLS[token.size];
@@ -371,20 +385,15 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
   const x = localPos?.x ?? token.x;
   const y = localPos?.y ?? token.y;
 
-  // Clear optimistic position once the server echoes (never mid-drag).
-  useEffect(() => {
-    if (dragRef.current) return;
-    setLocalPos(null);
-  }, [token.x, token.y]);
-
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
     if (!active || e.button !== 0) return;
     e.stopPropagation();
     setSelectedTokenId(token.id);
     if (!canMove) return;
+    commit.begin();
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
     setIsDragging(true);
-    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: token.x, oy: token.y, alt: e.altKey };
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: x, oy: y, alt: e.altKey };
   }
   function onPointerMove(e: PointerEvent<HTMLDivElement>) {
     if (!dragRef.current) return;
@@ -398,7 +407,8 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
     const d = dragRef.current;
     dragRef.current = null;
     setIsDragging(false);
-    if (!d || !localPos) return;
+    if (!d) return;
+    if (!localPos) { commit.finish(); return; }
     let nx = localPos.x;
     let ny = localPos.y;
     if (grid.snap && !d.alt) {
@@ -407,7 +417,7 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
     }
     ({ x: nx, y: ny } = clampToBoard(nx, ny, px, px, grid.cell));
     setLocalPos({ x: nx, y: ny });
-    sendWs({ type: 'tokenMove', tokenId: token.id, x: nx, y: ny });
+    commit.submit({ type: 'tokenMove', tokenId: token.id, x: nx, y: ny });
   }
 
   const cls = `tok ${token.shape} ${mine ? 'mine' : token.allegiance} ${selected ? 'sel' : ''} ${isDragging ? 'drag' : ''}`;
@@ -427,6 +437,7 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
       onPointerDown={active ? onPointerDown : undefined}
       onPointerMove={canMove ? onPointerMove : undefined}
       onPointerUp={canMove ? onPointerUp : undefined}
+      onPointerCancel={commit.cancel}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -484,7 +495,7 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
           <button type="button" onClick={(e) => { e.stopPropagation(); openTokenPanel(token.id); }}
             style={{ fontSize: 11 / scale, padding: `${3 / scale}px ${7 / scale}px`, borderRadius: 6 / scale,
               background: 'var(--raised)', color: 'var(--mid)', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>Edit</button>
-          <button type="button" onClick={(e) => { e.stopPropagation(); sendWs({ type: 'tokenRemove', tokenId: token.id }); setSelectedTokenId(null); }}
+          <button type="button" onClick={(e) => { e.stopPropagation(); void sendCommand({ type: 'tokenRemove', tokenId: token.id }).then(() => { if (useStore.getState().selectedTokenId === token.id) setSelectedTokenId(null); }, () => {}); }}
             style={{ fontSize: 11 / scale, padding: `${3 / scale}px ${7 / scale}px`, borderRadius: 6 / scale,
               background: 'var(--garnet)', color: '#fff', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>
@@ -527,6 +538,7 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
     cxBoard: number; cyBoard: number; // piece centre in board space
     cur: PieceT;                       // live transform (read on release — never stale)
   }>(null);
+  const commit = useGestureCommit(() => { drag.current = null; setDragging(false); setLocal(null); });
 
   const selected = selectedId === piece.id;
   const x = local?.x ?? piece.x;
@@ -535,26 +547,21 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
   const h = local?.h ?? piece.h;
   const rotation = local?.rotation ?? piece.rotation;
 
-  // Drop the optimistic transform once the server echoes (never mid-drag).
-  useEffect(() => {
-    if (drag.current) return;
-    setLocal(null);
-  }, [piece.x, piece.y, piece.w, piece.h, piece.rotation]);
-
   function canvasRect() {
     return document.querySelector('[aria-label="Campaign map canvas"]')!.getBoundingClientRect();
   }
 
   function begin(mode: 'move' | 'resize' | 'rotate', e: PointerEvent<HTMLDivElement>) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !commit.connected) return;
+    commit.begin();
     e.stopPropagation();
     // ponytail: capture on the root (never unmounts) — the grabbed handle does, which dropped capture.
     rootRef.current?.setPointerCapture(e.pointerId);
     drag.current = {
       mode, sx: e.clientX, sy: e.clientY,
-      ox: piece.x, oy: piece.y, ow: piece.w, oh: piece.h, orot: piece.rotation,
-      cxBoard: piece.x + piece.w / 2, cyBoard: piece.y + piece.h / 2,
-      cur: { x: piece.x, y: piece.y, w: piece.w, h: piece.h, rotation: piece.rotation },
+      ox: x, oy: y, ow: w, oh: h, orot: rotation,
+      cxBoard: x + w / 2, cyBoard: y + h / 2,
+      cur: { x, y, w, h, rotation },
     };
     setDragging(true);
   }
@@ -613,11 +620,11 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
       }
       ({ x: nx, y: ny } = clampToBoard(nx, ny, t.w, t.h, grid.cell));
       setLocal({ ...t, x: nx, y: ny });
-      sendWs({ type: 'pieceMove', id: piece.id, x: nx, y: ny });
+      commit.submit({ type: 'pieceMove', id: piece.id, x: nx, y: ny });
     } else if (d.mode === 'resize') {
-      sendWs({ type: 'pieceUpdate', id: piece.id, w: Math.round(t.w), h: Math.round(t.h) });
+      commit.submit({ type: 'pieceUpdate', id: piece.id, x: t.x, y: t.y, w: t.w, h: t.h });
     } else {
-      sendWs({ type: 'pieceUpdate', id: piece.id, rotation: t.rotation });
+      commit.submit({ type: 'pieceUpdate', id: piece.id, rotation: t.rotation });
     }
   }
 
@@ -640,7 +647,7 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      onPointerCancel={commit.cancel}
     >
       {piece.builtin ? (
         <div style={{ width: '100%', height: '100%' }} dangerouslySetInnerHTML={{ __html: inkSprite(piece.builtin, 32, 0) }} />
@@ -714,6 +721,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const layerVisible = useStore((s) => s.layerVisible);
   const setSelectedPieceId = useStore((s) => s.setSelectedPieceId);
   const setBoardTool = useStore((s) => s.setBoardTool);
+  const connected = useStore((s) => s.connection === 'open');
+  const snapshotEpoch = useStore((s) => s.snapshotEpoch);
 
   const isDm = self?.role === 'dm';
   const selfUserId = self?.userId ?? null;
@@ -736,13 +745,16 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const [calibCells, setCalibCells] = useState('2');
   const calibRef = useRef<{ sx: number; sy: number } | null>(null);
 
-  function applyCalibration() {
+  const calibrationSave = useSaveCommand();
+
+  async function applyCalibration() {
     if (!calibBox) return;
     const n = Math.max(1, parseInt(calibCells, 10) || 1);
     const cell = Math.max(8, calibBox.w / n);
     const offsetX = ((calibBox.x % cell) + cell) % cell;
     const offsetY = ((calibBox.y % cell) + cell) % cell;
-    sendWs({ type: 'setGrid', grid: { cell: Math.round(cell), offsetX: Math.round(offsetX), offsetY: Math.round(offsetY), visible: true } });
+    const ack = await calibrationSave.run({ type: 'setGrid', grid: { cell: Math.round(cell), offsetX: Math.round(offsetX), offsetY: Math.round(offsetY), visible: true } });
+    if (!ack) return;
     setCalibBox(null); setCalibPrompt(false); setBoardTool('select');
   }
 
@@ -780,6 +792,12 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const measuringRef = useRef(false);
   const lastPointer = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const measureCommit = useGestureCommit(() => { measuringRef.current = false; setOwnMeasure(null); });
+  useEffect(() => {
+    draggingCanvas.current = false;
+    calibRef.current = null;
+    setGhost(null); setCalibBox(null); setCalibPrompt(false);
+  }, [snapshotEpoch, connected]);
 
   useEffect(() => {
     setBoardView(view);
@@ -864,6 +882,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     if ((e.target as HTMLElement).closest('button, a')) return;
 
     if (stamping && activePalettePiece) {
+      if (!connected) return;
       const p = screenToBoard(e.clientX, e.clientY);
       const size = Math.round(grid.cell * 1.5);
       const lp = activePalettePiece;
@@ -877,6 +896,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     }
 
     if (calibrating) {
+      if (calibrationSave.saving || !connected) return;
       const p = screenToBoard(e.clientX, e.clientY);
       calibRef.current = { sx: p.x, sy: p.y };
       setCalibBox({ x: p.x, y: p.y, w: 0, h: 0 });
@@ -886,6 +906,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     }
 
     if (measureKind) {
+      if (aoeing && !connected) return;
+      measureCommit.begin();
       const p = screenToBoard(e.clientX, e.clientY);
       measuringRef.current = true;
       setOwnMeasure({ kind: measureKind, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
@@ -950,9 +972,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       if (aoeing) {
         const m = useStore.getState().ownMeasure;
         if (m && Math.hypot(m.x2 - m.x1, m.y2 - m.y1) > 4) {
-          sendWs({ type: 'aoeAdd', kind: m.kind as AoeKind, x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2 });
-        }
-        setOwnMeasure(null);
+          measureCommit.submit({ type: 'aoeAdd', kind: m.kind as AoeKind, x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2 });
+        } else measureCommit.finish();
       }
     }
     draggingCanvas.current = false;
@@ -1008,6 +1029,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={() => { draggingCanvas.current = false; calibRef.current = null; setCalibBox(null); setCalibPrompt(false); measureCommit.cancel(); }}
       onPointerLeave={handlePointerUp}
       onWheel={handleWheel}
       aria-label="Campaign map canvas"
@@ -1103,19 +1125,21 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
             >
               <span style={{ fontSize: 12, color: 'var(--mid)' }}>Cells across</span>
               <input
-                type="number" min={1} value={calibCells}
+                type="number" min={1} value={calibCells} disabled={calibrationSave.saving}
                 onChange={(e) => setCalibCells(e.target.value)}
                 autoFocus
                 style={{ width: 56, padding: '4px 8px', borderRadius: 7, background: '#100c0a', border: '1px solid var(--border)', color: 'var(--hi)', fontFamily: 'var(--mono)' }}
               />
-              <button type="button" onClick={applyCalibration}
-                style={{ padding: '5px 12px', borderRadius: 7, background: 'var(--ember)', color: 'var(--ink)', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>Apply</button>
-              <button type="button" onClick={() => { setCalibBox(null); setCalibPrompt(false); }}
+              <button type="button" onClick={applyCalibration} disabled={!connected || calibrationSave.saving || calibrationSave.blocked}
+                style={{ padding: '5px 12px', borderRadius: 7, background: 'var(--ember)', color: 'var(--ink)', border: 'none', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>{calibrationSave.saving ? 'Saving…' : 'Apply'}</button>
+              <button type="button" disabled={calibrationSave.saving} onClick={() => { setCalibBox(null); setCalibPrompt(false); }}
                 style={{ padding: '5px 8px', borderRadius: 7, background: 'transparent', color: 'var(--low)', border: 'none', cursor: 'pointer', fontSize: 12 }}>✕</button>
             </div>
           )}
         </>
       )}
+
+      {(calibrationSave.error || calibrationSave.saving) && <div className="absolute bottom-20 left-3 z-20 max-w-sm"><SaveFeedback save={calibrationSave} conflicts={[]} latest={{}} onUseTable={() => {}} onKeepChanges={() => {}} /></div>}
 
       {isEmpty && !isBuild && <EmptyCanvas isDm={isDm} />}
 
