@@ -10,6 +10,7 @@ import type {
   AssetManifest,
 } from '@vtt/shared';
 import { log } from '../log.js';
+import { recoverCampaign, writeCampaignFile } from './commit.js';
 
 export interface CampaignStore {
   meta: CampaignMeta;
@@ -24,17 +25,21 @@ export interface CampaignStore {
 async function tryReadJson(filePath: string): Promise<unknown | null> {
   try {
     const raw = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null) throw new Error('invalid null JSON entity');
+    return parsed;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`could not read JSON: ${filePath}`, { cause: err });
   }
 }
 
 async function tryReadText(filePath: string): Promise<string | null> {
   try {
     return await fs.readFile(filePath, 'utf8');
-  } catch {
-    return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`could not read sidecar: ${filePath}`, { cause: err });
   }
 }
 
@@ -67,6 +72,7 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const PDF_EXT = '.pdf';
 
 export async function loadCampaign(campaignDir: string): Promise<CampaignStore | null> {
+  await recoverCampaign(campaignDir);
   const campaignJsonPath = path.join(campaignDir, 'campaign.json');
   const rawCampaign = await tryReadJson(campaignJsonPath);
   if (!rawCampaign) {
@@ -76,8 +82,7 @@ export async function loadCampaign(campaignDir: string): Promise<CampaignStore |
 
   const parsedCampaign = parseEntity('campaign', rawCampaign);
   if (!parsedCampaign.ok) {
-    log.warn(`Invalid campaign.json in ${campaignDir}: ${parsedCampaign.reason}`);
-    return null;
+    throw new Error(`invalid campaign.json in ${campaignDir}: ${parsedCampaign.reason}`);
   }
 
   const meta = parsedCampaign.entity as CampaignMeta;
@@ -127,14 +132,12 @@ async function loadEntities<T extends { id: string; body?: string }>(
       const filePath = path.join(dir, entry);
       const raw = await tryReadJson(filePath);
       if (!raw) {
-        log.warn(`Skipping unreadable file: ${filePath}`);
-        continue;
+        throw new Error(`could not read existing entity: ${filePath}`);
       }
 
       const parsed = parseEntity(entityType as Parameters<typeof parseEntity>[0], raw);
       if (!parsed.ok) {
-        log.warn(`Skipping malformed ${entityType} at ${filePath}: ${parsed.reason}`);
-        continue;
+        throw new Error(`malformed ${entityType} at ${filePath}: ${parsed.reason}`);
       }
 
       let entity = parsed.entity as unknown as T;
@@ -153,7 +156,7 @@ async function loadEntities<T extends { id: string; body?: string }>(
     }
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      log.warn(`Error reading ${dir}: ${String(err)}`);
+      throw new Error(`could not load entities: ${dir}`, { cause: err });
     }
   }
 }
@@ -171,7 +174,7 @@ async function loadAssets(
     entries = await fs.readdir(assetsDir);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      log.warn(`Error reading assets dir ${assetsDir}: ${String(err)}`);
+      throw new Error(`could not read assets directory: ${assetsDir}`, { cause: err });
     }
     return;
   }
@@ -181,12 +184,11 @@ async function loadAssets(
     if (!entry.endsWith('.json')) continue;
     const filePath = path.join(assetsDir, entry);
     const raw = await tryReadJson(filePath);
-    if (!raw) continue;
+    if (!raw) throw new Error(`could not read existing asset manifest: ${filePath}`);
 
     const parsed = parseEntity('asset', raw);
     if (!parsed.ok) {
-      log.warn(`Skipping malformed asset manifest at ${filePath}: ${parsed.reason}`);
-      continue;
+      throw new Error(`malformed asset manifest at ${filePath}: ${parsed.reason}`);
     }
 
     const manifest = parsed.entity as AssetManifest;
@@ -218,11 +220,9 @@ async function loadAssets(
         };
         // Write manifest.
         const manifestPath = path.join(assetsDir, path.basename(entry, ext) + '.json');
-        try {
-          await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-        } catch (err) {
-          log.warn(`Could not write auto-manifest for ${entry}: ${String(err)}`);
-        }
+        if (entries.includes(path.basename(manifestPath))) throw new Error(`conflicting asset manifest: ${manifestPath}`);
+        await writeCampaignFile(campaignDir, manifestPath, JSON.stringify(manifest, null, 2));
+        entries.push(path.basename(manifestPath));
         store.assets.set(manifest.id, manifest);
         manifestsByFile.set(entry, manifest);
       }
@@ -244,11 +244,9 @@ async function loadAssets(
           ownerUsername: null,
         };
         const manifestPath = path.join(assetsDir, path.basename(entry, ext) + '.json');
-        try {
-          await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-        } catch (err) {
-          log.warn(`Could not write auto-manifest for ${entry}: ${String(err)}`);
-        }
+        if (entries.includes(path.basename(manifestPath))) throw new Error(`conflicting asset manifest: ${manifestPath}`);
+        await writeCampaignFile(campaignDir, manifestPath, JSON.stringify(manifest, null, 2));
+        entries.push(path.basename(manifestPath));
         store.assets.set(manifest.id, manifest);
         manifestsByFile.set(entry, manifest);
       }

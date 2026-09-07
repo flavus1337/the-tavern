@@ -95,10 +95,23 @@ export async function createUser(
     inFlightUsernames.delete(norm);
   }
 
-  // Re-check uniqueness INSIDE the synchronous mutate callback so the check
-  // and the insert are atomic relative to every other mutate call.
+  return createUserWithPasswordHash(username, passwordHash, isAdmin);
+}
+
+/** Allows registration to hash first, then commit user, invite and session together. */
+export async function createUserWithPasswordHash(
+  username: string,
+  passwordHash: string,
+  isAdmin = false,
+): Promise<UserRecord> {
+  const norm = normalizeUsername(username);
+  const validation = validateUsername(norm);
+  if (!validation.ok) throw new Error(validation.reason);
+
+  // Re-check uniqueness inside the ordered mutation so the check and insert
+  // use the result of every preceding durable commit.
   let inserted: UserRecord | null = null;
-  store.mutate((s) => {
+  await store.mutate((s) => {
     if (s.users.some((u) => u.username.toLowerCase() === norm)) {
       // Another request sneaked in — do not insert.
       return s;

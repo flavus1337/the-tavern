@@ -4,6 +4,7 @@ import type { Duplex } from 'node:stream';
 import { resolveSessionFromCookieHeader } from '../auth/sessions.js';
 import { findUserById } from '../auth/users.js';
 import { getCampaign } from '../campaign/registry.js';
+import { afterCampaignCommit } from '../campaign/commit.js';
 import { log } from '../log.js';
 import { handleMessage } from './handlers.js';
 import type { Role, ServerMessage, PresenceEntry } from '@vtt/shared';
@@ -29,8 +30,7 @@ let sessionCounter = 0;
 const PING_INTERVAL = 30_000;
 const PONG_TIMEOUT = 45_000;
 
-setInterval(() => {
-  const now = Date.now();
+const heartbeat = setInterval(() => {
   for (const sess of sessions.values()) {
     if (!sess.isAlive) {
       log.debug(`Terminating unresponsive WS session for ${sess.username}`);
@@ -45,11 +45,14 @@ setInterval(() => {
       if (!sess.isAlive) {
         sess.ws.terminate();
       }
-    }, PONG_TIMEOUT - PING_INTERVAL);
+    }, PONG_TIMEOUT - PING_INTERVAL).unref();
   }
 }, PING_INTERVAL);
+heartbeat.unref();
+let stopping = false;
 
 export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  if (stopping) { socket.destroy(); return; }
   const url = req.url ?? '';
   if (url !== '/ws' && !url.startsWith('/ws?')) {
     socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
@@ -119,9 +122,10 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
 }
 
 export function send(ws: WebSocket, msg: ServerMessage): void {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
+  const payload = JSON.stringify(msg);
+  afterCampaignCommit(() => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+  });
 }
 
 export function getSessionsInRoom(campaignId: string): WsSession[] {
@@ -177,4 +181,15 @@ export function broadcastPresenceWithDisconnected(
   role: Role | null,
 ): void {
   broadcast(campaignId, { type: 'presence', entries: getPresenceEntries(campaignId, { userId, username, role }) });
+}
+
+/** Close sockets explicitly: wss.close alone waits forever for connected clients. */
+export async function closeWebSockets(): Promise<void> {
+  stopping = true;
+  clearInterval(heartbeat);
+  for (const ws of wss.clients) ws.close(1001, 'server shutting down');
+  const timeout = setTimeout(() => { for (const ws of wss.clients) ws.terminate(); }, 2000);
+  timeout.unref();
+  try { await new Promise<void>((resolve) => wss.close(() => resolve())); }
+  finally { clearTimeout(timeout); }
 }

@@ -21,6 +21,7 @@ import { buildSnapshot, makeBoardItemView, makeTokenView, makePieceView, redactS
 import { broadcastDocuments } from './documents.js';
 import { canAccessShared, canControlToken, documentSharing, type Viewer } from './sharing.js';
 import { getCampaign } from '../campaign/registry.js';
+import { afterCampaignCommit, mutateCampaign } from '../campaign/commit.js';
 import { getRole } from '../auth/memberships.js';
 import { roll } from '../dice/roller.js';
 import { appendRollLog, persistState } from '../campaign/runtime.js';
@@ -47,7 +48,7 @@ function sendError(
 ): void {
   send(session.ws, { type: 'error', code, message, fatal });
   if (fatal) {
-    session.ws.close(1008, code);
+    afterCampaignCommit(() => session.ws.close(1008, code));
   }
 }
 
@@ -90,6 +91,19 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
   }
 
   try {
+    const entry = getCampaign(msg.type === 'join' ? msg.campaignId : session.campaignId!);
+    if (entry && msg.type !== 'ping' && msg.type !== 'measure') {
+      await mutateCampaign(entry, () => dispatchMessage(session, msg));
+    } else {
+      await dispatchMessage(session, msg);
+    }
+  } catch (err) {
+    log.error(`WS handler error: ${String(err)}`);
+    sendError(session, 'INTERNAL', 'Internal error');
+  }
+}
+
+async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<void> {
     switch (msg.type) {
       case 'join':
         await handleJoin(session, msg);
@@ -197,12 +211,8 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
         await handleDeleteMapTemplate(session, msg);
         break;
       default:
-        log.warn(`Unknown WS message type from ${session.username}: ${(raw as { type: string }).type}`);
+        log.warn(`Unknown WS message type from ${session.username}: ${(msg as { type: string }).type}`);
     }
-  } catch (err) {
-    log.error(`WS handler error: ${String(err)}`);
-    sendError(session, 'INTERNAL', 'Internal error');
-  }
 }
 
 async function handleJoin(
@@ -506,8 +516,8 @@ async function handleSetDocumentSharing(
   );
 
   const sharing = parseSharing(msg.sharing);
-  manifest.sharing = sharing;
-  await saveAssetManifest(entry.store, manifest);
+  const updated = { ...manifest, sharing };
+  await saveAssetManifest(entry.store, updated);
 
   broadcastDocuments(campaignId, entry);
 
@@ -516,7 +526,7 @@ async function handleSetDocumentSharing(
     if (s.userId === session.userId) continue;
     if (couldSeeBefore.has(s.userId)) continue;
     if (canAccessShared(viewerOf(s), manifest.ownerUsername ?? null, sharing)) {
-      send(s.ws, { type: 'documentShared', asset: manifest, sharedBy: session.username });
+      send(s.ws, { type: 'documentShared', asset: updated, sharedBy: session.username });
     }
   }
 }
@@ -638,8 +648,7 @@ async function handleMediaControl(
 
   // Playing a track auto-shares it with the table so everyone can fetch the file.
   if (msg.action === 'play' && documentSharing(entry, manifest).scope !== 'all') {
-    manifest.sharing = { scope: 'all', userIds: [] };
-    await saveAssetManifest(entry.store, manifest);
+    await saveAssetManifest(entry.store, { ...manifest, sharing: { scope: 'all', userIds: [] } });
     broadcastDocuments(campaignId, entry);
   }
 

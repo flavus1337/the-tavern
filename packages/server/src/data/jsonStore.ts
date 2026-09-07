@@ -1,11 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { log } from '../log.js';
+import { commitValue, recoverCampaign, updateCampaignMemory, withCampaignFiles, writeCampaignFile } from '../campaign/commit.js';
 
 export class JsonFileStore<T> {
   private filePath: string;
   private data: T;
-  private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor(filePath: string, data: T) {
     this.filePath = filePath;
@@ -16,45 +15,43 @@ export class JsonFileStore<T> {
     // Ensure parent directory exists.
     await fs.mkdir(path.dirname(filePath), { recursive: true });
 
-    let data: T;
-    try {
-      const raw = await fs.readFile(filePath, 'utf8');
-      data = JSON.parse(raw) as T;
-    } catch (err: unknown) {
-      if (isNotFound(err)) {
-        data = initialValue;
-      } else {
-        throw err;
+    return withCampaignFiles(path.dirname(filePath), async () => {
+      await recoverCampaign(path.dirname(filePath));
+      let data: T;
+      try {
+        const raw = await fs.readFile(filePath, 'utf8');
+        data = JSON.parse(raw) as T;
+      } catch (err: unknown) {
+        if (isNotFound(err)) {
+          data = initialValue;
+        } else {
+          throw err;
+        }
       }
-    }
-
-    return new JsonFileStore<T>(filePath, data);
-  }
-
-  get(): T {
-    return this.data;
-  }
-
-  mutate(fn: (current: T) => T): void {
-    this.data = fn(this.data);
-    this.enqueueWrite();
-  }
-
-  private enqueueWrite(): void {
-    this.writeQueue = this.writeQueue.then(() => this.atomicWrite()).catch((err: unknown) => {
-      log.error(`JsonFileStore write error for ${this.filePath}: ${String(err)}`);
+      return new JsonFileStore<T>(filePath, data);
     });
   }
 
-  private async atomicWrite(): Promise<void> {
-    const tmpPath = this.filePath + '.tmp';
-    await fs.writeFile(tmpPath, JSON.stringify(this.data, null, 2), 'utf8');
-    await fs.rename(tmpPath, this.filePath);
+  get(): T {
+    return commitValue(this, { data: this.data }).data;
+  }
+
+  mutate(fn: (current: T) => T): Promise<void> {
+    const dir = path.dirname(this.filePath);
+    return withCampaignFiles(dir, async () => {
+      // The callback runs after preceding commits; its candidate cannot mutate
+      // confirmed data if either the callback or persistence fails.
+      const draft = commitValue(this, { data: this.data });
+      const candidate = fn(structuredClone(draft.data));
+      await writeCampaignFile(dir, this.filePath, JSON.stringify(candidate, null, 2));
+      draft.data = candidate;
+      updateCampaignMemory(() => { this.data = candidate; });
+    });
   }
 
   /** Wait for all pending writes to flush. */
   async flush(): Promise<void> {
-    await this.writeQueue;
+    await withCampaignFiles(path.dirname(this.filePath), async () => {});
   }
 }
 

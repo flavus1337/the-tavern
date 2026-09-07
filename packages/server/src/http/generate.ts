@@ -6,6 +6,8 @@ import { param } from './params.js';
 import { requireMember } from '../auth/middleware.js';
 import { getCampaign } from '../campaign/registry.js';
 import { saveAssetManifest } from '../campaign/writer.js';
+import { mutateCampaign, writeCampaignFile } from '../campaign/commit.js';
+import { asyncRoute } from './asyncRoute.js';
 import { broadcast } from '../ws/hub.js';
 import { config } from '../config.js';
 import { generateImages, type GenKind } from '../services/imagegen.js';
@@ -63,7 +65,7 @@ async function makeBackgroundTransparent(buf: Buffer): Promise<Buffer> {
 
 // POST /api/campaigns/:id/generate — DM only. Returns N candidate images as
 // base64 (transient; the client holds them and saves the chosen one).
-router.post('/:id/generate', bigJson, requireMember('dm'), async (req: Request, res: Response) => {
+router.post('/:id/generate', bigJson, requireMember('dm'), asyncRoute(async (req: Request, res: Response) => {
   if (!config.LLM_API_KEY) {
     res.status(503).json({ error: 'Image generation is off — no LLM_API_KEY configured', code: 'GEN_DISABLED' });
     return;
@@ -80,11 +82,11 @@ router.post('/:id/generate', bigJson, requireMember('dm'), async (req: Request, 
     const code = (err as { code?: string }).code ?? 'GEN_ERROR';
     res.status(502).json({ error: (err as Error).message ?? 'Generation failed', code });
   }
-});
+}));
 
 // POST /api/campaigns/:id/generate/save — DM only. Persist a chosen candidate
 // (or an uploaded data URL) as a campaign asset and return its manifest.
-router.post('/:id/generate/save', bigJson, requireMember('dm'), async (req: Request, res: Response) => {
+router.post('/:id/generate/save', bigJson, requireMember('dm'), asyncRoute(async (req: Request, res: Response) => {
   const campaignId = param(req.params['id']);
   const entry = getCampaign(campaignId);
   if (!entry) {
@@ -118,11 +120,13 @@ router.post('/:id/generate/save', bigJson, requireMember('dm'), async (req: Requ
   const outputPath = path.join(entry.store.dir, 'assets', outputFilename);
 
   let width: number, height: number;
+  let imageBuffer: Buffer;
   try {
     // Props get their background flood-filled to transparent (cut-out); maps stay opaque.
     const src = genKind === 'prop' ? await makeBackgroundTransparent(buf) : buf;
     const img = sharp(src).resize({ width: MAX_DIMENSION, height: MAX_DIMENSION, fit: 'inside', withoutEnlargement: true });
-    const info = await img.webp({ quality: 86, alphaQuality: 90 }).toFile(outputPath);
+    const { data, info } = await img.webp({ quality: 86, alphaQuality: 90 }).toBuffer({ resolveWithObject: true });
+    imageBuffer = data;
     width = info.width;
     height = info.height;
   } catch (err) {
@@ -145,14 +149,21 @@ router.post('/:id/generate/save', bigJson, requireMember('dm'), async (req: Requ
     ownerUsername: req.user!.username,
     ...(genKind === 'prop' && typeof category === 'string' && category.trim() ? { category: category.trim().slice(0, 40) } : {}),
   };
-  await saveAssetManifest(entry.store, manifest);
-
-  // Refresh the DM's asset list so the new prop/background shows in the palette.
-  const assets = [...entry.store.assets.values()].filter((a) => a.assetKind !== 'document');
-  broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');
+  const saved = await mutateCampaign(entry, async (draft) => {
+    if (draft.store.assets.size >= MAX_ASSETS_PER_CAMPAIGN) {
+      res.status(413).json({ error: 'Campaign asset limit reached', code: 'ASSET_LIMIT' });
+      return false;
+    }
+    await writeCampaignFile(draft.store.dir, outputPath, imageBuffer);
+    await saveAssetManifest(draft.store, manifest);
+    const assets = [...draft.store.assets.values()].filter((a) => a.assetKind !== 'document');
+    broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');
+    return true;
+  });
+  if (!saved) return;
 
   const body: UploadAssetResponse = { asset: manifest };
   res.status(201).json(body);
-});
+}));
 
 export default router;

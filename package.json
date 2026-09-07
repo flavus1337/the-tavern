@@ -7,7 +7,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "smoke": "tsx scripts/smoke-test.ts",
-    "start": "node packages/server/dist/index.js"
+    "start": "node packages/server/dist/index.js",
+    "persistence-regression": "tsx scripts/persistence-regression.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13",

@@ -10,6 +10,8 @@ import { createInvite, previewInvite, redeemInvite, listInvitesForCampaign, revo
 import { getCampaign, getAllCampaigns } from '../campaign/registry.js';
 import { broadcastDocuments } from '../ws/documents.js';
 import { persistState } from '../campaign/runtime.js';
+import { mutateCampaign } from '../campaign/commit.js';
+import { asyncRoute } from './asyncRoute.js';
 import { deleteAssetFiles } from '../campaign/writer.js';
 import { config } from '../config.js';
 import { broadcast } from '../ws/hub.js';
@@ -47,7 +49,7 @@ router.get('/', requireAuth, (req: Request, res: Response) => {
 });
 
 // POST /api/campaigns — admin only.
-router.post('/', requireAdmin, async (req: Request, res: Response) => {
+router.post('/', requireAdmin, asyncRoute(async (req: Request, res: Response) => {
   const { name, description } = req.body as { name?: string; description?: string };
   if (!name) {
     res.status(400).json({ error: 'name is required' });
@@ -57,7 +59,7 @@ router.post('/', requireAdmin, async (req: Request, res: Response) => {
   try {
     const meta = await createCampaign(name, description ?? '');
     // Grant admin DM membership.
-    addMembership(meta.id, req.user!.id, 'dm');
+    await addMembership(meta.id, req.user!.id, 'dm');
 
     const body: CreateCampaignResponse = {
       campaign: {
@@ -76,23 +78,23 @@ router.post('/', requireAdmin, async (req: Request, res: Response) => {
     }
     throw err;
   }
-});
+}));
 
 // POST /api/campaigns/:id/invites — dm.
-router.post('/:id/invites', requireMember('dm'), (req: Request, res: Response) => {
+router.post('/:id/invites', requireMember('dm'), asyncRoute(async (req: Request, res: Response) => {
   const campaignId = param(req.params['id']);
   const { expiresInHours, maxUses } = req.body as {
     expiresInHours?: number;
     maxUses?: number;
   };
 
-  const invite = createInvite(campaignId, req.user!.id, { expiresInHours, maxUses });
+  const invite = await createInvite(campaignId, req.user!.id, { expiresInHours, maxUses });
   const body: CreateInviteResponse = {
     token: invite.token,
     url: `${config.PUBLIC_ORIGIN}/?invite=${invite.token}`,
   };
   res.status(201).json(body);
-});
+}));
 
 // GET /api/campaigns/:id/invites — dm.
 router.get('/:id/invites', requireMember('dm'), (req: Request, res: Response) => {
@@ -110,18 +112,18 @@ router.get('/:id/invites', requireMember('dm'), (req: Request, res: Response) =>
 });
 
 // DELETE /api/campaigns/:id/invites/:token — dm.
-router.delete('/:id/invites/:token', requireMember('dm'), (req: Request, res: Response) => {
+router.delete('/:id/invites/:token', requireMember('dm'), asyncRoute(async (req: Request, res: Response) => {
   const token = param(req.params['token']);
-  const found = revokeInvite(token);
+  const found = await revokeInvite(token);
   if (!found) {
     res.status(404).json({ error: 'Invite not found' });
     return;
   }
   res.status(204).send();
-});
+}));
 
 // GET /api/campaigns/:id/files/assets/:filename — member-gated binary serving.
-router.get('/:id/files/assets/:filename', requireMember(), async (req: Request, res: Response) => {
+router.get('/:id/files/assets/:filename', requireMember(), asyncRoute(async (req: Request, res: Response) => {
   const campaignId = param(req.params['id']);
   const filename = param(req.params['filename']);
 
@@ -206,10 +208,10 @@ router.get('/:id/files/assets/:filename', requireMember(), async (req: Request, 
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   }
   res.sendFile(filePath);
-});
+}));
 
 // DELETE /api/campaigns/:id/assets/:assetId — owner or dm.
-router.delete('/:id/assets/:assetId', requireMember(), async (req: Request, res: Response) => {
+router.delete('/:id/assets/:assetId', requireMember(), asyncRoute(async (req: Request, res: Response) => {
   const campaignId = param(req.params['id']);
   const assetId = param(req.params['assetId']);
 
@@ -219,53 +221,57 @@ router.delete('/:id/assets/:assetId', requireMember(), async (req: Request, res:
     return;
   }
 
-  const manifest = entry.store.assets.get(assetId);
-  if (!manifest) {
-    res.status(404).json({ error: 'Asset not found' });
-    return;
-  }
-
-  const user = req.user!;
-  const isDm = req.campaignRole === 'dm';
-  const isOwner = manifest.ownerUsername === user.username;
-
-  if (!isDm && !isOwner) {
-    res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
-    return;
-  }
-
-  await deleteAssetFiles(entry.store, manifest);
-
-  // Remove board items referencing this asset, persist, and broadcast if any were removed.
-  const boardBefore = entry.runtime.state.board.length;
-  const boardAfter = entry.runtime.state.board.filter((item) => item.assetId !== assetId);
-  if (boardAfter.length !== boardBefore) {
-    entry.runtime.state = { ...entry.runtime.state, board: boardAfter };
-    await persistState(entry.runtime);
-
-    const items: BoardItemView[] = boardAfter.map((item) =>
-      makeBoardItemView(campaignId, item, entry),
-    );
-    broadcast(campaignId, { type: 'boardUpdated', items });
-  }
-
-  // Broadcast appropriate update.
-  if (manifest.assetKind === 'document') {
-    // Revoke table access if it was shared, then push per-user lists.
-    if (entry.runtime.state.sharedDocumentIds.includes(assetId)) {
-      entry.runtime.state = {
-        ...entry.runtime.state,
-        sharedDocumentIds: entry.runtime.state.sharedDocumentIds.filter((id) => id !== assetId),
-      };
-      await persistState(entry.runtime);
+  const deleted = await mutateCampaign(entry, async (draft) => {
+    const manifest = draft.store.assets.get(assetId);
+    if (!manifest) {
+      res.status(404).json({ error: 'Asset not found' });
+      return false;
     }
-    broadcastDocuments(campaignId, entry);
-  } else {
-    const assets = [...entry.store.assets.values()].filter((a) => a.assetKind !== 'document');
-    broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');
-  }
+
+    const user = req.user!;
+    const isDm = req.campaignRole === 'dm';
+    const isOwner = manifest.ownerUsername === user.username;
+
+    if (!isDm && !isOwner) {
+      res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+      return false;
+    }
+
+    await deleteAssetFiles(draft.store, manifest);
+
+    // Remove board items referencing this asset, persist, and broadcast if any were removed.
+    const boardBefore = draft.runtime.state.board.length;
+    const boardAfter = draft.runtime.state.board.filter((item) => item.assetId !== assetId);
+    if (boardAfter.length !== boardBefore) {
+      draft.runtime.state = { ...draft.runtime.state, board: boardAfter };
+      await persistState(draft.runtime);
+
+      const items: BoardItemView[] = boardAfter.map((item) =>
+        makeBoardItemView(campaignId, item, draft),
+      );
+      broadcast(campaignId, { type: 'boardUpdated', items });
+    }
+
+    // Broadcast appropriate update.
+    if (manifest.assetKind === 'document') {
+      // Revoke table access if it was shared, then push per-user lists.
+      if (draft.runtime.state.sharedDocumentIds.includes(assetId)) {
+        draft.runtime.state = {
+          ...draft.runtime.state,
+          sharedDocumentIds: draft.runtime.state.sharedDocumentIds.filter((id) => id !== assetId),
+        };
+        await persistState(draft.runtime);
+      }
+      broadcastDocuments(campaignId, draft);
+    } else {
+      const assets = [...draft.store.assets.values()].filter((a) => a.assetKind !== 'document');
+      broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');
+    }
+    return true;
+  });
+  if (!deleted) return;
 
   res.status(204).send();
-});
+}));
 
 export default router;

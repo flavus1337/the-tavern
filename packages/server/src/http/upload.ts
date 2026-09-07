@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import path from 'node:path';
-import fs from 'node:fs/promises';
 import multer from 'multer';
 import sharp from 'sharp';
 import { param } from './params.js';
 import { requireMember } from '../auth/middleware.js';
 import { getCampaign } from '../campaign/registry.js';
 import { saveAssetManifest } from '../campaign/writer.js';
+import { mutateCampaign, writeCampaignFile } from '../campaign/commit.js';
+import { asyncRoute } from './asyncRoute.js';
 import { broadcast } from '../ws/hub.js';
 import { broadcastDocuments } from '../ws/documents.js';
 import { randomId, slugify, SCHEMA_VERSIONS } from '@vtt/shared';
@@ -27,6 +28,19 @@ const MAX_DIMENSION = 2560;
 // for any real campaign; combined with the 100 MB per-file limit it bounds disk.
 const MAX_ASSETS_PER_CAMPAIGN = 1000;
 
+// Recheck after image processing and while holding the campaign command queue.
+function canFinishUpload(req: Request, res: Response, entry: NonNullable<ReturnType<typeof getCampaign>>): boolean {
+  if (req.campaignRole !== 'dm' && entry.runtime.state.uploadsLocked) {
+    res.status(403).json({ error: 'Uploads are locked by the DM', code: 'UPLOADS_LOCKED' });
+    return false;
+  }
+  if (entry.store.assets.size >= MAX_ASSETS_PER_CAMPAIGN) {
+    res.status(413).json({ error: 'Campaign asset limit reached', code: 'ASSET_LIMIT' });
+    return false;
+  }
+  return true;
+}
+
 // Never accept files a browser could execute as same-origin markup/script.
 const BLOCKED_DOC_MIMES = new Set([
   'text/html',
@@ -43,7 +57,7 @@ router.post(
   '/:id/assets',
   requireMember(),
   upload.single('file'),
-  async (req: Request, res: Response) => {
+  asyncRoute(async (req: Request, res: Response) => {
     const campaignId = param(req.params['id']);
     const entry = getCampaign(campaignId);
     if (!entry) {
@@ -100,6 +114,7 @@ router.post(
 
     let width: number;
     let height: number;
+    let imageBuffer: Buffer;
 
     try {
       const img = sharp(file.buffer).resize({
@@ -108,7 +123,8 @@ router.post(
         fit: 'inside',
         withoutEnlargement: true,
       });
-      const info = await img.webp({ quality: 82 }).toFile(outputPath);
+      const { data, info } = await img.webp({ quality: 82 }).toBuffer({ resolveWithObject: true });
+      imageBuffer = data;
       width = info.width;
       height = info.height;
     } catch (err) {
@@ -132,15 +148,19 @@ router.post(
       ...(category ? { category } : {}),
     };
 
-    await saveAssetManifest(entry.store, manifest);
-
-    // Broadcast assetsUpdated to DM sockets.
-    const assets = [...entry.store.assets.values()].filter((a) => a.assetKind !== 'document');
-    broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');
+    const saved = await mutateCampaign(entry, async (draft) => {
+      if (!canFinishUpload(req, res, draft)) return false;
+      await writeCampaignFile(draft.store.dir, outputPath, imageBuffer);
+      await saveAssetManifest(draft.store, manifest);
+      const assets = [...draft.store.assets.values()].filter((a) => a.assetKind !== 'document');
+      broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');
+      return true;
+    });
+    if (!saved) return;
 
     const body: UploadAssetResponse = { asset: manifest };
     res.status(201).json(body);
-  },
+  }),
 );
 
 // POST /api/campaigns/:id/documents — any member, any file type except
@@ -150,7 +170,7 @@ router.post(
   '/:id/documents',
   requireMember(),
   upload.single('file'),
-  async (req: Request, res: Response) => {
+  asyncRoute(async (req: Request, res: Response) => {
     const campaignId = param(req.params['id']);
     const entry = getCampaign(campaignId);
     if (!entry) {
@@ -203,15 +223,6 @@ router.post(
     const outputFilename = `${slug}-${shortId}.${ext}`;
     const outputPath = path.join(entry.store.dir, 'assets', outputFilename);
 
-    try {
-      await fs.writeFile(outputPath, file.buffer);
-    } catch (err) {
-      // Disk full / permissions — respond cleanly rather than letting the
-      // rejection bubble up.
-      res.status(500).json({ error: `Could not save file: ${String(err)}` });
-      return;
-    }
-
     const manifest: AssetManifest = {
       type: 'asset',
       schemaVersion: SCHEMA_VERSIONS.asset,
@@ -227,14 +238,18 @@ router.post(
       ownerUsername: req.user!.username,
     };
 
-    await saveAssetManifest(entry.store, manifest);
-
-    // Documents are private to the uploader — push per-user filtered lists.
-    broadcastDocuments(campaignId, entry);
+    const saved = await mutateCampaign(entry, async (draft) => {
+      if (!canFinishUpload(req, res, draft)) return false;
+      await writeCampaignFile(draft.store.dir, outputPath, file.buffer);
+      await saveAssetManifest(draft.store, manifest);
+      broadcastDocuments(campaignId, draft);
+      return true;
+    });
+    if (!saved) return;
 
     const body: UploadAssetResponse = { asset: manifest };
     res.status(201).json(body);
-  },
+  }),
 );
 
 export default router;

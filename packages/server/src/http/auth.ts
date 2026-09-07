@@ -1,22 +1,28 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
-import { createUser, login, validateUsername, findUserById } from '../auth/users.js';
+import { createUserWithPasswordHash, login, validateUsername } from '../auth/users.js';
 import { createSession, setCookieHeader, clearCookieHeader, resolveSessionFromCookieHeader, deleteSession } from '../auth/sessions.js';
 import { previewInvite, redeemInvite } from '../auth/invites.js';
 import { requireAuth } from '../auth/middleware.js';
 import type { RegisterResponse, LoginResponse, MeResponse } from '@vtt/shared';
+import { asyncRoute } from './asyncRoute.js';
+import { hashPassword } from '../auth/passwords.js';
+import { withCampaignFiles } from '../campaign/commit.js';
+import { config } from '../config.js';
 
 const router = Router();
 
 // POST /api/auth/register
-router.post('/register', async (req: Request, res: Response) => {
-  const { username, password, inviteToken } = req.body as {
-    username?: string;
-    password?: string;
-    inviteToken?: string;
+router.post('/register', asyncRoute(async (req: Request, res: Response) => {
+  const { username, password, inviteToken } = (req.body ?? {}) as {
+    username?: unknown;
+    password?: unknown;
+    inviteToken?: unknown;
   };
 
-  if (!username || !password || !inviteToken) {
+  if (typeof username !== 'string' || !username || username.length > 128 ||
+      typeof password !== 'string' || !password || password.length > 1024 ||
+      typeof inviteToken !== 'string' || !inviteToken || inviteToken.length > 256) {
     res.status(400).json({ error: 'username, password, and inviteToken are required' });
     return;
   }
@@ -43,46 +49,52 @@ router.post('/register', async (req: Request, res: Response) => {
     return;
   }
 
-  let user;
+  // Hash before entering the file queue so other authentication work can proceed.
+  const passwordHash = await hashPassword(password);
+  let registration;
   try {
-    user = await createUser(username, password, false);
+    registration = await withCampaignFiles(config.DATA_DIR, async () => {
+      const user = await createUserWithPasswordHash(username, passwordHash, false);
+      const redemption = await redeemInvite(inviteToken, user.id);
+      if (!redemption.ok) {
+        throw Object.assign(new Error(`Invite ${redemption.reason}`), {
+          status: ['expired', 'exhausted', 'revoked'].includes(redemption.reason) ? 410 : 400,
+          code: redemption.reason.toUpperCase(),
+        });
+      }
+      const session = await createSession(user.id);
+      return { user, session, campaignId: redemption.campaignId };
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === 'username_taken') {
       res.status(409).json({ error: 'Username already taken', code: 'USERNAME_TAKEN' });
       return;
     }
-    res.status(400).json({ error: message });
-    return;
+    throw err;
   }
 
-  // Redeem invite → adds membership.
-  const redeemResult = redeemInvite(inviteToken, user.id);
-  if (!redeemResult.ok) {
-    // User was created but invite redemption failed. Return a 500.
-    res.status(500).json({ error: 'Failed to redeem invite', code: 'REDEEM_FAILED' });
-    return;
-  }
-
-  const session = await createSession(user.id);
+  const { user, session, campaignId } = registration;
   setCookieHeader(res, session.token);
 
   const body: RegisterResponse = {
     user: { id: user.id, username: user.username, isAdmin: user.isAdmin },
-    joinedCampaignId: redeemResult.campaignId,
+    joinedCampaignId: campaignId,
   };
   res.status(201).json(body);
-});
+}));
 
 // POST /api/auth/login
-router.post('/login', async (req: Request, res: Response) => {
-  const { username, password, inviteToken } = req.body as {
-    username?: string;
-    password?: string;
-    inviteToken?: string;
+router.post('/login', asyncRoute(async (req: Request, res: Response) => {
+  const { username, password, inviteToken } = (req.body ?? {}) as {
+    username?: unknown;
+    password?: unknown;
+    inviteToken?: unknown;
   };
 
-  if (!username || !password) {
+  if (typeof username !== 'string' || !username || username.length > 128 ||
+      typeof password !== 'string' || !password || password.length > 1024 ||
+      (inviteToken != null && (typeof inviteToken !== 'string' || inviteToken.length > 256))) {
     res.status(400).json({ error: 'username and password are required' });
     return;
   }
@@ -102,17 +114,15 @@ router.post('/login', async (req: Request, res: Response) => {
     return;
   }
 
-  let joinedCampaignId: string | undefined;
-
-  // Optional invite redeem on login.
-  if (inviteToken) {
-    const redeemResult = redeemInvite(inviteToken, result.user.id);
-    if (redeemResult.ok) {
-      joinedCampaignId = redeemResult.campaignId;
+  const { joinedCampaignId, session } = await withCampaignFiles(config.DATA_DIR, async () => {
+    let joinedCampaignId: string | undefined;
+    // Optional invite redemption and the session commit together.
+    if (inviteToken) {
+      const redeemResult = await redeemInvite(inviteToken, result.user.id);
+      if (redeemResult.ok) joinedCampaignId = redeemResult.campaignId;
     }
-  }
-
-  const session = await createSession(result.user.id);
+    return { joinedCampaignId, session: await createSession(result.user.id) };
+  });
   setCookieHeader(res, session.token);
 
   const body: LoginResponse = {
@@ -120,17 +130,17 @@ router.post('/login', async (req: Request, res: Response) => {
     joinedCampaignId,
   };
   res.status(200).json(body);
-});
+}));
 
 // POST /api/auth/logout
-router.post('/logout', requireAuth, (req: Request, res: Response) => {
+router.post('/logout', requireAuth, asyncRoute(async (req: Request, res: Response) => {
   const session = resolveSessionFromCookieHeader(req.headers.cookie);
   if (session) {
-    deleteSession(session.token);
+    await deleteSession(session.token);
   }
   clearCookieHeader(res);
   res.status(204).send();
-});
+}));
 
 // GET /api/auth/me
 router.get('/me', requireAuth, (req: Request, res: Response) => {
