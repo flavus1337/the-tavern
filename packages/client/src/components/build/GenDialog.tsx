@@ -50,7 +50,7 @@ export function GenDialog() {
     if (kind === 'background') {
       if (!value.placed) {
         const w = 40 * grid.cell;
-        const p = value.generated ? centredPlacement(w, w) : { x: 0, y: 0 };
+        const p = value.generated ? centredPlacement(w, w, { cell: grid.cell, offsetX: 0, offsetY: 0 }) : { x: 0, y: 0 };
         if (!await save.run({ type: 'boardAdd', assetId: value.asset.id, x: p.x, y: p.y, ...(value.generated ? { w } : {}) })) return;
         value = { ...value, placed: true };
         setSaved(value);

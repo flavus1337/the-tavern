@@ -132,7 +132,7 @@ async function main(): Promise<void> {
     assert.equal(snapshot.tokens[0].revision, 0);
     assert.equal(snapshot.chapters[0].revision, 0);
     assert.equal(snapshot.chapters[0].summary, '');
-    pass('production v7 snapshots migrate legacy note/token/chapter revisions to zero');
+    pass(`production v${PROTOCOL_VERSION} snapshots migrate legacy note/token/chapter revisions to zero`);
 
     const created = await ack(b, { type: 'saveNote', title: 'New note', body: 'confirmed body', sharing: { scope: 'all', userIds: [] } });
     assert.equal(created.revision, 1);

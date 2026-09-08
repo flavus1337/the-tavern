@@ -50,7 +50,7 @@ export function BuildInspector() {
   // aligned), and set a clean, visible grid.
   async function placeBackground(assetId: string) {
     const w = 40 * grid.cell;
-    const p = centredPlacement(w, w);
+    const p = centredPlacement(w, w, { cell: grid.cell, offsetX: 0, offsetY: 0 });
     await sendCommand({ type: 'boardAdd', assetId, x: p.x, y: p.y, w });
     await sendCommand({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
   }
@@ -62,7 +62,7 @@ export function BuildInspector() {
     const bg = board[0];
     if (bg && !mapLocked) {
       const w = 40 * std;
-      const p = centredPlacement(w, w);
+      const p = centredPlacement(w, w, { cell: std, offsetX: 0, offsetY: 0 });
       sendWs({ type: 'boardMove', itemId: bg.id, x: p.x, y: p.y, w });
     }
   }

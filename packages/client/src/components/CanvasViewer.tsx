@@ -15,6 +15,7 @@ import { BoardMoments } from './RollLog';
 import { inkSprite } from '../lib/inkArt';
 import { activeEntry } from '../lib/initiative';
 import { gestureLifecycle } from '../lib/gesture';
+import { gridOffset, snapToGrid, calibratedGrid } from '../lib/grid';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
 const TOKEN_CELLS: Record<TokenView['size'], number> = { S: 1, M: 1, L: 2, H: 3 };
@@ -24,11 +25,6 @@ function initials(name: string): string {
   if (parts.length === 0) return '?';
   if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
   return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
-}
-
-/** Round a board-space coordinate to the nearest grid cell origin. */
-function snapTo(value: number, cell: number, offset: number): number {
-  return Math.round((value - offset) / cell) * cell + offset;
 }
 
 // Judgment call: keep codebase's wide clamp (0.05–8) instead of design's 0.3–2.4.
@@ -78,15 +74,15 @@ interface BoardItemProps {
   item: BoardItemView;
   isDm: boolean;
   scale: number;
+  editable: boolean;
 }
 
-function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
+function BoardItemEl({ item, isDm, scale, editable }: BoardItemProps) {
   const [hovered, setHovered] = useState(false);
   const mapLocked = useStore((s) => s.mapLocked);
-  // DM always; players only when the DM unlocked this item. A locked map blocks
-  // everyone (including the DM).
+  // Background editing is a DM Build + Select action. Legacy player-access fields remain portable data.
   const connected = useStore((s) => s.connection === 'open');
-  const canManipulate = connected && (isDm || item.playersCanMove) && !mapLocked;
+  const canManipulate = connected && editable && isDm && !mapLocked;
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
   const [localW, setLocalW] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -101,6 +97,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
     naturalAspect: number;
   } | null>(null);
   const commit = useGestureCommit(() => { dragRef.current = null; setIsDragging(false); setLocalPos(null); setLocalW(null); });
+  useEffect(() => { if (!canManipulate) commit.cancel(); }, [canManipulate]);
 
   const naturalAspect =
     item.naturalWidth && item.naturalHeight ? item.naturalHeight / item.naturalWidth : 1;
@@ -232,7 +229,7 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
         Map · {item.title}
       </div>
 
-      {/* Hover controls — outline + resize for anyone who can manipulate; ✕ and lock are DM-only */}
+      {/* Background controls are available in DM Build + Select. */}
       {canManipulate && hovered && !isDragging && (
         <>
           {/* Ember outline on hover */}
@@ -244,43 +241,6 @@ function BoardItemEl({ item, isDm, scale }: BoardItemProps) {
               pointerEvents: 'none',
             }}
           />
-          {isDm && (
-            /* Player-access lock toggle — top-left */
-            <button
-              type="button"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                sendWs({ type: 'boardSetAccess', itemId: item.id, playersCanMove: !item.playersCanMove });
-              }}
-              style={{
-                position: 'absolute',
-                top: -handlePx / 2,
-                left: -handlePx / 2,
-                width: handlePx,
-                height: handlePx,
-                cursor: 'pointer',
-                background: item.playersCanMove ? 'var(--teal)' : 'var(--raised)',
-                color: item.playersCanMove ? '#0c2520' : 'var(--mid)',
-                border: `${Math.max(1.5, 2 / scale)}px solid rgba(255,255,255,0.9)`,
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 2px 10px rgba(0,0,0,0.8)',
-              }}
-              aria-label={item.playersCanMove ? 'Lock item (players cannot move it)' : 'Unlock item (players can move it)'}
-              title={item.playersCanMove ? 'Players can move this — click to lock' : 'Locked — click to let players move this'}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" style={{ width: '58%', height: '58%' }}>
-                {item.playersCanMove ? (
-                  <path d="M7 11V7a5 5 0 019.5-2M5 11h14v9a1 1 0 01-1 1H6a1 1 0 01-1-1v-9z" strokeLinecap="round" strokeLinejoin="round" />
-                ) : (
-                  <path d="M7 11V7a5 5 0 0110 0v4M5 11h14v9a1 1 0 01-1 1H6a1 1 0 01-1-1v-9z" strokeLinecap="round" strokeLinejoin="round" />
-                )}
-              </svg>
-            </button>
-          )}
           {/* Remove button — DM only */}
           {isDm && (
             <button
@@ -412,8 +372,8 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
     let nx = localPos.x;
     let ny = localPos.y;
     if (grid.snap && !d.alt) {
-      nx = snapTo(localPos.x, grid.cell, grid.offsetX);
-      ny = snapTo(localPos.y, grid.cell, grid.offsetY);
+      nx = snapToGrid(localPos.x, grid.cell, grid.offsetX);
+      ny = snapToGrid(localPos.y, grid.cell, grid.offsetY);
     }
     ({ x: nx, y: ny } = clampToBoard(nx, ny, px, px, grid.cell));
     setLocalPos({ x: nx, y: ny });
@@ -615,8 +575,8 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
     if (d.mode === 'move') {
       let nx = t.x, ny = t.y;
       if (piece.lockedToGrid || grid.snap) {
-        nx = snapTo(t.x, grid.cell, grid.offsetX);
-        ny = snapTo(t.y, grid.cell, grid.offsetY);
+        nx = snapToGrid(t.x, grid.cell, grid.offsetX);
+        ny = snapToGrid(t.y, grid.cell, grid.offsetY);
       }
       ({ x: nx, y: ny } = clampToBoard(nx, ny, t.w, t.h, grid.cell));
       setLocal({ ...t, x: nx, y: ny });
@@ -750,10 +710,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   async function applyCalibration() {
     if (!calibBox) return;
     const n = Math.max(1, parseInt(calibCells, 10) || 1);
-    const cell = Math.max(8, calibBox.w / n);
-    const offsetX = ((calibBox.x % cell) + cell) % cell;
-    const offsetY = ((calibBox.y % cell) + cell) % cell;
-    const ack = await calibrationSave.run({ type: 'setGrid', grid: { cell: Math.round(cell), offsetX: Math.round(offsetX), offsetY: Math.round(offsetY), visible: true } });
+    const ack = await calibrationSave.run({ type: 'setGrid', grid: calibratedGrid(calibBox.x, calibBox.y, calibBox.w, n) });
     if (!ack) return;
     setCalibBox(null); setCalibPrompt(false); setBoardTool('select');
   }
@@ -888,8 +845,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       const lp = activePalettePiece;
       let px = p.x - size / 2, py = p.y - size / 2;
       if (lp.lockedToGrid || grid.snap) {
-        px = snapTo(px, grid.cell, grid.offsetX);
-        py = snapTo(py, grid.cell, grid.offsetY);
+        px = snapToGrid(px, grid.cell, grid.offsetX);
+        py = snapToGrid(py, grid.cell, grid.offsetY);
       }
       sendWs({ type: 'pieceAdd', builtin: lp.builtin, assetId: lp.assetId, x: px, y: py, w: size, h: size, rotation: 0, layer: lp.layer, lockedToGrid: lp.lockedToGrid });
       return; // stay armed for rapid placement
@@ -937,8 +894,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       const size = Math.round(grid.cell * 1.5);
       let px = p.x - size / 2, py = p.y - size / 2;
       if (activePalettePiece.lockedToGrid || grid.snap) {
-        px = snapTo(px, grid.cell, grid.offsetX);
-        py = snapTo(py, grid.cell, grid.offsetY);
+        px = snapToGrid(px, grid.cell, grid.offsetX);
+        py = snapToGrid(py, grid.cell, grid.offsetY);
       }
       setGhost({ x: px, y: py });
       return;
@@ -1038,7 +995,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
           In build mode the DM can move/resize the background too. */}
       <div style={stageStyle}>
         {(layerVisible.background) && sortedItems.map((item) => (
-          <BoardItemEl key={item.id} item={item} isDm={isDm} scale={view.scale} />
+          <BoardItemEl key={item.id} item={item} isDm={isDm} scale={view.scale} editable={isBuild && boardTool === 'select'} />
         ))}
       </div>
 
@@ -1180,8 +1137,9 @@ function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
 
   const gridBg: React.CSSProperties = grid.visible
     ? {
-        backgroundImage: `linear-gradient(0deg, ${grid.color} ${u}px, transparent ${u}px), linear-gradient(90deg, ${grid.color} ${u}px, transparent ${u}px)`,
+        backgroundImage: `linear-gradient(to bottom, ${grid.color} ${u}px, transparent ${u}px), linear-gradient(to right, ${grid.color} ${u}px, transparent ${u}px)`,
         backgroundSize: `${grid.cell}px ${grid.cell}px, ${grid.cell}px ${grid.cell}px`,
+        backgroundPosition: `${gridOffset(grid.offsetX, grid.cell)}px ${gridOffset(grid.offsetY, grid.cell)}px`,
       }
     : {};
 

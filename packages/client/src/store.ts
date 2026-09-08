@@ -170,7 +170,8 @@ interface TableSlice {
   documents: AssetManifest[];
   /** open floating panels over the board (docs + notes + token editor), render order = z-order */
   openPanels: TablePanel[];
-  /** latest table-playback command per audio asset (drives synced players) */
+  /** The single accepted table timeline, keyed by its current audio asset. */
+  clockOffsetMs: number | null;
   mediaSync: Record<string, { action: 'play' | 'pause' | 'stop'; time: number; atMs: number }>;
   /** bottom audio dock — one active track at a time */
   audioDock: { assetId: string; minimized: boolean } | null;
@@ -307,6 +308,7 @@ const tableDefaults = {
   assets: null,
   documents: [],
   openPanels: [] as TablePanel[],
+  clockOffsetMs: null,
   mediaSync: {},
   audioDock: null,
   rollToasts: [],
@@ -390,7 +392,7 @@ export const useStore = create<StoreState>()((set) => ({
       ownMeasureShared: false,
       sharedMeasures: {},
       mediaSync: snap.media
-        ? { [snap.media.assetId]: { action: snap.media.action, time: snap.media.time, atMs: Date.now() - snap.media.elapsedMs } }
+        ? { [snap.media.assetId]: { action: snap.media.action, time: snap.media.time, atMs: snap.media.atMs } }
         : {},
       audioDock: snap.media
         ? { assetId: snap.media.assetId, minimized: false }
@@ -521,7 +523,7 @@ export const useStore = create<StoreState>()((set) => ({
     }),
 
   setMediaSync: (assetId, cmd) =>
-    set((s) => ({ mediaSync: { ...s.mediaSync, [assetId]: cmd } })),
+    set({ mediaSync: cmd.action === 'stop' ? {} : { [assetId]: cmd } }),
 
   openAudioDock: (assetId) =>
     set((s) => ({

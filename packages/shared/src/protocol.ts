@@ -1,7 +1,7 @@
 // WebSocket protocol types — the wire contract between server and client.
 import type { AssetManifest, Sharing, NoteKind } from './campaign.js';
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /** The board is a finite BOARD_CELLS × BOARD_CELLS square — the hard playing-field boundary. */
 export const BOARD_CELLS = 120;
@@ -593,7 +593,7 @@ export interface ServerSnapshotPayload {
   /** Campaign NPCs & monsters — DM only; empty for players. */
   characters: CharacterView[];
   /** active table playback, if any — late joiners sync from this */
-  media: { assetId: string; action: 'play' | 'pause'; time: number; elapsedMs: number } | null;
+  media: { assetId: string; action: 'play' | 'pause'; time: number; atMs: number } | null;
   /** Tokens on the board — dmOnly tokens filtered out for non-DM. */
   tokens: TokenView[];
   /** Current grid state. */
@@ -684,6 +684,8 @@ export interface ServerMediaControlPayload {
   assetId: string;
   action: 'play' | 'pause' | 'stop';
   time: number;
+  /** Server epoch milliseconds when this position was accepted. */
+  atMs: number;
   by: string;
 }
 
@@ -767,6 +769,7 @@ export interface ServerCommandAckPayload {
 export interface ServerPongPayload {
   type: 'pong';
   sentAt: number;
+  serverAt: number;
 }
 
 export type ServerMessage =

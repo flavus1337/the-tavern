@@ -57,10 +57,40 @@ try {
   first.receive({ type: 'joined', campaignId: 'test', protocolVersion: PROTOCOL_VERSION, userId: 'u1', username: 'DM', role: 'dm' });
   assert.notEqual(useStore.getState().connection, 'open');
   await assert.rejects(connection.send({ type: 'saveNote', title: 'Before snapshot', body: '', sharing: { scope: 'dm', userIds: [] } }), { code: 'OFFLINE', uncertain: false });
-  assert.equal(first.sent.length, 1);
+  assert.equal(first.sent.length, 2);
   first.receive(snapshot);
   assert.equal(useStore.getState().connection, 'open');
   pass('join is not ready; durable sends require an authoritative snapshot');
+
+  const ping = first.sent.find((message) => message.type === 'ping')!;
+  assert.equal(ping.type, 'ping');
+  if (ping.type !== 'ping') throw new Error('Missing ping');
+  const realNow = Date.now;
+  try {
+    Date.now = () => ping.sentAt + 200;
+    first.receive({ type: 'pong', sentAt: ping.sentAt, serverAt: ping.sentAt + 5_100 });
+    assert.equal(useStore.getState().clockOffsetMs, 5_000);
+    first.receive({ type: 'mediaControl', assetId: 'audio1', action: 'play', time: 12, atMs: ping.sentAt + 5_150, by: 'DM' });
+    assert.equal(useStore.getState().mediaSync.audio1?.atMs, ping.sentAt + 5_150);
+    assert.equal(useStore.getState().audioDock?.assetId, 'audio1');
+    first.receive({ type: 'mediaControl', assetId: 'audio1', action: 'pause', time: 13, atMs: ping.sentAt + 6_000, by: 'DM' });
+    assert.equal(useStore.getState().mediaSync.audio1?.action, 'pause');
+  } finally { Date.now = realNow; }
+  pass('clock sampling compensates browser skew and media keeps the accepted server timestamp');
+
+  first.receive({ type: 'mediaControl', assetId: 'trackA', action: 'play', time: 0, atMs: 10_000, by: 'DM' });
+  first.receive({ type: 'mediaControl', assetId: 'trackB', action: 'play', time: 4, atMs: 12_000, by: 'DM' });
+  assert.deepEqual(Object.keys(useStore.getState().mediaSync), ['trackB']);
+  useStore.getState().openAudioDock('trackA');
+  assert.equal(useStore.getState().mediaSync[useStore.getState().audioDock!.assetId], undefined, 'Reopening an obsolete document has no PLAY timeline');
+  first.receive({ type: 'mediaControl', assetId: 'trackA', action: 'play', time: 8, atMs: 14_000, by: 'DM' });
+  assert.deepEqual(Object.keys(useStore.getState().mediaSync), ['trackA'], 'Explicit accepted PLAY may replace the current track');
+  first.receive({ type: 'mediaControl', assetId: 'trackA', action: 'stop', time: 0, atMs: 15_000, by: 'DM' });
+  assert.deepEqual(useStore.getState().mediaSync, {});
+  assert.equal(useStore.getState().audioDock, null);
+  useStore.getState().openAudioDock('trackA');
+  assert.equal(useStore.getState().mediaSync.trackA, undefined, 'Stopped audio does not resume when its document reopens');
+  pass('only the current audio timeline survives replacement; reopening old or stopped tracks never resumes them');
 
   useStore.getState().setLastErrorMessage(null);
   let completed = false;
@@ -120,7 +150,7 @@ try {
   second.open();
   second.receive({ type: 'joined', campaignId: 'test', protocolVersion: PROTOCOL_VERSION, userId: 'u1', username: 'DM', role: 'dm' });
   second.receive(snapshot);
-  assert.deepEqual(second.sent.map((message) => message.type), ['join']);
+  assert.deepEqual(second.sent.map((message) => message.type), ['join', 'ping']);
   pass('disconnect rejects sent work as unconfirmed, refuses offline work, and never replays a roll');
 
   const epoch = useStore.getState().snapshotEpoch;

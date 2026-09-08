@@ -1,6 +1,7 @@
 import { PROTOCOL_VERSION, isDurableMessage, randomId } from '@vtt/shared';
 import type { ClientMessage, ServerMessage, ServerCommandAckPayload } from '@vtt/shared';
 import { useStore } from '../store';
+import { clockSample } from '../lib/media';
 
 const PING_INTERVAL_MS = 25_000;
 const SILENCE_TIMEOUT_MS = 45_000;
@@ -42,6 +43,8 @@ export class TableConnection {
   private intentionalClose = false;
   private lastMessageTime = 0;
   private ready = false;
+  private pendingPings = new Set<number>();
+  private clockSamples: Array<{ rtt: number; offset: number }> = [];
   private pending = new Map<string, {
     resolve: (ack: ServerCommandAckPayload) => void;
     reject: (error: CommandError) => void;
@@ -127,6 +130,9 @@ export class TableConnection {
 
   private _openSocket(): void {
     this.rejectPending();
+    this.pendingPings.clear();
+    this.clockSamples = [];
+    useStore.setState({ clockOffsetMs: null });
     if (this.ws) {
       this.ws.onopen = null;
       this.ws.onmessage = null;
@@ -147,7 +153,6 @@ export class TableConnection {
 
     ws.onopen = () => {
       this._resetSilenceTimer();
-      this._startPing();
       void this.send({
         type: 'join',
         protocolVersion: PROTOCOL_VERSION,
@@ -189,6 +194,8 @@ export class TableConnection {
     switch (msg.type) {
       case 'joined':
         store.setSelf({ userId: msg.userId, username: msg.username, role: msg.role });
+        this._startPing();
+        this._sendPing();
         break;
 
       case 'snapshot':
@@ -304,7 +311,7 @@ export class TableConnection {
       case 'mediaControl': {
         // Record the table-playback state — the audio dock follows it
         // (including docks that mount later, e.g. via the auto-open below).
-        store.setMediaSync(msg.assetId, { action: msg.action, time: msg.time, atMs: Date.now() });
+        store.setMediaSync(msg.assetId, { action: msg.action, time: msg.time, atMs: msg.atMs });
         if (msg.action === 'play') {
           store.openAudioDock(msg.assetId);
         } else if (msg.action === 'stop') {
@@ -344,9 +351,15 @@ export class TableConnection {
         break;
       }
 
-      case 'pong':
-        // heartbeat acknowledged — silence timer already reset on message receipt
+      case 'pong': {
+        if (!this.pendingPings.delete(msg.sentAt) || !Number.isFinite(msg.serverAt)) break;
+        const sample = clockSample(msg.sentAt, Date.now(), msg.serverAt);
+        if (sample.rtt < 0 || sample.rtt > 10_000) break;
+        this.clockSamples = [...this.clockSamples.slice(-4), sample];
+        const best = this.clockSamples.reduce((a, b) => a.rtt < b.rtt ? a : b);
+        useStore.setState({ clockOffsetMs: best.offset });
         break;
+      }
 
       default:
         // Unknown message type — ignore for forward-compat
@@ -354,10 +367,17 @@ export class TableConnection {
     }
   }
 
+  private _sendPing(): void {
+    const sentAt = Date.now();
+    this.pendingPings.clear();
+    this.pendingPings.add(sentAt);
+    void this.send({ type: 'ping', sentAt }).catch(() => this.pendingPings.delete(sentAt));
+  }
+
   private _startPing(): void {
     this._stopPing();
     this.pingTimer = setInterval(() => {
-      void this.send({ type: 'ping', sentAt: Date.now() }).catch(() => {});
+      this._sendPing();
     }, PING_INTERVAL_MS);
   }
 

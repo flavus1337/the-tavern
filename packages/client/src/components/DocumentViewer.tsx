@@ -1,7 +1,7 @@
-import { sendWs } from '../ws/connection';
 import { lazy, Suspense, useRef, useState, useEffect, type PointerEvent } from 'react';
 import type { AssetManifest } from '@vtt/shared';
 import { useStore } from '../store';
+import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
 const PdfView = lazy(() => import('./PdfView').then((m) => ({ default: m.PdfView })));
 
@@ -20,6 +20,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
   const self = useStore((s) => s.self);
 
   const [shared, setShared] = useState(false);
+  const save = useSaveCommand();
 
   const canShare = !shared && (self?.role === 'dm' || doc.ownerUsername === self?.username);
 
@@ -30,9 +31,10 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  function shareWithTable() {
+  async function shareWithTable() {
     if (connection !== 'open') return;
-    sendWs({ type: 'setDocumentSharing', assetId: doc.id, sharing: { scope: 'all', userIds: [] } });
+    const ack = await save.run({ type: 'setDocumentSharing', assetId: doc.id, sharing: { scope: 'all', userIds: [] } });
+    if (!ack) return;
     setShared(true);
 
     // Fire share toast
@@ -191,6 +193,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
         maxHeight: '86vh',
       }}
     >
+      <SaveFeedback save={save} conflicts={[]} latest={{}} onUseTable={() => {}} onKeepChanges={() => {}} />
       {/* Title bar — draggable */}
       <div
         style={{
@@ -224,7 +227,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
             <button
               type="button"
               onClick={shareWithTable}
-              disabled={connection !== 'open'}
+              disabled={connection !== 'open' || save.saving || save.blocked}
               style={{
                 fontFamily: 'var(--sans)', fontSize: 12, fontWeight: 600,
                 color: 'var(--teal)',
@@ -239,7 +242,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = '#69b7a615'; }}
               title="Share with table"
             >
-              Share with table
+              {save.saving ? 'Sharing…' : 'Share with table'}
             </button>
           ) : shared ? (
             <span style={{ fontFamily: 'var(--sans)', fontSize: 12, fontWeight: 600, color: 'var(--low)', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', padding: '6px 11px', borderRadius: 7, whiteSpace: 'nowrap' }}>
@@ -267,6 +270,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
           <button
             type="button"
             onClick={() => closePanel(panelId)}
+            disabled={save.saving}
             style={{ width: 30, height: 30, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--low)', background: 'none', border: 'none', cursor: 'pointer', transition: 'all 0.12s' }}
             onMouseEnter={(e) => { Object.assign((e.currentTarget as HTMLElement).style, { background: 'rgba(255,255,255,0.06)', color: 'var(--hi)' }); }}
             onMouseLeave={(e) => { Object.assign((e.currentTarget as HTMLElement).style, { background: 'transparent', color: 'var(--low)' }); }}

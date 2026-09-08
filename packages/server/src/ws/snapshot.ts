@@ -163,7 +163,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
           assetId: entry.media.assetId,
           action: entry.media.action,
           time: entry.media.time,
-          elapsedMs: Date.now() - entry.media.atMs,
+          atMs: entry.media.atMs,
         }
       : null,
     tokens,

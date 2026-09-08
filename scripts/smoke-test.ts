@@ -1050,9 +1050,9 @@ async function main(): Promise<void> {
       send(lateWs, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
       try {
         const snap = await waitForMessage(lateMsgs, (m) => m['type'] === 'snapshot', 3000);
-        const media = snap['media'] as { assetId?: string; action?: string; elapsedMs?: number } | null;
+        const media = snap['media'] as { assetId?: string; action?: string; atMs?: number } | null;
         assert(
-          media?.assetId === audioAsset.id && media.action === 'play' && typeof media.elapsedMs === 'number',
+          media?.assetId === audioAsset.id && media.action === 'play' && typeof media.atMs === 'number',
           'F7j: snapshot carries active playback for late joiners',
         );
       } catch {

@@ -177,7 +177,7 @@ async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<
         await handleMediaControl(session, msg);
         break;
       case 'ping':
-        send(session.ws, { type: 'pong', sentAt: msg.sentAt });
+        send(session.ws, { type: 'pong', sentAt: msg.sentAt, serverAt: Date.now() });
         break;
       case 'tokenAdd':
         return handleTokenAdd(session, msg);
@@ -612,6 +612,10 @@ async function handleMediaControl(
     return;
   }
 
+  if (msg.action !== 'play' && entry.media && entry.media.assetId !== msg.assetId) {
+    sendError(session, 'BAD_MESSAGE', 'The table track changed. Control the current track instead.');
+  }
+
   const time = Number.isFinite(msg.time) ? Math.max(0, msg.time) : 0;
 
   // Playing a track auto-shares it with the table so everyone can fetch the file.
@@ -620,14 +624,16 @@ async function handleMediaControl(
     broadcastDocuments(campaignId, entry);
   }
 
+  // Capture one timeline origin after sharing has been staged. Both the room
+  // event and later snapshots retain it, including any commit/network delay.
+  const atMs = Date.now();
   entry.media = msg.action === 'stop'
     ? null
-    : { assetId: msg.assetId, action: msg.action, time, atMs: Date.now() };
+    : { assetId: msg.assetId, action: msg.action, time, atMs };
 
   broadcast(
     campaignId,
-    { type: 'mediaControl', assetId: msg.assetId, action: msg.action, time, by: session.username },
-    (s) => s !== session,
+    { type: 'mediaControl', assetId: msg.assetId, action: msg.action, time, atMs, by: session.username },
   );
 }
 

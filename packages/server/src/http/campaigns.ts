@@ -17,7 +17,6 @@ import { object, text, finite, integer } from '@vtt/shared';
 import { deleteAssetFiles } from '../campaign/writer.js';
 import { config } from '../config.js';
 import { broadcast } from '../ws/hub.js';
-import { makeBoardItemView } from '../ws/snapshot.js';
 import { canAccessShared, documentSharing } from '../ws/sharing.js';
 import type {
   CampaignListItem,
@@ -25,7 +24,6 @@ import type {
   CreateInviteResponse,
   InviteSummary,
   RedeemInviteResponse,
-  BoardItemView,
 } from '@vtt/shared';
 
 const router = Router();
@@ -215,7 +213,31 @@ router.get('/:id/files/assets/:filename', requireMember(), asyncRoute(async (req
   res.sendFile(filePath);
 }));
 
-// DELETE /api/campaigns/:id/assets/:assetId — owner or dm.
+function assetUses(entry: NonNullable<ReturnType<typeof getCampaign>>, assetId: string): string[] {
+  const uses: string[] = [];
+  const { state } = entry.runtime;
+  for (const item of state.board) if (item.assetId === assetId) uses.push(`board item ${item.id}`);
+  for (const token of state.tokens) if (token.assetId === assetId) uses.push(`token face "${token.name}"`);
+  for (const piece of state.pieces) if (piece.assetId === assetId) uses.push(`map piece ${piece.id}`);
+  for (const template of state.mapTemplates) {
+    if (template.board.some((item) => item.assetId === assetId)) uses.push(`saved map "${template.name}" (board)`);
+    if (template.pieces.some((piece) => piece.assetId === assetId)) uses.push(`saved map "${template.name}" (pieces)`);
+  }
+  if (entry.store.meta.coverAssetId === assetId) uses.push('campaign cover');
+  for (const character of entry.store.characters.values()) {
+    if (character.portraitAssetId === assetId) uses.push(`character portrait "${character.name}"`);
+    if (character.sheet?.sheetAssetId === assetId) uses.push(`character sheet "${character.name}"`);
+  }
+  for (const chapter of entry.store.chapters.values()) {
+    for (const scene of chapter.scenes) {
+      if (scene.assetIds.includes(assetId)) uses.push(`chapter "${chapter.title}", scene "${scene.title}"`);
+    }
+  }
+  if (entry.media?.assetId === assetId) uses.push('table playback (stop it first)');
+  return uses;
+}
+
+// DELETE /api/campaigns/:id/assets/:assetId — owner or dm, only when unused.
 router.delete('/:id/assets/:assetId', requireMember(), asyncRoute(async (req: Request, res: Response) => {
   const campaignId = param(req.params['id']);
   const assetId = param(req.params['assetId']);
@@ -242,20 +264,13 @@ router.delete('/:id/assets/:assetId', requireMember(), asyncRoute(async (req: Re
       return false;
     }
 
-    await deleteAssetFiles(draft.store, manifest);
-
-    // Remove board items referencing this asset, persist, and broadcast if any were removed.
-    const boardBefore = draft.runtime.state.board.length;
-    const boardAfter = draft.runtime.state.board.filter((item) => item.assetId !== assetId);
-    if (boardAfter.length !== boardBefore) {
-      draft.runtime.state = { ...draft.runtime.state, board: boardAfter };
-      await persistState(draft.runtime);
-
-      const items: BoardItemView[] = boardAfter.map((item) =>
-        makeBoardItemView(campaignId, item, draft),
-      );
-      broadcast(campaignId, { type: 'boardUpdated', items });
+    const uses = assetUses(draft, assetId);
+    if (uses.length) {
+      res.status(409).json({ error: `Asset is used by ${uses.join('; ')}. Remove these references before deleting it.`, code: 'ASSET_IN_USE' });
+      return false;
     }
+
+    await deleteAssetFiles(draft.store, manifest);
 
     // Broadcast appropriate update.
     if (manifest.assetKind === 'document') {

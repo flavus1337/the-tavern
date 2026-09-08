@@ -8,20 +8,12 @@ import { Input } from './ui/input';
 import { SharePicker } from './SharePicker';
 import { draftPatch, useDraft } from '../lib/draft';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
+import { snapToGrid } from '../lib/grid';
+import { viewportCenterBoard } from '../lib/view';
 
 
 const FILL_SWATCHES = ['#5b86c2', '#69b7a6', '#b6485a', '#e08a4b', '#9b7bd0', '#7d9b54', '#c2974b', '#8a8a8a'];
 const MAX_IMG_SIZE = 100 * 1024 * 1024;
-
-// Board-space coordinate at the centre of the visible canvas (for placing a new token).
-function viewportCenterBoardPoint(): { x: number; y: number } {
-  const el = document.querySelector('[aria-label="Campaign map canvas"]') as HTMLElement | null;
-  const view = useStore.getState().boardView;
-  const rect = el?.getBoundingClientRect();
-  const cx = rect ? rect.width / 2 : 400;
-  const cy = rect ? rect.height / 2 : 300;
-  return { x: (cx - view.x) / view.scale, y: (cy - view.y) / view.scale };
-}
 
 /**
  * Token create/edit panel rendered over the canvas (non-modal). The DM may
@@ -113,9 +105,9 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
       }
       ack = await save.run({ type: 'tokenUpdate', tokenId, baseRevision: draft.revision, expected: patch.expected, ...patch.changes });
     } else {
-      const pt = viewportCenterBoardPoint();
-      const x = grid.snap ? Math.round((pt.x - grid.offsetX) / grid.cell) * grid.cell + grid.offsetX : pt.x;
-      const y = grid.snap ? Math.round((pt.y - grid.offsetY) / grid.cell) * grid.cell + grid.offsetY : pt.y;
+      const pt = viewportCenterBoard();
+      const x = grid.snap ? snapToGrid(pt.x, grid.cell, grid.offsetX) : pt.x;
+      const y = grid.snap ? snapToGrid(pt.y, grid.cell, grid.offsetY) : pt.y;
       ack = await save.run({
         type: 'tokenAdd', name: name.trim(), shape, allegiance, size, fill, sharing, x, y, ...combat,
         // For players the server forces owner=self & dmOnly=false; sending sane defaults.

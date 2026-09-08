@@ -1,4 +1,6 @@
+import type { GridState } from '@vtt/shared';
 import { useStore } from '../store';
+import { snapToGrid } from './grid';
 
 /** Board-space coordinate at the centre of the visible canvas. */
 export function viewportCenterBoard(): { x: number; y: number } {
@@ -11,9 +13,7 @@ export function viewportCenterBoard(): { x: number; y: number } {
 }
 
 /** Top-left for a w×h thing centred in the current view, snapped to the grid. */
-export function centredPlacement(w: number, h: number): { x: number; y: number } {
-  const grid = useStore.getState().grid;
+export function centredPlacement(w: number, h: number, grid: Pick<GridState, 'cell' | 'offsetX' | 'offsetY'> = useStore.getState().grid): { x: number; y: number } {
   const c = viewportCenterBoard();
-  const snap = (v: number) => Math.round(v / grid.cell) * grid.cell;
-  return { x: snap(c.x - w / 2), y: snap(c.y - h / 2) };
+  return { x: snapToGrid(c.x - w / 2, grid.cell, grid.offsetX), y: snapToGrid(c.y - h / 2, grid.cell, grid.offsetY) };
 }
