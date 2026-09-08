@@ -72,6 +72,16 @@ export interface ActivePalettePiece {
 /** AI generator dialog target. */
 export type GenKind = 'background' | 'prop';
 
+/** Full broadcasts reuse unchanged scene objects so memoized items stay idle. */
+function retainEntities<T extends { id: string }>(previous: T[], incoming: T[]): T[] {
+  const byId = new Map(previous.map((item) => [item.id, item]));
+  const next = incoming.map((item) => {
+    const old = byId.get(item.id);
+    return old && JSON.stringify(old) === JSON.stringify(item) ? old : item;
+  });
+  return next.length === previous.length && next.every((item, i) => item === previous[i]) ? previous : next;
+}
+
 const ROLL_LOG_MAX = 200;
 
 // ---------------------------------------------------------------------------
@@ -398,7 +408,7 @@ export const useStore = create<StoreState>()((set) => ({
         ? { assetId: snap.media.assetId, minimized: false }
         : null,
       campaignName: snap.campaign.name,
-      board: snap.board,
+      board: retainEntities(s.board, snap.board),
       uploadsLocked: snap.uploadsLocked,
       mapLocked: snap.mapLocked,
       presence: snap.presence,
@@ -409,10 +419,10 @@ export const useStore = create<StoreState>()((set) => ({
       myNotes: snap.myNotes,
       chapters: snap.chapters,
       characters: snap.characters,
-      tokens: snap.tokens,
+      tokens: retainEntities(s.tokens, snap.tokens),
       grid: snap.grid,
-      pieces: snap.pieces,
-      aoes: snap.aoes ?? [],
+      pieces: retainEntities(s.pieces, snap.pieces),
+      aoes: retainEntities(s.aoes, snap.aoes ?? []),
       initiative: snap.initiative ?? { active: false, round: 0, turnIndex: 0, entries: [] },
       mapMeta: snap.mapMeta,
       features: snap.features,
@@ -420,7 +430,7 @@ export const useStore = create<StoreState>()((set) => ({
     })),
 
   setPresence: (entries) => set({ presence: entries }),
-  setBoard: (items) => set({ board: items }),
+  setBoard: (items) => set((s) => ({ board: retainEntities(s.board, items) })),
   setUploadsLocked: (locked) => set({ uploadsLocked: locked }),
   setMapLocked: (locked) => set({ mapLocked: locked }),
   setBoardView: (view) => set({ boardView: view }),
@@ -564,7 +574,7 @@ export const useStore = create<StoreState>()((set) => ({
   resetTable: () => set(tableDefaults),
 
   // Token & grid actions
-  setTokens: (tokens) => set({ tokens }),
+  setTokens: (tokens) => set((s) => ({ tokens: retainEntities(s.tokens, tokens) })),
   setGrid: (grid) => set({ grid }),
   setBoardTool: (tool) => set({ boardTool: tool }),
   setAoeShape: (shape) => set({ aoeShape: shape }),
@@ -583,8 +593,8 @@ export const useStore = create<StoreState>()((set) => ({
   setSelectedTokenId: (id) => set({ selectedTokenId: id }),
 
   // Map creation
-  setPieces: (pieces) => set({ pieces }),
-  setAoes: (aoes) => set({ aoes }),
+  setPieces: (pieces) => set((s) => ({ pieces: retainEntities(s.pieces, pieces) })),
+  setAoes: (aoes) => set((s) => ({ aoes: retainEntities(s.aoes, aoes) })),
   setInitiative: (initiative) => set({ initiative }),
   setMapMeta: (mapMeta) => set({ mapMeta }),
   setEditorMode: (editorMode) =>

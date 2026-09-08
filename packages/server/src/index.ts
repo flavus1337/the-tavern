@@ -10,10 +10,12 @@ import { scanCampaigns, getAllCampaigns } from './campaign/registry.js';
 import { createApp } from './http/app.js';
 import { closeWebSockets, handleUpgrade } from './ws/hub.js';
 import { drainCampaigns } from './campaign/commit.js';
+import { closeAssetWork, initAssetWork } from './http/assetWork.js';
 
 async function main(): Promise<void> {
   // Ensure data directory exists.
   await fs.mkdir(config.DATA_DIR, { recursive: true });
+  await initAssetWork();
 
   // Initialize stores.
   await initUsersStore();
@@ -62,7 +64,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }, 10_000);
     void Promise.all([
-      drainCampaigns(),
+      drainCampaigns().then(closeAssetWork),
       closeWebSockets(),
       new Promise<void>((resolve) => server.close(() => resolve())),
     ]).then(() => {

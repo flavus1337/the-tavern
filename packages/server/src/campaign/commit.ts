@@ -1,15 +1,20 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import type { CampaignEntry } from './registry.js';
 import { log } from '../log.js';
+
+// sourcePath is a completed private scratch file. Its data must never change:
+// callers may only unlink it after the enclosing transaction settles.
+type FileContent = string | Buffer | { sourcePath: string } | null;
 
 interface CommitContext {
   dir: string;
   original?: CampaignEntry;
   draft?: CampaignEntry;
-  files: Map<string, string | Buffer | null>;
+  files: Map<string, FileContent>;
   values: Map<object, unknown>;
   publish: Array<() => void>;
 }
@@ -41,13 +46,27 @@ async function writeSynced(file: string, value: string | Buffer): Promise<void> 
 }
 
 async function copySynced(source: string, target: string): Promise<void> {
-  await fs.copyFile(source, target);
+  // Reflink where supported; Node falls back to a regular copy elsewhere.
+  await fs.copyFile(source, target, constants.COPYFILE_FICLONE);
   const handle = await fs.open(target, 'r+');
   try { await handle.sync(); } finally { await handle.close(); }
 }
 
-/** Replace through a unique, fsynced sibling; readers always see a whole file. */
-async function replaceFrom(source: string, target: string): Promise<void> {
+async function stageSource(source: string, target: string): Promise<void> {
+  // Upload scratch files are immutable until commit settles. Linking avoids a
+  // large copy while holding the queue; different filesystems fall back to copy.
+  try { await fs.link(source, target); }
+  catch (error) {
+    if (!['EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    await copySynced(source, target);
+    return;
+  }
+  const handle = await fs.open(target, 'r+');
+  try { await handle.sync(); } finally { await handle.close(); }
+}
+
+/** Publish a fsynced replacement atomically; recovery copies keep their source. */
+async function replaceFrom(source: string, target: string, consume = false): Promise<void> {
   const dir = path.dirname(target);
   const created = await fs.mkdir(dir, { recursive: true });
   if (created) {
@@ -55,6 +74,11 @@ async function replaceFrom(source: string, target: string): Promise<void> {
       await syncDir(path.dirname(current));
       if (current === created) break;
     }
+  }
+  if (consume) {
+    await fs.rename(source, target);
+    await syncDir(dir);
+    return;
   }
   const tmp = `${target}.${randomUUID()}.tmp`;
   try {
@@ -157,7 +181,7 @@ async function commitFiles(ctx: CommitContext): Promise<void> {
   let installed = false;
   await fs.mkdir(prepared);
   try {
-    async function prepare(target: string, value: string | Buffer | null, source?: string): Promise<string | undefined> {
+    async function prepare(target: string, value: string | Buffer | null, source?: string, staged = false): Promise<string | undefined> {
       const i = files.length;
       let existed = false;
       try {
@@ -167,13 +191,14 @@ async function commitFiles(ctx: CommitContext): Promise<void> {
       } catch (err) { if (!missing(err)) throw err; }
       const before = path.join(prepared, `${i}.before`);
       if (existed) await copySynced(target, before);
-      if (source) await copySynced(source, path.join(prepared, `${i}.after`));
+      if (source) await (staged ? stageSource : copySynced)(source, path.join(prepared, `${i}.after`));
       else if (value !== null) await writeSynced(path.join(prepared, `${i}.after`), value);
       files.push({ file: path.relative(ctx.dir, target), existed, deleted: value === null && !source });
       return existed ? before : undefined;
     }
     for (const [target, value] of ctx.files) {
-      const before = await prepare(target, value);
+      const source = value && typeof value === 'object' && !Buffer.isBuffer(value) ? value.sourcePath : undefined;
+      const before = await prepare(target, source ? null : value as string | Buffer | null, source, !!source);
       // Keep the previous version of each touched file, including absence. Backups
       // join this journal so a failed save cannot leave a mismatched sidecar pair.
       const backup = path.join(runtimeDir, 'backups', path.relative(ctx.dir, target));
@@ -191,9 +216,12 @@ async function commitFiles(ctx: CommitContext): Promise<void> {
         await fs.unlink(target).catch((err: unknown) => { if (!missing(err)) throw err; });
         await syncDir(path.dirname(target));
       } else {
-        await replaceFrom(path.join(pending, `${i}.after`), target);
+        // Recovery only needs the independent .before copies. Consume the
+        // prepared replacement rather than copying large payloads a second time.
+        await replaceFrom(path.join(pending, `${i}.after`), target, true);
       }
     }
+    await syncDir(pending);
     await writeSynced(path.join(pending, 'committed'), '1');
     await syncDir(pending);
   } catch (err) {
@@ -251,7 +279,8 @@ export function withCampaignFiles<T>(dir: string, action: () => Promise<T>): Pro
   });
 }
 
-export async function writeCampaignFile(dir: string, file: string, content: string | Buffer | null): Promise<void> {
+/** sourcePath must remain immutable; unlink only after the enclosing commit settles. */
+export async function writeCampaignFile(dir: string, file: string, content: FileContent): Promise<void> {
   await withCampaignFiles(dir, async () => {
     context.getStore()!.files.set(campaignPath(dir, path.relative(dir, file)), content);
   });

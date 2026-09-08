@@ -2,13 +2,14 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import path from 'node:path';
 import multer from 'multer';
-import sharp from 'sharp';
+import fs from 'node:fs/promises';
+import { processImage } from '../services/image-processing.js';
+import { assetRoute, uploadDirectory, canSaveAsset, checkAssetCapacity, syncAssetFile } from './assetWork.js';
 import { param } from './params.js';
 import { requireMember } from '../auth/middleware.js';
 import { getCampaign } from '../campaign/registry.js';
 import { saveAssetManifest } from '../campaign/writer.js';
 import { mutateCampaign, writeCampaignFile } from '../campaign/commit.js';
-import { asyncRoute } from './asyncRoute.js';
 import { validateBody, validateId } from './validate.js';
 import { object, text, oneOf } from '@vtt/shared';
 import { broadcast } from '../ws/hub.js';
@@ -18,32 +19,14 @@ import type { AssetManifest } from '@vtt/shared';
 import type { UploadAssetResponse } from '@vtt/shared';
 
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB (videos; images get resized anyway)
+  storage: multer.diskStorage({ destination: (req, _file, callback) => callback(null, uploadDirectory(req)) }),
+  limits: { fileSize: 100 * 1024 * 1024, files: 1, fields: 3, parts: 4, fieldSize: 1024, fieldNameSize: 40, fieldNestingDepth: 0 },
 });
 
 const router = Router();
 router.param('id', validateId);
 
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const MAX_DIMENSION = 2560;
-// Cap assets per campaign so a member can't flood the disk with files. Generous
-// for any real campaign; combined with the 100 MB per-file limit it bounds disk.
-const MAX_ASSETS_PER_CAMPAIGN = 1000;
-
-// Recheck after image processing and while holding the campaign command queue.
-function canFinishUpload(req: Request, res: Response, entry: NonNullable<ReturnType<typeof getCampaign>>): boolean {
-  if (req.campaignRole !== 'dm' && entry.runtime.state.uploadsLocked) {
-    res.status(403).json({ error: 'Uploads are locked by the DM', code: 'UPLOADS_LOCKED' });
-    return false;
-  }
-  if (entry.store.assets.size >= MAX_ASSETS_PER_CAMPAIGN) {
-    res.status(413).json({ error: 'Campaign asset limit reached', code: 'ASSET_LIMIT' });
-    return false;
-  }
-  return true;
-}
-
 // Never accept files a browser could execute as same-origin markup/script.
 const BLOCKED_DOC_MIMES = new Set([
   'text/html',
@@ -59,8 +42,8 @@ const BLOCKED_DOC_EXTENSIONS = new Set(['html', 'htm', 'xhtml', 'svg', 'js', 'mj
 router.post(
   '/:id/assets',
   requireMember(),
-  upload.single('file'),
-  asyncRoute(async (req: Request, res: Response) => {
+  checkAssetCapacity(),
+  assetRoute(upload.single('file'), async (req: Request, res: Response, work) => {
     const campaignId = param(req.params['id']);
     const entry = getCampaign(campaignId);
     if (!entry) {
@@ -71,12 +54,6 @@ router.post(
     validateBody(req.body, object({}, { kind: oneOf(['map', 'art', 'handout', 'token']), dmOnly: oneOf(['true', 'false', '1', '0']), category: text(40) }));
     const isDm = req.campaignRole === 'dm';
 
-    // Players: only token images, and only while uploads are unlocked.
-    if (!isDm && entry.runtime.state.uploadsLocked) {
-      res.status(403).json({ error: 'Uploads are locked by the DM', code: 'UPLOADS_LOCKED' });
-      return;
-    }
-
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: 'No file uploaded' });
@@ -85,11 +62,6 @@ router.post(
 
     if (!IMAGE_MIMES.has(file.mimetype)) {
       res.status(400).json({ error: 'Only image files are allowed (png, jpg, webp, gif)', code: 'INVALID_FILE_TYPE' });
-      return;
-    }
-
-    if (entry.store.assets.size >= MAX_ASSETS_PER_CAMPAIGN) {
-      res.status(413).json({ error: 'Campaign asset limit reached', code: 'ASSET_LIMIT' });
       return;
     }
 
@@ -118,23 +90,13 @@ router.post(
     const outputFilename = `${slug}-${shortId}.webp`;
     const outputPath = path.join(entry.store.dir, 'assets', outputFilename);
 
-    let width: number;
-    let height: number;
-    let imageBuffer: Buffer;
-
+    const processedPath = path.join(work.dir, 'processed.webp');
+    let width: number, height: number;
     try {
-      const img = sharp(file.buffer).resize({
-        width: MAX_DIMENSION,
-        height: MAX_DIMENSION,
-        fit: 'inside',
-        withoutEnlargement: true,
-      });
-      const { data, info } = await img.webp({ quality: 82 }).toBuffer({ resolveWithObject: true });
-      imageBuffer = data;
-      width = info.width;
-      height = info.height;
-    } catch (err) {
-      res.status(400).json({ error: `Image processing failed: ${String(err)}` });
+      ({ width, height } = await processImage({ sourcePath: file.path, outputPath: processedPath, transparent: false, quality: 82 }, work.signal));
+    } catch (error) {
+      if (work.signal.aborted) throw error;
+      res.status((error as { status?: number }).status ?? 500).json({ error: `Image processing failed: ${String(error)}` });
       return;
     }
 
@@ -154,9 +116,11 @@ router.post(
       ...(category ? { category } : {}),
     };
 
+    await syncAssetFile(processedPath, work.signal);
     const saved = await mutateCampaign(entry, async (draft) => {
-      if (!canFinishUpload(req, res, draft)) return false;
-      await writeCampaignFile(draft.store.dir, outputPath, imageBuffer);
+      work.signal.throwIfAborted();
+      if (!canSaveAsset(req, res, draft)) return false;
+      await writeCampaignFile(draft.store.dir, outputPath, { sourcePath: processedPath });
       await saveAssetManifest(draft.store, manifest);
       const assets = [...draft.store.assets.values()].filter((a) => a.assetKind !== 'document');
       broadcast(campaignId, { type: 'assetsUpdated', assets }, (s) => s.role === 'dm');
@@ -175,8 +139,8 @@ router.post(
 router.post(
   '/:id/documents',
   requireMember(),
-  upload.single('file'),
-  asyncRoute(async (req: Request, res: Response) => {
+  checkAssetCapacity(),
+  assetRoute(upload.single('file'), async (req: Request, res: Response, work) => {
     const campaignId = param(req.params['id']);
     const entry = getCampaign(campaignId);
     if (!entry) {
@@ -185,20 +149,9 @@ router.post(
     }
 
     validateBody(req.body, object({}));
-    // Upload lock: non-DM members cannot upload while locked.
-    if (entry.runtime.state.uploadsLocked && req.campaignRole !== 'dm') {
-      res.status(403).json({ error: 'Uploads are locked by the DM', code: 'UPLOADS_LOCKED' });
-      return;
-    }
-
     const file = req.file;
     if (!file) {
       res.status(400).json({ error: 'No file uploaded' });
-      return;
-    }
-
-    if (entry.store.assets.size >= MAX_ASSETS_PER_CAMPAIGN) {
-      res.status(413).json({ error: 'Campaign asset limit reached', code: 'ASSET_LIMIT' });
       return;
     }
 
@@ -220,7 +173,10 @@ router.post(
 
     // PDFs get a magic-byte sanity check.
     if (mime === 'application/pdf' || ext === 'pdf') {
-      const magicBytes = file.buffer.slice(0, 4).toString('ascii');
+      const handle = await fs.open(file.path, 'r');
+      const prefix = Buffer.alloc(4);
+      try { await handle.read(prefix, 0, 4, 0); } finally { await handle.close(); }
+      const magicBytes = prefix.toString('ascii');
       if (magicBytes !== '%PDF') {
         res.status(400).json({ error: 'File does not appear to be a valid PDF', code: 'INVALID_FILE_TYPE' });
         return;
@@ -248,9 +204,11 @@ router.post(
       ownerUsername: req.user!.username,
     };
 
+    await syncAssetFile(file.path, work.signal);
     const saved = await mutateCampaign(entry, async (draft) => {
-      if (!canFinishUpload(req, res, draft)) return false;
-      await writeCampaignFile(draft.store.dir, outputPath, file.buffer);
+      work.signal.throwIfAborted();
+      if (!canSaveAsset(req, res, draft)) return false;
+      await writeCampaignFile(draft.store.dir, outputPath, { sourcePath: file.path });
       await saveAssetManifest(draft.store, manifest);
       broadcastDocuments(campaignId, draft);
       return true;

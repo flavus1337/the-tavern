@@ -6,6 +6,9 @@ import { clockSample } from '../lib/media';
 const PING_INTERVAL_MS = 25_000;
 const SILENCE_TIMEOUT_MS = 45_000;
 const BACKOFF_STEPS = [1000, 2000, 4000, 8000, 15000];
+const MEASURE_INTERVAL_MS = 50;
+const TRANSIENT_BUFFER_LIMIT = 64 * 1024;
+type MeasureCommand = Extract<ClientMessage, { type: 'measure' }>;
 const COMMAND_TIMEOUT_MS = 15_000;
 export type DurableCommand = Exclude<ClientMessage, { type: 'join' | 'ping' | 'measure' }>;
 
@@ -33,6 +36,11 @@ export function sendWs(msg: ClientMessage): void {
   else if (isDurableMessage(msg)) reportCommandError(new CommandError('Not connected. Your change was not sent.', 'OFFLINE'));
 }
 
+/** Only the latest ruler preview matters; the terminal endpoint bypasses cadence. */
+export function sendMeasure(message: MeasureCommand, final = false): void {
+  (window as unknown as { __vttConn?: TableConnection }).__vttConn?.sendMeasure(message, final);
+}
+
 export class TableConnection {
   private ws: WebSocket | null = null;
   private campaignId: string | null = null;
@@ -43,6 +51,9 @@ export class TableConnection {
   private intentionalClose = false;
   private lastMessageTime = 0;
   private ready = false;
+  private measureTimer: ReturnType<typeof setTimeout> | null = null;
+  private measurePending: { message: MeasureCommand; final: boolean } | null = null;
+  private lastMeasureAt = -Infinity;
   private pendingPings = new Set<number>();
   private clockSamples: Array<{ rtt: number; offset: number }> = [];
   private pending = new Map<string, {
@@ -78,11 +89,12 @@ export class TableConnection {
   send(msg: ClientMessage): Promise<ServerCommandAckPayload | void>;
   send(msg: ClientMessage): Promise<ServerCommandAckPayload | void> {
     const durable = isDurableMessage(msg);
-    if (this.ws?.readyState !== WebSocket.OPEN || (durable && !this.ready)) {
+    if (this.ws?.readyState !== WebSocket.OPEN || ((durable || msg.type === 'measure') && !this.ready)) {
       const error = new CommandError('Reconnecting. Your change was not sent; try again when connected.', 'OFFLINE');
       if (durable) reportCommandError(error);
       return Promise.reject(error);
     }
+    if (msg.type === 'measure') { this.sendMeasure(msg); return Promise.resolve(); }
     if (!durable) {
       // Transient traffic has no durable acknowledgment and is never retained.
       try { this.ws.send(JSON.stringify(msg)); return Promise.resolve(); }
@@ -112,7 +124,38 @@ export class TableConnection {
     });
   }
 
+  sendMeasure(message: MeasureCommand, final = false): void {
+    if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) return;
+    this.measurePending = { message, final: final || message.kind === 'clear' };
+    this.flushMeasure();
+  }
+
+  private flushMeasure(): void {
+    if (this.measureTimer !== null) clearTimeout(this.measureTimer);
+    this.measureTimer = null;
+    const pending = this.measurePending;
+    if (!pending) return;
+    if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) { this.clearMeasure(); return; }
+    const delay = MEASURE_INTERVAL_MS - (Date.now() - this.lastMeasureAt);
+    const pressured = this.ws.bufferedAmount > TRANSIENT_BUFFER_LIMIT;
+    if (pressured || (!pending.final && delay > 0)) {
+      this.measureTimer = setTimeout(() => this.flushMeasure(), pressured ? MEASURE_INTERVAL_MS : delay);
+      return;
+    }
+    this.measurePending = null;
+    try { this.ws.send(JSON.stringify(pending.message)); this.lastMeasureAt = Date.now(); }
+    catch { /* A transient preview is disposable; socket lifecycle handles reconnect. */ }
+  }
+
+  private clearMeasure(): void {
+    if (this.measureTimer !== null) clearTimeout(this.measureTimer);
+    this.measureTimer = null;
+    this.measurePending = null;
+    this.lastMeasureAt = -Infinity;
+  }
+
   private rejectPending(): void {
+    this.clearMeasure();
     this.ready = false;
     const error = new CommandError('Connection interrupted. An action may already have saved. Review the table after reconnecting before trying it again.', 'UNCONFIRMED', true);
     if (this.pending.size) reportCommandError(error);
@@ -199,6 +242,7 @@ export class TableConnection {
         break;
 
       case 'snapshot':
+        this.clearMeasure();
         store.applySnapshot(msg);
         this.ready = true;
         this.reconnectAttempt = 0;

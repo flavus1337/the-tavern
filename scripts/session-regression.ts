@@ -252,6 +252,18 @@ async function main(): Promise<void> {
     await command(restarted, { type: 'boardRemove', itemId: 'board_one' });
     assert.equal((await remove(adminCookie, 'board')).status, 204);
     pass('references remain protected after restart; unused assets and explicitly detached board assets delete');
+    const tabOne = await connect(playerCookie);
+    const tabTwo = await connect(playerCookie);
+    tabTwo.ws.send(JSON.stringify({ type: 'measure', kind: 'ruler', x1: 0, y1: 0, x2: 100, y2: 100 }));
+    await wait(restarted, (msg) => msg.type === 'measureShared' && msg.kind === 'ruler' && msg.x2 === 100);
+    tabOne.ws.close();
+    await new Promise<void>((resolve) => tabOne.ws.once('close', () => resolve()));
+    tabTwo.ws.send(JSON.stringify({ type: 'measure', kind: 'ruler', x1: 0, y1: 0, x2: 200, y2: 200 }));
+    await wait(restarted, (msg) => msg.type === 'measureShared' && msg.kind === 'ruler' && msg.x2 === 200);
+    assert.equal(restarted.messages.some((msg) => msg.type === 'measureShared' && msg.kind === 'clear' && msg.by === 'player'), false);
+    tabTwo.ws.close();
+    await wait(restarted, (msg) => msg.type === 'measureShared' && msg.kind === 'clear' && msg.by === 'player');
+    pass('closing one of two user sockets preserves the ruler; closing the last clears it for peers');
     assert.equal(logs.includes('Unhandled ws handler error'), false, logs);
     console.log(`Session regressions passed (${checks} compiled-server scenarios).`);
   } finally {

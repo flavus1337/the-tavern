@@ -1109,7 +1109,7 @@ async function handleMeasure(
   const campaignId = session.campaignId!;
 
   // Ephemeral: broadcast rulers + AoE templates to all OTHER sessions in the
-  // room (like mediaControl). The shape `kind` is relayed verbatim.
+  // room. The shape `kind` is relayed verbatim.
   if (msg.kind === 'clear') {
     broadcast(
       campaignId,

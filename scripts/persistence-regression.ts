@@ -132,7 +132,7 @@ async function main(): Promise<void> {
     const persistedRolls = (await fs.readFile(path.join(rolls.runtime.dir, 'rolls.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
     assert.deepEqual(persistedRolls, rolls.runtime.rollLog);
     assert.equal(persistedRolls.length, 200);
-    assert.equal(persistedRolls.at(-1).id, 'roll-209');
+    assert.equal(persistedRolls.at(-1)?.id, 'roll-209');
     pass('concurrent roll replacement preserves the next roll and the 200-entry bound');
 
     const broken = await fixture('broken');
@@ -248,6 +248,41 @@ async function main(): Promise<void> {
     assert.equal((await read(path.join(sidecars.runtime.dir, 'backups/chapters/chapter.json'))).title, 'No body');
     await absent(path.join(sidecars.runtime.dir, 'backups/chapters/chapter.md'));
     pass('failed second-sidecar installation restores the matching prior JSON and Markdown');
+
+    const staged = await fixture('staged-source');
+    const payload = path.join(staged.store.dir, 'payload.bin');
+    const source = path.join(tmp, 'private-upload');
+    const metadata = path.join(staged.store.dir, 'metadata.txt');
+    await writeCampaignFile(staged.store.dir, payload, 'original');
+    await fs.writeFile(source, 'replacement');
+    await failRename(metadata, async () => {
+      await assert.rejects(mutateCampaign(staged, async () => {
+        await writeCampaignFile(staged.store.dir, payload, { sourcePath: source });
+        await writeCampaignFile(staged.store.dir, metadata, 'metadata');
+      }), /injected rename failure/);
+    });
+    assert.equal(await fs.readFile(payload, 'utf8'), 'original');
+    assert.equal(await fs.readFile(source, 'utf8'), 'replacement');
+    const link = fs.link;
+    let fellBack = false;
+    fs.link = async () => { fellBack = true; throw Object.assign(new Error('injected cross-device link'), { code: 'EXDEV' }); };
+    try { await writeCampaignFile(staged.store.dir, payload, { sourcePath: source }); }
+    finally { fs.link = link; }
+    assert.ok(fellBack);
+    await fs.unlink(source);
+    assert.equal(await fs.readFile(payload, 'utf8'), 'replacement');
+    await fs.writeFile(source, 'latest');
+    await writeCampaignFile(staged.store.dir, payload, { sourcePath: source });
+    await fs.unlink(source);
+    assert.equal(await fs.readFile(payload, 'utf8'), 'latest');
+    const priorPayload = path.join(staged.runtime.dir, 'last-commit/0.before');
+    const backup = path.join(staged.runtime.dir, 'backups/payload.bin');
+    const inodes = await Promise.all([payload, priorPayload, backup].map(async (file) => (await fs.stat(file)).ino));
+    assert.equal(new Set(inodes).size, 3, 'live data and both previous-version backups must be independent');
+    await fs.writeFile(payload, 'external edit');
+    assert.equal(await fs.readFile(priorPayload, 'utf8'), 'replacement');
+    assert.equal(await fs.readFile(backup, 'utf8'), 'replacement');
+    pass('staged source links/cross-device copies survive cleanup, roll back metadata failure, and preserve independent previous versions');
 
     for (const phase of ['partial', 'committed']) {
       const crashed = await fixture(`crash-${phase}`);

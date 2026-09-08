@@ -19,7 +19,9 @@
     "start": "node packages/server/dist/index.js",
     "persistence-regression": "tsx scripts/persistence-regression.ts",
     "protocol-regression": "tsx scripts/protocol-regression.ts",
-    "session-regression": "tsx scripts/session-regression.ts"
+    "session-regression": "tsx scripts/session-regression.ts",
+    "image-regression": "tsx scripts/image-regression.ts",
+    "server-transient-regression": "tsx scripts/server-transient-regression.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13",

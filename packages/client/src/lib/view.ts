@@ -17,3 +17,9 @@ export function centredPlacement(w: number, h: number, grid: Pick<GridState, 'ce
   const c = viewportCenterBoard();
   return { x: snapToGrid(c.x - w / 2, grid.cell, grid.offsetX), y: snapToGrid(c.y - h / 2, grid.cell, grid.offsetY) };
 }
+
+/** Keep a chosen screen point over the same board coordinate while zooming. */
+export function zoomAt(view: { x: number; y: number; scale: number }, anchor: { x: number; y: number }, scale: number) {
+  const ratio = scale / view.scale;
+  return { x: anchor.x - (anchor.x - view.x) * ratio, y: anchor.y - (anchor.y - view.y) * ratio, scale };
+}

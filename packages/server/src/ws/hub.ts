@@ -100,6 +100,9 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
         const entry = getCampaign(campaignId);
         if (entry) {
           entry.room.delete(sessId);
+          if (!getSessionsInRoom(campaignId).some((session) => session.userId === wsSession.userId)) {
+            broadcast(campaignId, { type: 'measureShared', kind: 'clear', by: wsSession.username });
+          }
           broadcastPresenceWithDisconnected(campaignId, wsSession.userId, wsSession.username, wsSession.role);
         }
       }
@@ -122,10 +125,56 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
   });
 }
 
+const MAX_PREVIEW_BUFFER = 64 * 1024;
+interface PendingMeasures { latest: Map<string, string>; timer?: NodeJS.Timeout; closed: () => void }
+const pendingMeasures = new WeakMap<WebSocket, PendingMeasures>();
+
+function forgetMeasures(ws: WebSocket, pending: PendingMeasures): void {
+  clearTimeout(pending.timer);
+  ws.removeListener('close', pending.closed);
+  pendingMeasures.delete(ws);
+}
+
+function flushMeasures(ws: WebSocket, pending: PendingMeasures): void {
+  if (ws.readyState !== WebSocket.OPEN) { forgetMeasures(ws, pending); return; }
+  try {
+    for (const [by, payload] of pending.latest) {
+      if (ws.bufferedAmount > MAX_PREVIEW_BUFFER) break;
+      ws.send(payload);
+      pending.latest.delete(by);
+    }
+  } catch (error) {
+    forgetMeasures(ws, pending);
+    log.warn(`Could not send live preview: ${String(error)}`);
+    ws.close(1011, 'Could not send live preview');
+    return;
+  }
+  if (!pending.latest.size) { forgetMeasures(ws, pending); return; }
+  pending.timer = setTimeout(() => flushMeasures(ws, pending), 50);
+  pending.timer.unref();
+}
+
 export function send(ws: WebSocket, msg: ServerMessage): void {
   const payload = JSON.stringify(msg);
   afterCampaignCommit(() => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+    if (ws.readyState !== WebSocket.OPEN) return;
+    // Retain one latest endpoint/clear per origin while this peer is slow.
+    // Durable commands and state publications keep their existing send path.
+    if (msg.type === 'measureShared') {
+      let pending = pendingMeasures.get(ws);
+      if (pending || ws.bufferedAmount > MAX_PREVIEW_BUFFER) {
+        if (!pending) {
+          pending = { latest: new Map(), closed: () => forgetMeasures(ws, pending!) };
+          pendingMeasures.set(ws, pending);
+          ws.once('close', pending.closed);
+          pending.timer = setTimeout(() => flushMeasures(ws, pending!), 50);
+          pending.timer.unref();
+        }
+        pending.latest.set(msg.by, payload);
+        return;
+      }
+    }
+    ws.send(payload);
   });
 }
 

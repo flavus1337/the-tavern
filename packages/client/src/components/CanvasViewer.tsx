@@ -1,20 +1,24 @@
-import { sendCommand, sendWs, type DurableCommand } from '../ws/connection';
+import { sendCommand, sendWs, sendMeasure, type DurableCommand } from '../ws/connection';
 import {
   useState,
   useRef,
   useEffect,
   useCallback,
+  useMemo,
+  memo,
   type ReactNode,
   type PointerEvent,
 } from 'react';
 import { BOARD_CELLS, clampToField } from '@vtt/shared';
 import type { BoardItemView, TokenView, GridState, MapPiece, MeasureKind, AoeTemplate, AoeKind } from '@vtt/shared';
 import { useStore } from '../store';
-import type { BoardView, BoardTool, EditorMode, AoeShape } from '../store';
+import type { BoardView, BoardTool, EditorMode, AoeShape, OwnMeasure } from '../store';
 import { BoardMoments } from './RollLog';
 import { inkSprite } from '../lib/inkArt';
 import { activeEntry } from '../lib/initiative';
 import { gestureLifecycle } from '../lib/gesture';
+import { zoomAt } from '../lib/view';
+import { useFrameState, useFrameValue } from '../lib/frame';
 import { gridOffset, snapToGrid, calibratedGrid } from '../lib/grid';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
@@ -77,14 +81,16 @@ interface BoardItemProps {
   editable: boolean;
 }
 
-function BoardItemEl({ item, isDm, scale, editable }: BoardItemProps) {
+const BoardItemEl = memo(function BoardItemEl({ item, isDm, scale, editable }: BoardItemProps) {
   const [hovered, setHovered] = useState(false);
   const mapLocked = useStore((s) => s.mapLocked);
   // Background editing is a DM Build + Select action. Legacy player-access fields remain portable data.
   const connected = useStore((s) => s.connection === 'open');
   const canManipulate = connected && editable && isDm && !mapLocked;
-  const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
-  const [localW, setLocalW] = useState<number | null>(null);
+  const [localPos, posFrame] = useFrameState<{ x: number; y: number } | null>(null);
+  const setLocalPos = posFrame.set;
+  const [localW, widthFrame] = useFrameState<number | null>(null);
+  const setLocalW = widthFrame.set;
   const [isDragging, setIsDragging] = useState(false);
 
   const dragRef = useRef<{
@@ -120,9 +126,9 @@ function BoardItemEl({ item, isDm, scale, editable }: BoardItemProps) {
       mode: 'move',
       startClientX: e.clientX,
       startClientY: e.clientY,
-      origX: displayX,
-      origY: displayY,
-      origW: displayW,
+      origX: posFrame.current?.x ?? item.x,
+      origY: posFrame.current?.y ?? item.y,
+      origW: widthFrame.current ?? item.w,
       naturalAspect,
     };
   }
@@ -137,9 +143,9 @@ function BoardItemEl({ item, isDm, scale, editable }: BoardItemProps) {
       mode: 'resize',
       startClientX: e.clientX,
       startClientY: e.clientY,
-      origX: displayX,
-      origY: displayY,
-      origW: displayW,
+      origX: posFrame.current?.x ?? item.x,
+      origY: posFrame.current?.y ?? item.y,
+      origW: widthFrame.current ?? item.w,
       naturalAspect,
     };
   }
@@ -166,10 +172,13 @@ function BoardItemEl({ item, isDm, scale, editable }: BoardItemProps) {
     setIsDragging(false);
 
     // Keep this preview until its own acknowledgment; an older echo may arrive first.
-    if (mode === 'move' && localPos) {
-      commit.submit({ type: 'boardMove', itemId: item.id, x: localPos.x, y: localPos.y, w: localW ?? item.w });
-    } else if (mode === 'resize' && localW !== null) {
-      commit.submit({ type: 'boardMove', itemId: item.id, x: displayX, y: displayY, w: localW });
+    const position = posFrame.current;
+    const width = widthFrame.current;
+    posFrame.flush(); widthFrame.flush();
+    if (mode === 'move' && position) {
+      commit.submit({ type: 'boardMove', itemId: item.id, x: position.x, y: position.y, w: width ?? item.w });
+    } else if (mode === 'resize' && width !== null) {
+      commit.submit({ type: 'boardMove', itemId: item.id, x: position?.x ?? item.x, y: position?.y ?? item.y, w: width });
     } else commit.finish();
   }
 
@@ -297,7 +306,7 @@ function BoardItemEl({ item, isDm, scale, editable }: BoardItemProps) {
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Token
@@ -320,11 +329,12 @@ const CONDITION_ABBR: Record<string, string> = {
   poisoned: 'PSN', prone: 'PRN', restrained: 'RST', stunned: 'STN', unconscious: 'UNC',
 };
 
-function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: TokenElProps) {
+const TokenEl = memo(function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: TokenElProps) {
   const setSelectedTokenId = useStore((s) => s.setSelectedTokenId);
   const openTokenPanel = useStore((s) => s.openTokenPanel);
-  const selectedId = useStore((s) => s.selectedTokenId);
-  const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null);
+  const selected = useStore((s) => s.selectedTokenId === token.id);
+  const [localPos, posFrame] = useFrameState<{ x: number; y: number } | null>(null);
+  const setLocalPos = posFrame.set;
   const [isDragging, setIsDragging] = useState(false);
   const [hovered, setHovered] = useState(false);
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; alt: boolean } | null>(null);
@@ -340,7 +350,6 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
   const canEdit = isDm || mine;
   const cells = TOKEN_CELLS[token.size];
   const px = grid.cell * cells;
-  const selected = selectedId === token.id;
 
   const x = localPos?.x ?? token.x;
   const y = localPos?.y ?? token.y;
@@ -353,7 +362,7 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
     commit.begin();
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
     setIsDragging(true);
-    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: x, oy: y, alt: e.altKey };
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: posFrame.current?.x ?? token.x, oy: posFrame.current?.y ?? token.y, alt: e.altKey };
   }
   function onPointerMove(e: PointerEvent<HTMLDivElement>) {
     if (!dragRef.current) return;
@@ -368,15 +377,17 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
     dragRef.current = null;
     setIsDragging(false);
     if (!d) return;
-    if (!localPos) { commit.finish(); return; }
-    let nx = localPos.x;
-    let ny = localPos.y;
+    const position = posFrame.current;
+    if (!position) { commit.finish(); return; }
+    let nx = position.x;
+    let ny = position.y;
     if (grid.snap && !d.alt) {
-      nx = snapToGrid(localPos.x, grid.cell, grid.offsetX);
-      ny = snapToGrid(localPos.y, grid.cell, grid.offsetY);
+      nx = snapToGrid(position.x, grid.cell, grid.offsetX);
+      ny = snapToGrid(position.y, grid.cell, grid.offsetY);
     }
     ({ x: nx, y: ny } = clampToBoard(nx, ny, px, px, grid.cell));
     setLocalPos({ x: nx, y: ny });
+    posFrame.flush();
     commit.submit({ type: 'tokenMove', tokenId: token.id, x: nx, y: ny });
   }
 
@@ -462,7 +473,7 @@ function TokenEl({ token, selfUserId, isDm, scale, grid, active, turnActive }: T
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Map piece (build-mode terrain/prop)
@@ -485,10 +496,11 @@ interface PieceElProps {
 
 interface PieceT { x: number; y: number; w: number; h: number; rotation: number }
 
-function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
-  const selectedId = useStore((s) => s.selectedPieceId);
+const PieceEl = memo(function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
+  const selected = useStore((s) => s.selectedPieceId === piece.id);
   const setSelectedPieceId = useStore((s) => s.setSelectedPieceId);
-  const [local, setLocal] = useState<PieceT | null>(null);
+  const [local, localFrame] = useFrameState<PieceT | null>(null);
+  const setLocal = localFrame.set;
   const [dragging, setDragging] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const drag = useRef<null | {
@@ -500,7 +512,6 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
   }>(null);
   const commit = useGestureCommit(() => { drag.current = null; setDragging(false); setLocal(null); });
 
-  const selected = selectedId === piece.id;
   const x = local?.x ?? piece.x;
   const y = local?.y ?? piece.y;
   const w = local?.w ?? piece.w;
@@ -517,11 +528,12 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
     e.stopPropagation();
     // ponytail: capture on the root (never unmounts) — the grabbed handle does, which dropped capture.
     rootRef.current?.setPointerCapture(e.pointerId);
+    const start = localFrame.current ?? piece;
     drag.current = {
       mode, sx: e.clientX, sy: e.clientY,
-      ox: x, oy: y, ow: w, oh: h, orot: rotation,
-      cxBoard: x + w / 2, cyBoard: y + h / 2,
-      cur: { x, y, w, h, rotation },
+      ox: start.x, oy: start.y, ow: start.w, oh: start.h, orot: start.rotation,
+      cxBoard: start.x + start.w / 2, cyBoard: start.y + start.h / 2,
+      cur: { x: start.x, y: start.y, w: start.w, h: start.h, rotation: start.rotation },
     };
     setDragging(true);
   }
@@ -572,6 +584,7 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
     setDragging(false);
     if (!d) return;
     const t = d.cur;
+    localFrame.flush();
     if (d.mode === 'move') {
       let nx = t.x, ny = t.y;
       if (piece.lockedToGrid || grid.snap) {
@@ -580,6 +593,7 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
       }
       ({ x: nx, y: ny } = clampToBoard(nx, ny, t.w, t.h, grid.cell));
       setLocal({ ...t, x: nx, y: ny });
+      localFrame.flush();
       commit.submit({ type: 'pieceMove', id: piece.id, x: nx, y: ny });
     } else if (d.mode === 'resize') {
       commit.submit({ type: 'pieceUpdate', id: piece.id, x: t.x, y: t.y, w: t.w, h: t.h });
@@ -656,7 +670,7 @@ function PieceEl({ piece, scale, grid, interactive, erasing }: PieceElProps) {
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Main CanvasViewer
@@ -669,12 +683,11 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const tokens = useStore((s) => s.tokens);
   const grid = useStore((s) => s.grid);
   const boardTool = useStore((s) => s.boardTool);
-  const ownMeasure = useStore((s) => s.ownMeasure);
-  const setOwnMeasure = useStore((s) => s.setOwnMeasure);
-  const sharedMeasures = useStore((s) => s.sharedMeasures);
+  const publishMeasure = useStore((s) => s.setOwnMeasure);
+  const measureFrame = useFrameValue<OwnMeasure | null>(null, publishMeasure);
+  const setOwnMeasure = measureFrame.set;
   const setSelectedTokenId = useStore((s) => s.setSelectedTokenId);
   const pieces = useStore((s) => s.pieces);
-  const aoes = useStore((s) => s.aoes);
   const initiative = useStore((s) => s.initiative);
   const editorMode = useStore((s) => s.editorMode);
   const activePalettePiece = useStore((s) => s.activePalettePiece);
@@ -699,8 +712,10 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   const tokensActive = boardTool === 'select' && !isBuild;
   const piecesInteractive = isBuild && boardTool === 'select';
 
-  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
-  const [calibBox, setCalibBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [ghost, ghostFrame] = useFrameState<{ x: number; y: number } | null>(null);
+  const setGhost = ghostFrame.set;
+  const [calibBox, calibFrame] = useFrameState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const setCalibBox = calibFrame.set;
   const [calibPrompt, setCalibPrompt] = useState(false);
   const [calibCells, setCalibCells] = useState('2');
   const calibRef = useRef<{ sx: number; sy: number } | null>(null);
@@ -734,22 +749,26 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       S >= vp ? Math.min(0, Math.max(vp - S, pos)) : (vp - S) / 2;
     return { scale, x: clampAxis(v.x, cw), y: clampAxis(v.y, ch) };
   }, []);
-  const setView = useCallback(
-    (updater: BoardView | ((prev: BoardView) => BoardView)) => {
-      setViewInternal((prev) => {
-        const next = clampView(typeof updater === 'function' ? updater(prev) : updater);
-        setBoardView(next);
-        return next;
-      });
-    },
-    [setBoardView, clampView],
-  );
+  const viewFrame = useFrameValue(view, (next) => { setViewInternal(next); setBoardView(next); });
+  const setView = useCallback((updater: BoardView | ((prev: BoardView) => BoardView)) => {
+    viewFrame.set((prev) => clampView(typeof updater === 'function' ? updater(prev) : updater));
+  }, [viewFrame, clampView]);
+
+  function zoomBy(factor: number, anchor?: { x: number; y: number }) {
+    const container = containerRef.current;
+    if (!container) return;
+    const point = anchor ?? { x: container.clientWidth / 2, y: container.clientHeight / 2 };
+    setView((previous) => {
+      const scale = clampView({ ...previous, scale: previous.scale * factor }).scale;
+      return zoomAt(previous, point, scale);
+    });
+  }
 
   const draggingCanvas = useRef(false);
   const measuringRef = useRef(false);
   const lastPointer = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
-  const measureCommit = useGestureCommit(() => { measuringRef.current = false; setOwnMeasure(null); });
+  const measureCommit = useGestureCommit(() => { measuringRef.current = false; setOwnMeasure(null); measureFrame.flush(); });
   useEffect(() => {
     draggingCanvas.current = false;
     calibRef.current = null;
@@ -761,18 +780,19 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Leaving the ruler/AoE tools wipes our drawing (and tells the table to drop it).
+  // Changing tools clears even a preview whose animation frame has not run yet.
   useEffect(() => {
-    if (boardTool !== 'measure' && boardTool !== 'aoe' && ownMeasure) {
-      setOwnMeasure(null);
-      sendWs({ type: 'measure', kind: 'clear' });
+    if (measureFrame.current) {
+      setOwnMeasure(null); measureFrame.flush();
+      sendMeasure({ type: 'measure', kind: 'clear' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardTool]);
 
   function screenToBoard(clientX: number, clientY: number): { x: number; y: number } {
     const rect = containerRef.current!.getBoundingClientRect();
-    return { x: (clientX - rect.left - view.x) / view.scale, y: (clientY - rect.top - view.y) / view.scale };
+    const current = viewFrame.current;
+    return { x: (clientX - rect.left - current.x) / current.scale, y: (clientY - rect.top - current.y) / current.scale };
   }
 
   // ---------------------------------------------------------------------------
@@ -869,7 +889,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       measuringRef.current = true;
       setOwnMeasure({ kind: measureKind, x1: p.x, y1: p.y, x2: p.x, y2: p.y });
       // Ruler broadcasts live; an AoE is only a local preview until released.
-      if (measuring) sendWs({ type: 'measure', kind: 'ruler', x1: p.x, y1: p.y, x2: p.x, y2: p.y });
+      if (measuring) sendMeasure({ type: 'measure', kind: 'ruler', x1: p.x, y1: p.y, x2: p.x, y2: p.y });
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       return;
     }
@@ -903,10 +923,10 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     if (ghost) setGhost(null);
     if (measuringRef.current) {
       const p = screenToBoard(e.clientX, e.clientY);
-      const m = useStore.getState().ownMeasure;
+      const m = measureFrame.current;
       if (!m) return;
       setOwnMeasure({ kind: m.kind, x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
-      if (measuring) sendWs({ type: 'measure', kind: 'ruler', x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
+      if (measuring) sendMeasure({ type: 'measure', kind: 'ruler', x1: m.x1, y1: m.y1, x2: p.x, y2: p.y });
       return;
     }
     if (!draggingCanvas.current) return;
@@ -917,17 +937,20 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
   }
 
   function handlePointerUp() {
+    viewFrame.flush(); measureFrame.flush(); calibFrame.flush();
     if (calibRef.current) {
       calibRef.current = null;
-      if (calibBox && calibBox.w > 4) setCalibPrompt(true);
+      if (calibFrame.current && calibFrame.current.w > 4) setCalibPrompt(true);
       return;
     }
     if (measuringRef.current) {
       measuringRef.current = false;
+      const final = measureFrame.current;
+      if (measuring && final) sendMeasure({ type: 'measure', ...final }, true);
       // Releasing an AoE drag commits a persistent template (everyone sees it,
       // and you can place more). The ruler just stays as the live measure.
       if (aoeing) {
-        const m = useStore.getState().ownMeasure;
+        const m = measureFrame.current;
         if (m && Math.hypot(m.x2 - m.x1, m.y2 - m.y1) > 4) {
           measureCommit.submit({ type: 'aoeAdd', kind: m.kind as AoeKind, x1: m.x1, y1: m.y1, x2: m.x2, y2: m.y2 });
         } else measureCommit.finish();
@@ -945,19 +968,13 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
     const mouseY = e.clientY - rect.top;
 
     const factor = Math.min(1.25, Math.max(0.8, Math.exp(-e.deltaY * 0.001)));
-    setView((v) => {
-      const newScale = clampScale(v.scale * factor);
-      const scaleDelta = newScale / v.scale;
-      const newX = mouseX - scaleDelta * (mouseX - v.x);
-      const newY = mouseY - scaleDelta * (mouseY - v.y);
-      return { x: newX, y: newY, scale: newScale };
-    });
+    zoomBy(factor, { x: mouseX, y: mouseY });
   }
 
-  const sortedItems = [...board].sort((a, b) => a.z - b.z);
-  const sortedTokens = [...tokens].sort((a, b) => a.z - b.z);
+  const sortedItems = useMemo(() => [...board].sort((a, b) => a.z - b.z), [board]);
+  const sortedTokens = useMemo(() => [...tokens].sort((a, b) => a.z - b.z), [tokens]);
   const activeTurnTokenId = activeEntry(initiative)?.tokenId ?? null;
-  const sortedPieces = [...pieces].sort((a, b) => a.z - b.z).filter((p) => layerVisible[p.layer]);
+  const sortedPieces = useMemo(() => [...pieces].sort((a, b) => a.z - b.z).filter((p) => layerVisible[p.layer]), [pieces, layerVisible]);
   const isEmpty = board.length === 0 && tokens.length === 0 && pieces.length === 0;
   const cursor = measuring || aoeing || stamping || erasing || calibrating ? 'crosshair' : draggingCanvas.current ? 'grabbing' : 'grab';
   // Two transform stages share this transform so the grid can sit between the
@@ -986,7 +1003,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerCancel={() => { draggingCanvas.current = false; calibRef.current = null; setCalibBox(null); setCalibPrompt(false); measureCommit.cancel(); }}
+      onPointerCancel={() => { draggingCanvas.current = false; calibRef.current = null; setCalibBox(null); setCalibPrompt(false); measureCommit.cancel(); sendMeasure({ type: 'measure', kind: 'clear' }); }}
       onPointerLeave={handlePointerUp}
       onWheel={handleWheel}
       aria-label="Campaign map canvas"
@@ -1048,9 +1065,7 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
 
       {/* Measurement rulers (screen-space overlay) */}
       <MeasureOverlay
-        view={view} grid={grid} own={ownMeasure} shared={sharedMeasures}
-        aoes={aoes} selfUserId={selfUserId} canEditAoe={aoeing} isDm={isDm}
-        onRemoveAoe={(id) => sendWs({ type: 'aoeRemove', id })}
+        view={view} grid={grid} selfUserId={selfUserId} canEditAoe={aoeing} isDm={isDm}
       />
 
       {/* Grid calibration box + prompt (build mode) */}
@@ -1109,8 +1124,8 @@ export function CanvasViewer({ children }: CanvasViewerProps) {
       {/* Zoom controls — bottom-left floating */}
       <ZoomControls
         scale={view.scale}
-        onZoomIn={() => setView((v) => ({ ...v, scale: clampScale(v.scale * 1.2) }))}
-        onZoomOut={() => setView((v) => ({ ...v, scale: clampScale(v.scale / 1.2) }))}
+        onZoomIn={() => zoomBy(1.2)}
+        onZoomOut={() => zoomBy(1 / 1.2)}
         onFit={fitBoard}
       />
     </div>
@@ -1129,7 +1144,7 @@ export const MAP_SIZE = (cell: number) => MAP_CELLS * cell;
 // keeps the handoff's exact proportions (14px rim, brass reveal, bolts) at any
 // zoom while sitting flush to the felt. The felt stays transparent so the map
 // below shows through — the wood ring is masked to the rim only.
-function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
+const BoundedGrid = memo(function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
   const S = MAP_CELLS * grid.cell;
   const u = 1 / scale;
   const rim = 14 * u;
@@ -1193,7 +1208,7 @@ function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
       <span style={bolt({ bottom: rim / 2, right: rim / 2, transform: 'translate(50%,50%)' })} />
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Measurement overlay — own ruler (ember) + shared rulers (teal)
@@ -1202,18 +1217,17 @@ function BoundedGrid({ grid, scale }: { grid: GridState; scale: number }) {
 interface MeasureShape { kind: MeasureKind; x1: number; y1: number; x2: number; y2: number }
 
 function MeasureOverlay({
-  view, grid, own, shared, aoes, selfUserId, canEditAoe, isDm, onRemoveAoe,
+  view, grid, selfUserId, canEditAoe, isDm,
 }: {
   view: BoardView;
   grid: GridState;
-  own: MeasureShape | null;
-  shared: Record<string, MeasureShape & { by: string }>;
-  aoes: AoeTemplate[];
   selfUserId: string | null;
   canEditAoe: boolean;
   isDm: boolean;
-  onRemoveAoe: (id: string) => void;
 }) {
+  const own = useStore((s) => s.ownMeasure);
+  const shared = useStore((s) => s.sharedMeasures);
+  const aoes = useStore((s) => s.aoes);
   const sharedList = Object.values(shared);
   if (!own && sharedList.length === 0 && aoes.length === 0) return null;
 
@@ -1320,7 +1334,7 @@ function MeasureOverlay({
     const p = sc(a.x1, a.y1);
     return (
       <g transform={`translate(${p.x}, ${p.y})`} style={{ pointerEvents: 'auto', cursor: 'pointer' }}
-        onPointerDown={(e) => { e.stopPropagation(); onRemoveAoe(a.id); }}>
+        onPointerDown={(e) => { e.stopPropagation(); sendWs({ type: 'aoeRemove', id: a.id }); }}>
         <circle r={9} fill="#1a1310ee" stroke="var(--ember)" strokeWidth={1.5} />
         <path d="M-3.5 -3.5 L3.5 3.5 M3.5 -3.5 L-3.5 3.5" stroke="#f4efe9" strokeWidth={1.6} strokeLinecap="round" />
       </g>
