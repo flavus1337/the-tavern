@@ -13,3 +13,8 @@ export function calibratedGrid(x: number, y: number, width: number, cells: numbe
   const cell = Math.min(512, Math.max(8, Math.round(width / Math.max(1, cells))));
   return { cell, offsetX: gridOffset(x, cell), offsetY: gridOffset(y, cell), visible: true };
 }
+
+/** Dense overview grids recede while normal tactical cells keep their contrast. */
+export function gridOpacity(cell: number, scale: number): number {
+  return Math.min(1, Math.max(0.12, cell * scale / 24));
+}

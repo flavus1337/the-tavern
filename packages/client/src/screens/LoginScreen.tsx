@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { D20Logo } from '../components/D20Logo';
+import { restoreCampaign } from '../lib/navigation';
 import loginHero from '../assets/login-hero.webp';
 
 export function LoginScreen() {
@@ -38,15 +39,14 @@ export function LoginScreen() {
       if (inviteToken) body.inviteToken = inviteToken;
 
       const res = await api.post<LoginResponse>('/api/auth/login', body);
+      useStore.getState().resetTable();
       setUser(res.user);
 
-      const { CampaignListItem } = await import('@vtt/shared').then(() => ({ CampaignListItem: null }));
-      void CampaignListItem;
       const campaigns = await api.get<import('@vtt/shared').CampaignListItem[]>('/api/campaigns');
       setCampaigns(campaigns);
 
       if (inviteToken) clearInviteToken();
-      setRoute('lobby');
+      restoreCampaign(campaigns, res.joinedCampaignId ?? undefined);
     } catch (err) {
       if (err instanceof ApiRequestError) {
         setError(err.message);

@@ -1,5 +1,5 @@
 import { sendWs } from '../../ws/connection';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { GridState } from '@vtt/shared';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { AssetPicker } from './AssetPicker';
@@ -10,6 +10,11 @@ import { useStore } from '../../store';
 
 export function DmPanel() {
   const [tab, setTab] = useState<'chapters' | 'assets' | 'board' | 'invites'>('chapters');
+  useEffect(() => {
+    const selectTab = (event: Event) => { if ((event as CustomEvent).detail === 'invites') setTab('invites'); };
+    window.addEventListener('vtt:dm-tab', selectTab);
+    return () => window.removeEventListener('vtt:dm-tab', selectTab);
+  }, []);
   const uploadsLocked = useStore((s) => s.uploadsLocked);
   const connection = useStore((s) => s.connection);
 
@@ -22,7 +27,7 @@ export function DmPanel() {
       <div className="p-3 border-b border-[var(--border)] space-y-2">
           <TabsList label="Dungeon master tools" className="w-full">
             <TabsTrigger value="chapters">Chapters</TabsTrigger>
-            <TabsTrigger value="assets">Assets</TabsTrigger>
+            <TabsTrigger value="assets">Library</TabsTrigger>
             <TabsTrigger value="board">Board</TabsTrigger>
             <TabsTrigger value="invites">Invites</TabsTrigger>
           </TabsList>

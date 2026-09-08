@@ -6,33 +6,28 @@ import { Button } from '../components/ui/button';
 import { D20Logo } from '../components/D20Logo';
 import { CreateCampaignDialog } from '../components/dm/CreateCampaignDialog';
 import { avatarGradient } from '../lib/avatar';
+import { enterCampaign } from '../lib/navigation';
 import lobbyBg from '../assets/lobby-tavern.webp';
 
 export function CampaignLobby() {
   const user = useStore((s) => s.user);
   const campaigns = useStore((s) => s.campaigns);
   const setCampaigns = useStore((s) => s.setCampaigns);
-  const setRoute = useStore((s) => s.setRoute);
-  const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
   const activeCampaignId = useStore((s) => s.activeCampaignId);
 
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const navigationError = useStore((state) => state.lastErrorMessage);
 
   async function handleLogout() {
     setLogoutLoading(true);
     try {
       await api.post('/api/auth/logout');
-    } catch {
-      // ignore
-    }
-    useStore.getState().setUnauthenticated();
-    setLogoutLoading(false);
-  }
-
-  function enterCampaign(id: string) {
-    setActiveCampaignId(id);
-    setRoute('table');
+      useStore.getState().setUnauthenticated();
+    } catch (error) {
+      setLogoutError(error instanceof ApiRequestError ? error.message : 'Sign out failed. Please try again.');
+    } finally { setLogoutLoading(false); }
   }
 
   async function refreshCampaigns() {
@@ -47,6 +42,7 @@ export function CampaignLobby() {
   async function handleCreate(name: string, description: string) {
     const body: CreateCampaignRequest = { name, description: description || undefined };
     const res = await api.post<CreateCampaignResponse>('/api/campaigns', body);
+    setCampaigns([...useStore.getState().campaigns.filter((campaign) => campaign.id !== res.campaign.id), res.campaign]);
     await refreshCampaigns();
     setCreateOpen(false);
     enterCampaign(res.campaign.id);
@@ -145,11 +141,25 @@ export function CampaignLobby() {
           </h1>
         </div>
 
+        {(logoutError || navigationError) && <div role="alert" className="mb-5 rounded-lg border p-3 text-sm max-w-2xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)', color: 'var(--garnet)' }}>
+          {logoutError || navigationError}
+          <button type="button" className="ml-3 underline" onClick={() => { setLogoutError(null); useStore.getState().setLastErrorMessage(null); }}>Dismiss</button>
+        </div>}
+        <div className="mb-6 rounded-xl border p-4 max-w-2xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+          <h2 className="text-base font-semibold mb-2" style={{ color: 'var(--hi)' }}>{user?.isAdmin ? 'Start your first session' : 'Join your party'}</h2>
+          {user?.isAdmin ? <>
+            <p className="text-sm mb-3">Create a campaign, place a map from its library, then invite your players. An existing campaign is ready to continue below.</p>
+            <div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => setCreateOpen(true)}>Create campaign</Button>
+              {campaigns.find((campaign) => /demo/i.test(campaign.name)) && <Button size="sm" variant="secondary" onClick={() => enterCampaign(campaigns.find((campaign) => /demo/i.test(campaign.name))!.id)}>Open demo</Button>}
+            </div>
+          </> : <p className="text-sm">Open an invitation link from your DM to join a campaign. After joining, choose your campaign below. Only the host administrator can create new campaigns.</p>}
+        </div>
+
         {/* Campaign grid */}
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 332px))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 332px))',
             gap: 18,
             maxWidth: 1080,
           }}

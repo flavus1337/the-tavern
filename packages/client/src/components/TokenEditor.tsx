@@ -67,6 +67,7 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
   const [assetId, setAssetId] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(existing?.imageUrl ?? null);
   const [uploading, setUploading] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(Boolean(tokenId));
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -299,6 +300,9 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
           )}
         </div>
 
+        <details open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer text-sm py-2" style={{ color: 'var(--mid)' }}>Conditions and combat stats · optional</summary>
+          <div className="space-y-3 pt-2">
         {/* Conditions — visible to everyone */}
         <div className={rowCls}>
           <span className={labelCls}>Conditions</span>
@@ -367,6 +371,9 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
             </div>
           )}
         </div>
+
+          </div>
+        </details>
 
         {/* DM only visibility — DM only */}
         {isDm && (

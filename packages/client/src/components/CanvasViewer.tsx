@@ -19,7 +19,7 @@ import { activeEntry } from '../lib/initiative';
 import { gestureLifecycle } from '../lib/gesture';
 import { zoomAt } from '../lib/view';
 import { useFrameState, useFrameValue } from '../lib/frame';
-import { gridOffset, snapToGrid, calibratedGrid } from '../lib/grid';
+import { gridOffset, snapToGrid, calibratedGrid, gridOpacity } from '../lib/grid';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
 import { TOKEN_CELLS, tokenControl } from '../lib/tokenControl';
@@ -1192,8 +1192,9 @@ const BoundedGrid = memo(function BoundedGrid({ grid, scale }: { grid: GridState
         position: 'absolute', left: rim, top: rim, width: S, height: S,
         borderRadius: 13 * u, overflow: 'hidden',
         boxShadow: `0 0 0 ${1.5 * u}px #caa06877, 0 0 0 ${4 * u}px #00000073, inset 0 ${14 * u}px ${30 * u}px -${8 * u}px #000000cc, inset 0 -${2 * u}px ${14 * u}px -${4 * u}px #00000080, inset 0 0 0 ${u}px #00000080`,
-        ...gridBg,
-      }} />
+      }}>
+        <div style={{ position: 'absolute', inset: 0, ...gridBg, opacity: gridOpacity(grid.cell, scale) }} />
+      </div>
 
       {/* corner bolts */}
       <span style={bolt({ top: rim / 2, left: rim / 2, transform: 'translate(-50%,-50%)' })} />
@@ -1502,6 +1503,7 @@ function ToolDock({ build }: { build: boolean }) {
 function EmptyCanvas({ isDm }: { isDm: boolean }) {
   // The DM CTA switches to the DM tab in the sidebar (via a custom event)
   function handleDmCta() {
+    useStore.getState().setEditorMode('build');
     window.dispatchEvent(new CustomEvent('vtt:switch-sidebar-tab', { detail: 'dm' }));
   }
 
@@ -1532,7 +1534,7 @@ function EmptyCanvas({ isDm }: { isDm: boolean }) {
         The table is set.
       </p>
       <p style={{ fontSize: 14, color: 'var(--faint)' }}>
-        {isDm ? '' : 'Your DM is preparing the first map.'}
+        {isDm ? 'Place a map, then invite your players. Tokens and handouts can follow.' : 'Your DM is preparing the first map.'}
       </p>
 
       {isDm && (
@@ -1554,7 +1556,7 @@ function EmptyCanvas({ isDm }: { isDm: boolean }) {
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--ember-h)'; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--ember)'; }}
         >
-          Pin your first asset
+          Place your first map
         </button>
       )}
     </div>

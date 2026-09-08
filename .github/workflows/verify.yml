@@ -34,3 +34,4 @@ jobs:
       - run: pnpm exec tsx scripts/client-session-regression.ts
       - run: pnpm exec tsx scripts/client-resources-regression.ts
       - run: pnpm exec tsx scripts/client-undo-regression.ts
+      - run: pnpm exec tsx scripts/client-navigation-regression.ts

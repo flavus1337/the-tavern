@@ -160,10 +160,11 @@ router.get('/:id/files/assets/:filename', requireMember(), asyncRoute(async (req
       return;
     }
   } else {
-    // Images with dmOnly: only DM can access, UNLESS a board item or a
-    // non-dmOnly token references it (so token face images load for players).
+    // Current board items, map pieces and visible tokens are public to members.
+    // Saved templates and private prep do not expose their unplaced images.
     if (manifest.dmOnly) {
-      const isOnBoard = entry.runtime.state.board.some((item) => item.assetId === manifest.id);
+      const isOnBoard = entry.runtime.state.board.some((item) => item.assetId === manifest.id)
+        || entry.runtime.state.pieces.some((piece) => piece.assetId === manifest.id);
       const isReferencedByToken = entry.runtime.state.tokens.some(
         (tok) => tok.assetId === manifest.id && !tok.dmOnly,
       );

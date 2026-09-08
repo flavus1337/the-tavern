@@ -96,6 +96,11 @@ async function main(): Promise<void> {
     return fetch(`${base}/api/campaigns/session/assets/ast_${key}`, { method: 'DELETE', headers: { Cookie: cookie }, signal: AbortSignal.timeout(4000) });
   }
 
+  async function imageFile(cookie: string, key: string): Promise<{ status: number; bytes: Buffer }> {
+    const response = await fetch(`${base}/api/campaigns/session/files/assets/${key}.png`, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(4000) });
+    return { status: response.status, bytes: Buffer.from(await response.arrayBuffer()) };
+  }
+
   const references: Record<string, RegExp> = {
     board: /current map background/,
     token: /token face "Face token"/,
@@ -116,7 +121,7 @@ async function main(): Promise<void> {
   try {
     await fs.mkdir(dataDir, { recursive: true });
     const passwordHash = await hashPassword('regression-password');
-    await fs.writeFile(path.join(dataDir, 'users.json'), JSON.stringify({ type: 'vtt.users', schemaVersion: 1, users: ['admin', 'player'].map((username) => ({ id: `usr_${username}`, username, passwordHash, isAdmin: username === 'admin', createdAt: '' })) }));
+    await fs.writeFile(path.join(dataDir, 'users.json'), JSON.stringify({ type: 'vtt.users', schemaVersion: 1, users: ['admin', 'player', 'outsider'].map((username) => ({ id: `usr_${username}`, username, passwordHash, isAdmin: username === 'admin', createdAt: '' })) }));
     await fs.writeFile(path.join(dataDir, 'memberships.json'), JSON.stringify({ memberships: ['admin', 'player'].map((username) => ({ campaignId: 'session', userId: `usr_${username}`, role: username === 'admin' ? 'dm' : 'player', joinedAt: '' })) }));
     for (const folder of ['assets', 'chapters', 'characters', '.runtime']) await fs.mkdir(path.join(campaignDir, folder), { recursive: true });
     await fs.writeFile(path.join(campaignDir, 'campaign.json'), JSON.stringify({ type: 'campaign', schemaVersion: 1, id: 'session', name: 'Session', description: '', coverAssetId: 'ast_cover' }));
@@ -144,12 +149,24 @@ async function main(): Promise<void> {
       const manifest = path.join(campaignDir, 'assets', `${key}.json`);
       const bytes = Buffer.from(audio ? 'ID3 fixture audio' : 'fixture image bytes');
       await fs.writeFile(binary, bytes);
-      await fs.writeFile(manifest, JSON.stringify({ type: 'asset', schemaVersion: 2, id: `ast_${key}`, file, title: key, assetKind: audio ? 'document' : key === 'board' ? 'map' : 'art', mime: audio ? 'audio/mpeg' : 'image/png', width: audio ? null : 100, height: audio ? null : 100, tags: [], dmOnly: false, ownerUsername: audio || key.startsWith('hidden_') ? 'player' : 'admin', sharing: { scope: 'private', userIds: [] } }));
+      await fs.writeFile(manifest, JSON.stringify({ type: 'asset', schemaVersion: 2, id: `ast_${key}`, file, title: key, assetKind: audio ? 'document' : key === 'board' ? 'map' : 'art', mime: audio ? 'audio/mpeg' : 'image/png', width: audio ? null : 100, height: audio ? null : 100, tags: [], dmOnly: !audio, ownerUsername: audio || key.startsWith('hidden_') ? 'player' : 'admin', sharing: { scope: 'private', userIds: [] } }));
       assets.set(key, { binary, manifest, bytes });
     }
     await start();
     const adminCookie = await login('admin');
     const playerCookie = await login('player');
+    const outsiderCookie = await login('outsider');
+    for (const key of ['board', 'token', 'piece']) {
+      const image = await imageFile(playerCookie, key);
+      assert.equal(image.status, 200, key);
+      assert.deepEqual(image.bytes, assets.get(key)!.bytes);
+    }
+    for (const key of ['unused', 'template_board', 'template_piece', 'hidden_token', 'hidden_portrait', 'hidden_sheet', 'hidden_scene']) {
+      assert.equal((await imageFile(playerCookie, key)).status, 403, key);
+    }
+    assert.equal((await imageFile(outsiderCookie, 'piece')).status, 404);
+    assert.equal((await imageFile('', 'piece')).status, 401);
+    pass('legacy private images load for current public pieces, board and visible tokens only; saved or private references and nonmembers stay denied');
     const admin = await connect(adminCookie);
     const player = await connect(playerCookie);
     const sentAt = Date.now() + 3_600_000;
@@ -271,6 +288,12 @@ async function main(): Promise<void> {
     await command(restarted, { type: 'boardRemove', itemId: 'board_one' });
     assert.equal((await remove(adminCookie, 'board')).status, 204);
     pass('references remain protected after restart; unused assets and explicitly detached board assets delete');
+    assert.equal((await imageFile(playerCookie, 'piece')).status, 200);
+    await command(restarted, { type: 'pieceRemove', id: 'piece_one' });
+    assert.equal((await imageFile(playerCookie, 'piece')).status, 403);
+    assert.equal((await imageFile(adminCookie, 'piece')).status, 200);
+    assert.equal((await readJson(assets.get('piece')!.manifest)).dmOnly, true);
+    pass('removing the last active piece restores private image access without changing its legacy manifest');
     const tabOne = await connect(playerCookie);
     const tabTwo = await connect(playerCookie);
     tabTwo.ws.send(JSON.stringify({ type: 'measure', kind: 'ruler', x1: 0, y1: 0, x2: 100, y2: 100 }));
