@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button';
 import { D20Logo } from '../components/D20Logo';
 import { CreateCampaignDialog } from '../components/dm/CreateCampaignDialog';
 import { avatarGradient } from '../lib/avatar';
-import lobbyBg from '../assets/lobby-tavern.png';
+import lobbyBg from '../assets/lobby-tavern.webp';
 
 export function CampaignLobby() {
   const user = useStore((s) => s.user);

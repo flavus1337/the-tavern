@@ -79,7 +79,6 @@ function extractFaces(geo: THREE.BufferGeometry): Face[] {
   });
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // A slight resting tilt: just enough that the die reads as 3D (you catch a sliver
 // of the neighbouring faces) while the winning face stays squarely centred and
 // facing the viewer. Keep it small — a big tilt made it unclear which face won.
@@ -221,6 +220,8 @@ export class DiceScene {
   private diceGroup: THREE.Group;
   private dice: Die[] = [];
   private raf = 0;
+  private disposed = false;
+  private finishSpin: (() => void) | null = null;
   private theme: Tint = 'bone';
   private finals: number[] = [];
 
@@ -241,7 +242,7 @@ export class DiceScene {
     ember.position.set(3, -1, 3);
     this.scene.add(ember);
 
-    this.resize();
+    try { this.resize(); } catch (error) { this.dispose(); throw error; }
   }
 
   // ponytail: render on demand only — the spin's own rAF drives frames; once the
@@ -261,8 +262,7 @@ export class DiceScene {
   async roll(opts: { sides: number; theme: DieTheme; finals: number[]; pairs?: boolean; speed?: number }): Promise<void> {
     this.theme = opts.theme;
     this.finals = opts.finals;
-    this.diceGroup.clear();
-    this.dice = [];
+    this.clearDice();
     if (opts.sides === 100) {
       // Real percentile dice: a tens d10 (00–90) + a units d10 (0–9), read together.
       this.buildPercentile(opts.finals[0] ?? 1, opts.theme);
@@ -286,24 +286,27 @@ export class DiceScene {
     const speed = opts.speed ?? 1;
     const spinMs = 1300 / speed;
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
+      this.finishSpin = resolve;
       const t0 = performance.now();
       const tick = (t: number) => {
-        const k = Math.min(1, (t - t0) / spinMs);
-        const e = 1 - (1 - k) ** 3; // ease-out: fast tumble that decelerates onto the value
-        this.dice.forEach((d) => d.orientAt(e));
-        this.render();
-        if (k < 1) {
-          this.raf = requestAnimationFrame(tick);
-        } else {
-          this.dice.forEach((d) => d.mesh.quaternion.copy(d.restQ));
+        try {
+          const k = Math.min(1, (t - t0) / spinMs);
+          const e = 1 - (1 - k) ** 3; // ease-out: fast tumble that decelerates onto the value
+          this.dice.forEach((d) => d.orientAt(e));
           this.render();
-          resolve();
-        }
+          if (k < 1) {
+            this.raf = requestAnimationFrame(tick);
+          } else {
+            this.dice.forEach((d) => d.mesh.quaternion.copy(d.restQ));
+            this.render();
+            this.finishSpin = null;
+            resolve();
+          }
+        } catch (error) { this.finishSpin = null; reject(error); }
       };
       this.raf = requestAnimationFrame(tick);
     });
-    await sleep(60);
   }
 
   /** Give a die its random tumble and add it to the row group. */
@@ -377,8 +380,27 @@ export class DiceScene {
     this.render();
   }
 
+  private clearDice(): void {
+    this.diceGroup.traverse((object) => {
+      if (!(object instanceof THREE.Mesh || object instanceof THREE.LineSegments)) return;
+      object.geometry.dispose();
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+        if ('map' in material && material.map instanceof THREE.Texture) material.map.dispose();
+        material.dispose();
+      }
+    });
+    this.diceGroup.clear();
+    this.dice = [];
+  }
+
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     cancelAnimationFrame(this.raf);
+    this.finishSpin?.();
+    this.finishSpin = null;
+    this.clearDice();
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
   }
 }

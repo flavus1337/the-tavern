@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { readDiceDisplay, persistDiceDisplay, type DiceDisplay } from './lib/dicePlayback';
 import type {
   PublicUser,
   CampaignListItem,
@@ -189,6 +190,9 @@ interface TableSlice {
   rollToasts: RollLogEntry[];
   /** rolls awaiting the cinematic dice overlay — fed only by live rolls, never the snapshot */
   rollQueue: RollLogEntry[];
+  diceDisplay: DiceDisplay;
+  setDiceDisplay: (value: DiceDisplay) => void;
+  showRollToast: (entry: RollLogEntry) => void;
   /** transient presence-join popups */
   joinToasts: JoinToast[];
   /** transient nat-20 board moment IDs (ring sweep) */
@@ -247,7 +251,7 @@ interface TableSlice {
   setBoardView: (view: BoardView) => void;
   addRollEntry: (entry: RollLogEntry) => void;
   dismissRollToast: (id: string) => void;
-  shiftRollQueue: () => void;
+  shiftRollQueue: (id: string) => void;
   addJoinToast: (entry: PresenceEntry) => void;
   dismissJoinToast: (id: string) => void;
   addBoardMoment: (id: string) => void;
@@ -435,21 +439,25 @@ export const useStore = create<StoreState>()((set) => ({
   setMapLocked: (locked) => set({ mapLocked: locked }),
   setBoardView: (view) => set({ boardView: view }),
 
+  diceDisplay: readDiceDisplay(),
+  setDiceDisplay: (value) => {
+    persistDiceDisplay(value);
+    set({ diceDisplay: value, rollQueue: [], ...(value === 'instant' ? { rollToasts: [] } : {}) });
+  },
+  showRollToast: (entry) => set((s) => ({ rollToasts: [...s.rollToasts.filter((roll) => roll.id !== entry.id), entry].slice(-3) })),
   addRollEntry: (entry) =>
     set((s) => ({
       rollLog: [entry, ...s.rollLog].slice(0, ROLL_LOG_MAX),
-      // Every received roll also pops a transient toast (max 3 stacked).
-      rollToasts: [...s.rollToasts, entry].slice(-3),
-      // …and queues the cinematic overlay. Only LIVE rolls land here (the
-      // snapshot sets rollLog wholesale and never touches this), so joining a
-      // campaign never replays past rolls. Cap so a flurry can't back up forever.
-      rollQueue: [...s.rollQueue, entry].slice(-8),
+      rollToasts: s.diceDisplay === 'instant' ? [] : [...s.rollToasts, entry].slice(-3),
+      // One cinematic result at a time. Burst results appear immediately in
+      // compact toasts and the log rather than building a fullscreen backlog.
+      rollQueue: s.diceDisplay === 'cinematic' && !s.rollQueue.length ? [entry] : s.rollQueue,
     })),
 
   dismissRollToast: (id) =>
     set((s) => ({ rollToasts: s.rollToasts.filter((t) => t.id !== id) })),
 
-  shiftRollQueue: () => set((s) => ({ rollQueue: s.rollQueue.slice(1) })),
+  shiftRollQueue: (id) => set((s) => ({ rollQueue: s.rollQueue.filter((entry) => entry.id !== id) })),
 
   addJoinToast: (entry) =>
     set((s) => ({
@@ -460,7 +468,8 @@ export const useStore = create<StoreState>()((set) => ({
     set((s) => ({ joinToasts: s.joinToasts.filter((t) => t.id !== id) })),
 
   addBoardMoment: (id) =>
-    set((s) => ({ boardMoments: [...s.boardMoments, id].slice(-5) })),
+    set((s) => ({ boardMoments: s.diceDisplay === 'instant' || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+      ? s.boardMoments : [...s.boardMoments, id].slice(-5) })),
 
   removeBoardMoment: (id) =>
     set((s) => ({ boardMoments: s.boardMoments.filter((m) => m !== id) })),

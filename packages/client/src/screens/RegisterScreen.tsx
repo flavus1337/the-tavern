@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { D20Logo } from '../components/D20Logo';
-import loginHero from '../assets/login-hero.png';
+import loginHero from '../assets/login-hero.webp';
 
 // Shared hero/card layout wrapper. Defined at module scope — defining it inside
 // the screen would create a new component type on every render, remounting the
