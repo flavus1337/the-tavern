@@ -8,6 +8,7 @@ import { Input } from './ui/input';
 import { SharePicker } from './SharePicker';
 import { draftPatch, useDraft } from '../lib/draft';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
+import { usePanelPosition } from '../lib/panel';
 import { snapToGrid } from '../lib/grid';
 import { viewportCenterBoard } from '../lib/view';
 
@@ -31,6 +32,7 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
   const uploadsLocked = useStore((s) => s.uploadsLocked);
   const closePanel = useStore((s) => s.closePanel);
   const bringPanelToFront = useStore((s) => s.bringPanelToFront);
+  const { panelRef, pos } = usePanelPosition(stackIndex);
 
   const isDm = self?.role === 'dm';
   const existing: TokenView | undefined = tokenId ? tokens.find((t) => t.id === tokenId) : undefined;
@@ -128,13 +130,15 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
 
   return (
     <div
-      className="absolute inset-0 flex flex-col lg:inset-auto lg:top-4 lg:bottom-4 lg:w-[380px] lg:rounded-xl lg:shadow-2xl lg:overflow-hidden"
+      ref={panelRef} tabIndex={-1} role="dialog" aria-label="Token editor"
+      className="absolute flex flex-col rounded-xl shadow-2xl overflow-hidden"
+      onFocusCapture={() => bringPanelToFront(panelId)}
       onPointerDownCapture={() => bringPanelToFront(panelId)}
       style={{
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         zIndex: 8 + stackIndex,
-        right: `calc(1rem + ${(stackIndex % 5) * 36}px)`,
+        left: pos.x, top: pos.y, width: 380, maxWidth: 'calc(100% - 16px)', height: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)',
       }}
     >
       {/* Header */}
@@ -181,7 +185,7 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
             </div>
           </div>
           <div className="flex-1">
-            <Input placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} autoFocus={!tokenId} />
+            <Input aria-label="Token name" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} autoFocus={!tokenId} />
           </div>
         </div>
 

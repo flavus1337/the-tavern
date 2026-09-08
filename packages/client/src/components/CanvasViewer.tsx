@@ -22,7 +22,7 @@ import { useFrameState, useFrameValue } from '../lib/frame';
 import { gridOffset, snapToGrid, calibratedGrid } from '../lib/grid';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
-const TOKEN_CELLS: Record<TokenView['size'], number> = { S: 1, M: 1, L: 2, H: 3 };
+import { TOKEN_CELLS, tokenControl } from '../lib/tokenControl';
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -269,7 +269,7 @@ const BoardItemEl = memo(function BoardItemEl({ item, isDm, scale, editable }: B
                 lineHeight: `${handlePx}px`,
                 textAlign: 'center',
                 cursor: 'pointer',
-                background: 'var(--garnet)',
+                background: 'var(--danger)',
                 color: '#fff',
                 border: `${Math.max(1.5, 2 / scale)}px solid rgba(255,255,255,0.9)`,
                 borderRadius: '50%',
@@ -340,14 +340,8 @@ const TokenEl = memo(function TokenEl({ token, selfUserId, isDm, scale, grid, ac
   const dragRef = useRef<{ sx: number; sy: number; ox: number; oy: number; alt: boolean } | null>(null);
   const commit = useGestureCommit(() => { dragRef.current = null; setIsDragging(false); setLocalPos(null); });
 
-  const mine = !!token.ownerUserId && token.ownerUserId === selfUserId;
-  // Move/control: DM, owner, or anyone the token is shared-to-control.
-  const sharedControl =
-    token.sharing.scope === 'all' ||
-    (token.sharing.scope === 'users' && !!selfUserId && token.sharing.userIds.includes(selfUserId));
-  const canMove = commit.connected && (isDm || mine || sharedControl);
-  // Edit/remove (properties, deletion) stays owner + DM only.
-  const canEdit = isDm || mine;
+  const { mine, edit: canEdit, move } = tokenControl(token, selfUserId, isDm);
+  const canMove = commit.connected && move;
   const cells = TOKEN_CELLS[token.size];
   const px = grid.cell * cells;
 
@@ -453,7 +447,7 @@ const TokenEl = memo(function TokenEl({ token, selfUserId, isDm, scale, grid, ac
         </div>
       )}
 
-      <div className="tok-name">{token.name}</div>
+      <div className="tok-name" style={{ top: `calc(100% + ${8 / scale}px)`, transform: `translateX(-50%) scale(${1 / scale})`, transformOrigin: 'top center' }}>{token.name}</div>
 
       {/* Owner/DM edit/remove on selected (no combat toolbar) */}
       {selected && canEdit && !isDragging && (
@@ -468,7 +462,7 @@ const TokenEl = memo(function TokenEl({ token, selfUserId, isDm, scale, grid, ac
               background: 'var(--raised)', color: 'var(--mid)', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>Edit</button>
           <button type="button" onClick={(e) => { e.stopPropagation(); void sendCommand({ type: 'tokenRemove', tokenId: token.id }).then(() => { if (useStore.getState().selectedTokenId === token.id) setSelectedTokenId(null); }, () => {}); }}
             style={{ fontSize: 11 / scale, padding: `${3 / scale}px ${7 / scale}px`, borderRadius: 6 / scale,
-              background: 'var(--garnet)', color: '#fff', border: 'none', cursor: 'pointer' }}>✕</button>
+              background: 'var(--danger)', color: '#fff', border: 'none', cursor: 'pointer' }}>✕</button>
         </div>
       )}
     </div>
@@ -1399,18 +1393,18 @@ function ToolDock({ build }: { build: boolean }) {
 
   const rowStyle: React.CSSProperties = {
     display: 'flex', gap: 2, background: 'var(--surface)', border: '1px solid var(--border)',
-    borderRadius: 10, padding: 4, boxShadow: '0 12px 30px -12px #000b',
+    borderRadius: 10, padding: 4, boxShadow: '0 12px 30px -12px #000b', maxWidth: '100%', overflowX: 'auto',
   };
 
   return (
     <div
       style={{
         position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, zIndex: 5,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, zIndex: 5, maxWidth: 'calc(100% - 16px)',
       }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div style={rowStyle}>
+      <div className="board-tool-row" style={rowStyle}>
       {tools.map((t) => {
         const active = boardTool === t.id;
         return (
@@ -1456,7 +1450,7 @@ function ToolDock({ build }: { build: boolean }) {
       </div>
 
       {boardTool === 'aoe' && (
-        <div style={rowStyle}>
+        <div className="board-tool-row" style={rowStyle}>
           {AOE_SHAPES.map((sh) => {
             const active = aoeShape === sh.id;
             return (

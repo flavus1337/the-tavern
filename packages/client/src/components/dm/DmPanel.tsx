@@ -18,16 +18,14 @@ export function DmPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="flex flex-col h-full">
       <div className="p-3 border-b border-[var(--border)] space-y-2">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <TabsList className="w-full">
+          <TabsList label="Dungeon master tools" className="w-full">
             <TabsTrigger value="chapters">Chapters</TabsTrigger>
             <TabsTrigger value="assets">Assets</TabsTrigger>
             <TabsTrigger value="board">Board</TabsTrigger>
             <TabsTrigger value="invites">Invites</TabsTrigger>
           </TabsList>
-        </Tabs>
         {/* Upload lock toggle */}
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <button
@@ -52,12 +50,12 @@ export function DmPanel() {
         </label>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {tab === 'chapters' && <ChaptersPanel />}
-        {tab === 'assets' && <AssetPicker />}
-        {tab === 'board' && <BoardControls />}
-        {tab === 'invites' && <InviteManager />}
+        <TabsContent value="chapters"><ChaptersPanel /></TabsContent>
+        <TabsContent value="assets"><AssetPicker /></TabsContent>
+        <TabsContent value="board"><BoardControls /></TabsContent>
+        <TabsContent value="invites"><InviteManager /></TabsContent>
       </div>
-    </div>
+    </Tabs>
   );
 }
 

@@ -222,12 +222,11 @@ function PartPips({ part }: { part: RollPart }) {
               fontFamily: 'var(--mono)',
               fontSize: 12,
               fontWeight: 600,
-              opacity: isDropped ? 0.35 : 1,
               textDecoration: isDropped ? 'line-through' : undefined,
               background: bg,
               border: `1px solid ${border}`,
               boxShadow: isKeptOfPair && tone === 'ember' ? '0 0 0 1px #e08a4b33' : undefined,
-              color,
+              color: isDropped ? 'var(--low)' : color,
             }}
             title={`d${part.sides}${isDropped ? ' — dropped' : hasDropped ? ' — kept' : ''}`}
           >

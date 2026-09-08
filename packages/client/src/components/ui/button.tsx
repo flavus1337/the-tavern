@@ -22,7 +22,7 @@ const variantClasses: Record<Variant, string> = {
     'bg-transparent text-[var(--low)] hover:text-[var(--hi)] active:scale-[0.98] disabled:opacity-50',
   // Danger
   destructive:
-    'bg-[var(--garnet)] text-[var(--hi)] hover:opacity-90 active:scale-[0.98] disabled:bg-[var(--raised)] disabled:text-[var(--faint)]',
+    'bg-[var(--danger)] text-[var(--hi)] hover:bg-[#a33b4c] active:scale-[0.98] disabled:bg-[var(--raised)] disabled:text-[var(--faint)]',
   // Teal for share actions
   teal:
     'bg-[#69b7a615] text-[var(--teal)] border border-[#69b7a63a] hover:bg-[#69b7a626] active:scale-[0.98] disabled:opacity-50',

@@ -2,6 +2,7 @@ import { lazy, Suspense, useRef, useState, useEffect, type PointerEvent } from '
 import type { AssetManifest } from '@vtt/shared';
 import { useStore } from '../store';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
+import { usePanelPosition } from '../lib/panel';
 
 const PdfView = lazy(() => import('./PdfView').then((m) => ({ default: m.PdfView })));
 
@@ -27,9 +28,8 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
   const url = `/api/campaigns/${campaignId}/files/assets/${doc.file}`;
 
   // Panel position — staggered so multiple panels don't fully overlap
-  const [pos, setPos] = useState(() => ({ x: 40 + (stackIndex % 5) * 36, y: 20 + (stackIndex % 5) * 28 }));
+  const { pos, move, panelRef } = usePanelPosition(stackIndex);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
 
   async function shareWithTable() {
     if (connection !== 'open') return;
@@ -39,18 +39,6 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
 
     // Fire share toast
     useStore.getState().addShareToast?.(doc.title);
-  }
-
-  // Clamp panel within viewport minus 24px inset
-  function clampPos(x: number, y: number): { x: number; y: number } {
-    const pw = panelRef.current?.offsetWidth ?? 520;
-    const ph = panelRef.current?.offsetHeight ?? 500;
-    const maxX = window.innerWidth - pw - 24;
-    const maxY = window.innerHeight - ph - 24;
-    return {
-      x: Math.max(24, Math.min(x, maxX)),
-      y: Math.max(24, Math.min(y, maxY)),
-    };
   }
 
   function onTitleBarPointerDown(e: PointerEvent<HTMLDivElement>) {
@@ -66,7 +54,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
     if (!dragRef.current) return;
     const dx = e.clientX - dragRef.current.startX;
     const dy = e.clientY - dragRef.current.startY;
-    setPos(clampPos(dragRef.current.origX + dx, dragRef.current.origY + dy));
+    move(dragRef.current.origX + dx, dragRef.current.origY + dy);
   }
 
   function onTitleBarPointerUp() {
@@ -95,7 +83,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
           style={{
             background: '#f3ece1',
             borderRadius: 6,
-            padding: '26px 30px',
+            padding: '12px',
             boxShadow: '0 14px 40px -8px #000b, 0 0 0 1px #00000022',
             maxWidth: 520,
             margin: '0 auto',
@@ -130,7 +118,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
         style={{
           background: '#f3ece1',
           borderRadius: 6,
-          padding: '26px 30px',
+          padding: '12px',
           boxShadow: '0 14px 40px -8px #000b',
           maxWidth: 520,
           margin: '0 auto',
@@ -174,7 +162,9 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
 
   return (
     <div
-      ref={panelRef}
+      ref={panelRef} tabIndex={-1}
+      role="dialog" aria-label={doc.title}
+      onFocusCapture={() => bringPanelToFront(panelId)}
       onPointerDownCapture={() => bringPanelToFront(panelId)}
       style={{
         position: 'absolute',
@@ -182,7 +172,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
         left: pos.x,
         top: pos.y,
         width: 520,
-        maxWidth: 'calc(100% - 48px)',
+        maxWidth: 'calc(100% - 16px)',
         background: 'var(--surface2)',
         border: '1px solid var(--border)',
         borderRadius: 14,
@@ -190,7 +180,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        maxHeight: '86vh',
+        maxHeight: 'calc(100% - 16px)',
       }}
     >
       <SaveFeedback save={save} conflicts={[]} latest={{}} onUseTable={() => {}} onKeepChanges={() => {}} />
@@ -208,6 +198,7 @@ export function DocumentViewer({ doc, panelId, stackIndex }: { doc: AssetManifes
         onPointerDown={onTitleBarPointerDown}
         onPointerMove={onTitleBarPointerMove}
         onPointerUp={onTitleBarPointerUp}
+        onPointerCancel={onTitleBarPointerUp}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
           <span style={{ fontFamily: 'var(--serif)', fontSize: 15, fontWeight: 600, color: 'var(--hi)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

@@ -8,6 +8,7 @@ import { Input } from './ui/input';
 import { SharePicker, ShareBadge } from './SharePicker';
 import { draftPatch, useDraft } from '../lib/draft';
 import { SaveFeedback, useSaveCommand } from './SaveFeedback';
+import { usePanelPosition } from '../lib/panel';
 
 /**
  * Note editor rendered over the canvas area (non-modal — the sidebar stays
@@ -19,6 +20,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
   const connection = useStore((s) => s.connection);
   const closePanel = useStore((s) => s.closePanel);
   const bringPanelToFront = useStore((s) => s.bringPanelToFront);
+  const { panelRef, pos } = usePanelPosition(stackIndex);
 
   const existing = noteId ? myNotes.find((n) => n.id === noteId) : undefined;
   const isDm = self?.role === 'dm';
@@ -121,14 +123,15 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
 
   return (
     <div
-      className="absolute inset-0 flex flex-col lg:inset-auto lg:top-4 lg:bottom-4 lg:w-[55%] lg:max-w-3xl lg:rounded-xl lg:shadow-2xl lg:overflow-hidden"
+      ref={panelRef} tabIndex={-1} role="dialog" aria-label="Note editor"
+      className="absolute flex flex-col rounded-xl shadow-2xl overflow-hidden"
+      onFocusCapture={() => bringPanelToFront(panelId)}
       onPointerDownCapture={() => bringPanelToFront(panelId)}
       style={{
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         zIndex: 8 + stackIndex,
-        // Stagger stacked panels on large screens (right-anchored).
-        right: `calc(1rem + ${(stackIndex % 5) * 36}px)`,
+        left: pos.x, top: pos.y, width: 620, maxWidth: 'calc(100% - 16px)', height: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)',
       }}
     >
       {/* Header */}
