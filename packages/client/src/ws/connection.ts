@@ -57,6 +57,8 @@ export class TableConnection {
   private pendingPings = new Set<number>();
   private clockSamples: Array<{ rtt: number; offset: number }> = [];
   private pending = new Map<string, {
+    epoch: number;
+    undoReceiptId?: string;
     resolve: (ack: ServerCommandAckPayload) => void;
     reject: (error: CommandError) => void;
     timer: ReturnType<typeof setTimeout>;
@@ -117,7 +119,7 @@ export class TableConnection {
         this.rejectPending();
         this.ws?.close();
       }, COMMAND_TIMEOUT_MS);
-      this.pending.set(requestId, { resolve, reject, timer });
+      this.pending.set(requestId, { resolve, reject, timer, epoch: useStore.getState().snapshotEpoch, undoReceiptId: msg.type === 'undo' ? msg.receiptId : undefined });
       useStore.setState({ pendingCommands: this.pending.size });
       try { this.ws!.send(payload); }
       catch { this.rejectPending(); this.ws?.close(); }
@@ -164,7 +166,7 @@ export class TableConnection {
       pending.reject(error);
     }
     this.pending.clear();
-    useStore.setState({ pendingCommands: 0 });
+    useStore.setState({ pendingCommands: 0, undoReceipt: null });
   }
 
   // --------------------------------------------------------------------------
@@ -254,10 +256,15 @@ export class TableConnection {
         if (!pending) break;
         clearTimeout(pending.timer);
         this.pending.delete(msg.requestId);
-        useStore.setState((s) => ({ pendingCommands: this.pending.size, saveOutcome: s.lastErrorMessage ? s.saveOutcome : 'saved' }));
+        useStore.setState((s) => ({ pendingCommands: this.pending.size, saveOutcome: s.lastErrorMessage ? s.saveOutcome : 'saved',
+          ...(msg.undo && msg.undo.boardGeneration === s.boardGeneration && pending.epoch === s.snapshotEpoch ? { undoReceipt: msg.undo } : {}) }));
         pending.resolve(msg);
         break;
       }
+
+      case 'undoInvalidated':
+        useStore.setState((state) => msg.boardGeneration >= state.boardGeneration ? { boardGeneration: msg.boardGeneration, undoReceipt: null } : {});
+        break;
 
       case 'presence':
         store.setPresence(msg.entries);
@@ -371,6 +378,7 @@ export class TableConnection {
           const pending = this.pending.get(msg.requestId);
           if (pending) {
             const error = new CommandError(msg.message, msg.code);
+            if (msg.code === 'UNDO_STALE') useStore.setState((state) => state.undoReceipt?.receiptId === pending.undoReceiptId ? { undoReceipt: null } : {});
             clearTimeout(pending.timer);
             this.pending.delete(msg.requestId);
             useStore.setState({ pendingCommands: this.pending.size });

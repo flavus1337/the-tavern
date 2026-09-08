@@ -11,6 +11,7 @@ import type {
   ChapterView,
   CharacterView,
   ServerSnapshotPayload,
+  ServerCommandAckPayload,
   TokenView,
   GridState,
   MemberEntry,
@@ -165,6 +166,8 @@ interface TableSlice {
   snapshotEpoch: number;
   pendingCommands: number;
   saveOutcome: 'idle' | 'saved' | 'failed' | 'unconfirmed';
+  boardGeneration: number;
+  undoReceipt: NonNullable<ServerCommandAckPayload['undo']> | null;
   self: SelfInfo | null;
   campaignName: string;
   presence: PresenceEntry[];
@@ -310,6 +313,8 @@ const tableDefaults = {
   snapshotEpoch: 0,
   pendingCommands: 0,
   saveOutcome: 'idle' as const,
+  boardGeneration: 0,
+  undoReceipt: null as NonNullable<ServerCommandAckPayload['undo']> | null,
   self: null,
   campaignName: '',
   presence: [],
@@ -396,12 +401,14 @@ export const useStore = create<StoreState>()((set) => ({
   // -------------------------------------------------------------------------
   ...tableDefaults,
 
-  setConnection: (connection) => set({ connection }),
+  setConnection: (connection) => set({ connection, ...(connection === 'open' ? {} : { undoReceipt: null }) }),
   setSelf: (self) => set({ self }),
 
   applySnapshot: (snap) =>
     set((s) => ({
       snapshotEpoch: s.snapshotEpoch + 1,
+      boardGeneration: snap.boardGeneration,
+      undoReceipt: null,
       ownMeasure: null,
       ownMeasureShared: false,
       sharedMeasures: {},

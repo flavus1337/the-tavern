@@ -1,7 +1,7 @@
 // WebSocket protocol types — the wire contract between server and client.
 import type { AssetManifest, Sharing, NoteKind } from './campaign.js';
 
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /** The board is a finite BOARD_CELLS × BOARD_CELLS square — the hard playing-field boundary. */
 export const BOARD_CELLS = 120;
@@ -510,6 +510,7 @@ export interface ClientDeleteMapTemplatePayload {
 }
 
 export type ClientMessage = (
+  | { type: 'undo'; receiptId: string }
   | ClientJoinPayload
   | ClientRollPayload
   | ClientBoardAddPayload
@@ -572,6 +573,7 @@ export interface SnapshotCampaignInfo {
 
 export interface ServerSnapshotPayload {
   type: 'snapshot';
+  boardGeneration: number;
   campaign: SnapshotCampaignInfo;
   /** Board items currently pinned. */
   board: BoardItemView[];
@@ -729,6 +731,7 @@ export type ServerMeasureSharedPayload =
   | { type: 'measureShared'; kind: 'clear'; by: string };
 
 export type WsErrorCode =
+  | 'UNDO_STALE'
   | 'BAD_MESSAGE'
   | 'CONFLICT'
   | 'ALREADY_JOINED'
@@ -764,6 +767,7 @@ export interface ServerCommandAckPayload {
   requestId: string;
   entityId?: string;
   revision?: number;
+  undo?: { receiptId: string; label: string; boardGeneration: number };
 }
 
 export interface ServerPongPayload {
@@ -773,6 +777,7 @@ export interface ServerPongPayload {
 }
 
 export type ServerMessage =
+  | { type: 'undoInvalidated'; boardGeneration: number }
   | ServerCommandAckPayload
   | ServerJoinedPayload
   | ServerSnapshotPayload

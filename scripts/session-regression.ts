@@ -97,15 +97,19 @@ async function main(): Promise<void> {
   }
 
   const references: Record<string, RegExp> = {
-    board: /board item board_one/,
+    board: /current map background/,
     token: /token face "Face token"/,
-    piece: /map piece piece_one/,
+    piece: /map piece "piece" on the current map/,
     template_board: /saved map "Saved encounter" \(board\)/,
     template_piece: /saved map "Saved encounter" \(pieces\)/,
     cover: /campaign cover/,
     portrait: /character portrait "Aster"/,
     sheet: /character sheet "Aster"/,
     scene: /chapter "Arrival", scene "Gate"/,
+    hidden_token: /token face "Secret basilisk"/,
+    hidden_portrait: /character portrait "Secret patron"/,
+    hidden_sheet: /character sheet "Secret patron"/,
+    hidden_scene: /chapter "Secret conspiracy", scene "Secret vault"/,
   };
   const assets = new Map<string, { binary: string; manifest: string; bytes: Buffer }>();
 
@@ -118,12 +122,17 @@ async function main(): Promise<void> {
     await fs.writeFile(path.join(campaignDir, 'campaign.json'), JSON.stringify({ type: 'campaign', schemaVersion: 1, id: 'session', name: 'Session', description: '', coverAssetId: 'ast_cover' }));
     await fs.writeFile(path.join(campaignDir, 'chapters/arrival.json'), JSON.stringify({ type: 'chapter', schemaVersion: 1, id: 'arrival', title: 'Arrival', order: 0, scenes: [{ id: 'gate', title: 'Gate', assetIds: ['ast_scene'], characterIds: [] }] }));
     await fs.writeFile(path.join(campaignDir, 'characters/aster.json'), JSON.stringify({ type: 'character', schemaVersion: 1, id: 'aster', name: 'Aster', kind: 'pc', tags: [], portraitAssetId: 'ast_portrait', sheet: { sheetAssetId: 'ast_sheet' } }));
+    await fs.writeFile(path.join(campaignDir, 'characters/secret.json'), JSON.stringify({ type: 'character', schemaVersion: 1, id: 'secret', name: 'Secret patron', kind: 'npc', tags: [], portraitAssetId: 'ast_hidden_portrait', sheet: { sheetAssetId: 'ast_hidden_sheet' } }));
+    await fs.writeFile(path.join(campaignDir, 'chapters/secret.json'), JSON.stringify({ type: 'chapter', schemaVersion: 1, id: 'secret', title: 'Secret conspiracy', order: 1, scenes: [{ id: 'secret_scene', title: 'Secret vault', assetIds: ['ast_hidden_scene'], characterIds: [] }] }));
     const board = { id: 'board_one', assetId: 'ast_board', x: 0, y: 0, w: 100, z: 1 };
     const piece = { id: 'piece_one', assetId: 'ast_piece', builtin: null, x: 0, y: 0, w: 100, h: 100, z: 1, rotation: 0, layer: 'props', lockedToGrid: false };
     const grid = { cell: 44, offsetX: 0, offsetY: 0, visible: true, snap: true, color: '#ffffff33', unit: 'm' };
     const state = {
       board: [board], pieces: [piece],
-      tokens: [{ id: 'token_one', name: 'Face token', shape: 'round', allegiance: 'ally', ownerUserId: null, size: 'M', x: 0, y: 0, z: 1, assetId: 'ast_token', fill: null, hp: null, maxHp: null, dmOnly: false }],
+      tokens: [
+        { id: 'token_one', name: 'Face token', shape: 'round', allegiance: 'ally', ownerUserId: null, size: 'M', x: 0, y: 0, z: 1, assetId: 'ast_token', fill: null, hp: null, maxHp: null, dmOnly: false },
+        { id: 'secret_token', name: 'Secret basilisk', shape: 'round', allegiance: 'enemy', ownerUserId: null, size: 'M', x: 0, y: 0, z: 1, assetId: 'ast_hidden_token', fill: null, hp: null, maxHp: null, dmOnly: true },
+      ],
       mapTemplates: [{ id: 'saved', name: 'Saved encounter', createdAt: '', board: [{ ...board, assetId: 'ast_template_board' }], pieces: [{ ...piece, assetId: 'ast_template_piece' }], grid, mapMeta: { name: 'Encounter', areaTag: '' } }],
     };
     const statePath = path.join(campaignDir, '.runtime/state.json');
@@ -135,7 +144,7 @@ async function main(): Promise<void> {
       const manifest = path.join(campaignDir, 'assets', `${key}.json`);
       const bytes = Buffer.from(audio ? 'ID3 fixture audio' : 'fixture image bytes');
       await fs.writeFile(binary, bytes);
-      await fs.writeFile(manifest, JSON.stringify({ type: 'asset', schemaVersion: 2, id: `ast_${key}`, file, title: key, assetKind: audio ? 'document' : 'art', mime: audio ? 'audio/mpeg' : 'image/png', width: audio ? null : 100, height: audio ? null : 100, tags: [], dmOnly: false, ownerUsername: audio ? 'player' : 'admin', sharing: { scope: 'private', userIds: [] } }));
+      await fs.writeFile(manifest, JSON.stringify({ type: 'asset', schemaVersion: 2, id: `ast_${key}`, file, title: key, assetKind: audio ? 'document' : key === 'board' ? 'map' : 'art', mime: audio ? 'audio/mpeg' : 'image/png', width: audio ? null : 100, height: audio ? null : 100, tags: [], dmOnly: false, ownerUsername: audio || key.startsWith('hidden_') ? 'player' : 'admin', sharing: { scope: 'private', userIds: [] } }));
       assets.set(key, { binary, manifest, bytes });
     }
     await start();
@@ -240,7 +249,17 @@ async function main(): Promise<void> {
       assert.equal(await fs.readFile(statePath, 'utf8'), beforeReferences);
     }
     await assertReferences();
-    pass('all nine typed asset-reference locations refuse deletion without changing files or runtime');
+    pass('all typed asset-reference locations use readable names and refuse deletion without changing files or runtime');
+    for (const [key, category] of Object.entries({ hidden_token: 'token face', hidden_portrait: 'character portrait', hidden_sheet: 'character sheet', hidden_scene: 'chapter scene' })) {
+      const response = await remove(playerCookie, key);
+      assert.equal(response.status, 409);
+      const body = await response.json() as Message;
+      assert.equal(body.code, 'ASSET_IN_USE');
+      assert.ok(body.error.includes(`private ${category}`));
+      assert.doesNotMatch(body.error, /Secret|secret_|ast_/);
+      assert.deepEqual(await fs.readFile(assets.get(key)!.binary), assets.get(key)!.bytes);
+    }
+    pass('owner refusal messages reveal no hidden token, character, chapter or scene names');
     assert.equal((await remove(adminCookie, 'unused')).status, 204);
     await assert.rejects(fs.access(assets.get('unused')!.binary), { code: 'ENOENT' });
     await assert.rejects(fs.access(assets.get('unused')!.manifest), { code: 'ENOENT' });

@@ -23,7 +23,8 @@
     "image-regression": "tsx scripts/image-regression.ts",
     "server-transient-regression": "tsx scripts/server-transient-regression.ts",
     "maintenance-regression": "tsx scripts/maintenance-regression.ts",
-    "launcher-regression": "node scripts/launcher-regression.mjs"
+    "launcher-regression": "node scripts/launcher-regression.mjs",
+    "undo-regression": "tsx scripts/undo-regression.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13",

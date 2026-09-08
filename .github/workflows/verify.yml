@@ -24,6 +24,7 @@ jobs:
       - run: pnpm exec tsx scripts/auth-regression.ts
       - run: pnpm protocol-regression
       - run: pnpm session-regression
+      - run: pnpm undo-regression
       - run: pnpm server-transient-regression
       - run: pnpm image-regression
       - run: pnpm maintenance-regression
@@ -32,3 +33,4 @@ jobs:
       - run: pnpm exec tsx scripts/client-performance-regression.ts
       - run: pnpm exec tsx scripts/client-session-regression.ts
       - run: pnpm exec tsx scripts/client-resources-regression.ts
+      - run: pnpm exec tsx scripts/client-undo-regression.ts

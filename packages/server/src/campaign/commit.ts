@@ -331,6 +331,7 @@ export function mutateCampaign<T>(entry: CampaignEntry, action: (draft: Campaign
     runtime.state.mapTemplates = entry.runtime.state.mapTemplates;
     // ponytail: clone the campaign per command; copy-on-write if large campaigns make this measurable.
     const draft: CampaignEntry = {
+      boardGeneration: entry.boardGeneration ?? 0,
       store: structuredClone(entry.store),
       runtime,
       room: entry.room,
@@ -342,6 +343,7 @@ export function mutateCampaign<T>(entry: CampaignEntry, action: (draft: Campaign
     Object.assign(entry.store, draft.store);
     Object.assign(entry.runtime, draft.runtime);
     entry.media = draft.media;
+    entry.boardGeneration = draft.boardGeneration;
     // Publish outside ALS so sends cannot enqueue themselves again.
     for (const publish of ctx.publish) {
       try { publish(); } catch (err) { log.warn(`Campaign notification failed: ${String(err)}`); }

@@ -7,6 +7,7 @@ import { DocumentViewer } from './DocumentViewer';
 import { NoteEditor } from './NoteEditor';
 import { TokenEditor } from './TokenEditor';
 import { TokensPanel } from './TokensPanel';
+import { UndoControl } from './UndoControl';
 import { RollToasts } from './RollToasts';
 import { DiceOverlay } from './DiceOverlay';
 import { AudioDock } from './AudioDock';
@@ -183,6 +184,7 @@ export function TableLayout() {
         {/* Board area */}
         <div className="table-board flex-1 min-w-0 min-h-0 relative flex">
           <CanvasViewer />
+          <UndoControl />
           {openPanels.map((panel, i) => {
             if (panel.kind === 'doc') {
               return <DocumentViewer key={panel.panelId} panelId={panel.panelId} doc={panel.doc} stackIndex={i} />;

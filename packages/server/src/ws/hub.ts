@@ -9,8 +9,10 @@ import { log } from '../log.js';
 import { recordConnection, recordDisconnect } from '../metrics.js';
 import { handleMessage } from './handlers.js';
 import type { Role, ServerMessage, PresenceEntry } from '@vtt/shared';
+import type { UndoReceipt } from './undo.js';
 
 export interface WsSession {
+  undo?: UndoReceipt;
   id: string; // random session key for room membership
   ws: WebSocket;
   userId: string;
@@ -97,6 +99,7 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
     ws.on('close', () => {
       const campaignId = wsSession.campaignId;
       sessions.delete(sessId);
+      delete wsSession.undo;
       recordDisconnect(wsSession.userId);
 
       if (campaignId) {

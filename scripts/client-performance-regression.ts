@@ -81,7 +81,7 @@ async function main() {
   Object.assign(globalThis, { WebSocket: Socket });
   const state = useStore.getState();
   const snapshot: ServerSnapshotPayload = {
-    type: 'snapshot', campaign: { id: 'fixture', name: 'Fixture', description: '' }, board: [], uploadsLocked: false, mapLocked: false,
+    type: 'snapshot', boardGeneration: 0, campaign: { id: 'fixture', name: 'Fixture', description: '' }, board: [], uploadsLocked: false, mapLocked: false,
     presence: [], members: [], rollLog: [], assets: [], documents: [], myNotes: [], chapters: [], characters: [], media: null, tokens: [],
     grid: state.grid, pieces: [], aoes: [], initiative: state.initiative, mapMeta: state.mapMeta, features: state.features, templates: [],
   };

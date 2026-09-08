@@ -213,28 +213,29 @@ router.get('/:id/files/assets/:filename', requireMember(), asyncRoute(async (req
   res.sendFile(filePath);
 }));
 
-function assetUses(entry: NonNullable<ReturnType<typeof getCampaign>>, assetId: string): string[] {
+function assetUses(entry: NonNullable<ReturnType<typeof getCampaign>>, assetId: string, isDm: boolean): string[] {
   const uses: string[] = [];
   const { state } = entry.runtime;
-  for (const item of state.board) if (item.assetId === assetId) uses.push(`board item ${item.id}`);
-  for (const token of state.tokens) if (token.assetId === assetId) uses.push(`token face "${token.name}"`);
-  for (const piece of state.pieces) if (piece.assetId === assetId) uses.push(`map piece ${piece.id}`);
+  const asset = entry.store.assets.get(assetId)!;
+  for (const item of state.board) if (item.assetId === assetId) uses.push(asset.assetKind === 'map' ? 'current map background' : `board image "${asset.title}"`);
+  for (const token of state.tokens) if (token.assetId === assetId) uses.push(isDm || !token.dmOnly ? `token face "${token.name}"` : 'a private token face');
+  for (const piece of state.pieces) if (piece.assetId === assetId) uses.push(`map piece "${asset.title}" on the current map`);
   for (const template of state.mapTemplates) {
     if (template.board.some((item) => item.assetId === assetId)) uses.push(`saved map "${template.name}" (board)`);
     if (template.pieces.some((piece) => piece.assetId === assetId)) uses.push(`saved map "${template.name}" (pieces)`);
   }
   if (entry.store.meta.coverAssetId === assetId) uses.push('campaign cover');
   for (const character of entry.store.characters.values()) {
-    if (character.portraitAssetId === assetId) uses.push(`character portrait "${character.name}"`);
-    if (character.sheet?.sheetAssetId === assetId) uses.push(`character sheet "${character.name}"`);
+    if (character.portraitAssetId === assetId) uses.push(isDm ? `character portrait "${character.name}"` : 'a private character portrait');
+    if (character.sheet?.sheetAssetId === assetId) uses.push(isDm ? `character sheet "${character.name}"` : 'a private character sheet');
   }
   for (const chapter of entry.store.chapters.values()) {
     for (const scene of chapter.scenes) {
-      if (scene.assetIds.includes(assetId)) uses.push(`chapter "${chapter.title}", scene "${scene.title}"`);
+      if (scene.assetIds.includes(assetId)) uses.push(isDm ? `chapter "${chapter.title}", scene "${scene.title}"` : 'a private chapter scene');
     }
   }
   if (entry.media?.assetId === assetId) uses.push('table playback (stop it first)');
-  return uses;
+  return [...new Set(uses)];
 }
 
 // DELETE /api/campaigns/:id/assets/:assetId — owner or dm, only when unused.
@@ -264,7 +265,7 @@ router.delete('/:id/assets/:assetId', requireMember(), asyncRoute(async (req: Re
       return false;
     }
 
-    const uses = assetUses(draft, assetId);
+    const uses = assetUses(draft, assetId, isDm);
     if (uses.length) {
       res.status(409).json({ error: `Asset is used by ${uses.join('; ')}. Remove these references before deleting it.`, code: 'ASSET_IN_USE' });
       return false;

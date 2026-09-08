@@ -43,6 +43,7 @@ const areaKind = oneOf(['circle', 'cone', 'line', 'square']);
 const message = (required: Record<string, Validator>, optional: Record<string, Validator> = {}): Validator => object({ type: text(40, 1), ...required }, { requestId: isSafeId, ...optional });
 
 const schemas = {
+  undo: message({ receiptId: isSafeId }),
   join: message({ campaignId: isSafeId, protocolVersion: integer(1, 1000) }),
   ping: message({ sentAt: finite(0, Number.MAX_SAFE_INTEGER) }),
   measure: (value: unknown) => isRecord(value) && (value['kind'] === 'clear'

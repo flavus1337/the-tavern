@@ -142,6 +142,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
 
   return {
     type: 'snapshot',
+    boardGeneration: entry.boardGeneration ?? 0,
     campaign: {
       id: store.meta.id,
       name: store.meta.name,

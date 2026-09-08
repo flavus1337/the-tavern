@@ -9,6 +9,8 @@ import type { CampaignStore } from './loader.js';
 import type { CampaignRuntime } from './runtime.js';
 
 export interface CampaignEntry {
+  /** Transient guard for session-local Undo; resets when the process restarts. */
+  boardGeneration?: number;
   store: CampaignStore;
   runtime: CampaignRuntime;
   /** WS room: set of session IDs (managed by hub). */

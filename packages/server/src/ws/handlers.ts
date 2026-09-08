@@ -26,7 +26,7 @@ import { buildSnapshot, makeBoardItemView, makeTokenView, makePieceView, redactS
 import { broadcastDocuments } from './documents.js';
 import { canAccessShared, canControlToken, documentSharing, type Viewer } from './sharing.js';
 import { getCampaign } from '../campaign/registry.js';
-import { mutateCampaign } from '../campaign/commit.js';
+import { mutateCampaign, afterCampaignCommit } from '../campaign/commit.js';
 import { getRole } from '../auth/memberships.js';
 import { roll } from '../dice/roller.js';
 import { appendRollLog, persistState, persistTemplates } from '../campaign/runtime.js';
@@ -34,6 +34,8 @@ import type { Token, MapTemplate } from '../campaign/runtime.js';
 import { saveNote, deleteNote, saveAssetManifest, saveChapter, deleteChapter, saveCharacter } from '../campaign/writer.js';
 import { log } from '../log.js';
 import { count, duration } from '../metrics.js';
+import { CommandRejection } from './errors.js';
+import { AOE_MAX, boardChanged, captureUndo, completeUndo, restoreUndo } from './undo.js';
 import type { NoteEntity, NoteKind, Chapter } from '@vtt/shared';
 
 function viewerOf(session: WsSession): Viewer {
@@ -46,11 +48,7 @@ const BOARD_W_MAX = 8000;
 // Token footprint in grid cells by size — keep in sync with the client's TOKEN_CELLS.
 const TOKEN_CELLS: Record<'S' | 'M' | 'L' | 'H', number> = { S: 1, M: 1, L: 2, H: 3 };
 
-class CommandRejection extends Error {
-  constructor(readonly code: WsErrorCode, message: string, readonly fatal = false) { super(message); }
-}
-
-type CommandOutcome = Pick<ServerCommandAckPayload, 'entityId' | 'revision'>;
+type CommandOutcome = Pick<ServerCommandAckPayload, 'entityId' | 'revision' | 'undo'>;
 
 function sendError(_session: WsSession, code: WsErrorCode, message: string, fatal = false): never {
   throw new CommandRejection(code, message, fatal);
@@ -115,7 +113,23 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
     const entry = getCampaign(msg.type === 'join' ? msg.campaignId : session.campaignId!);
     if (!entry && msg.type !== 'join') throw new CommandRejection('UNKNOWN_CAMPAIGN', 'Campaign is unavailable');
     const result = entry && msg.type !== 'ping' && msg.type !== 'measure'
-      ? await mutateCampaign(entry, () => dispatchMessage(session, msg))
+      ? await mutateCampaign(entry, async (draft) => {
+          const candidate = captureUndo(session, msg, draft);
+          const outcome = await dispatchMessage(session, msg);
+          if (boardChanged(entry.runtime.state, draft.runtime.state) || msg.type === 'loadMapTemplate') {
+            // ponytail: any intervening board edit invalidates Undo; use per-entity
+            // generations only if disjoint edits need independent undo later.
+            draft.boardGeneration = (entry.boardGeneration ?? 0) + 1;
+            broadcast(draft.store.meta.id, { type: 'undoInvalidated', boardGeneration: draft.boardGeneration });
+            const receipt = candidate && completeUndo(candidate, draft);
+            if (receipt) {
+              afterCampaignCommit(() => { if (session.ws.readyState === 1) session.undo = receipt; });
+              return { ...outcome, undo: { receiptId: receipt.receiptId, label: receipt.label, boardGeneration: receipt.boardGeneration } };
+            }
+          }
+          if (msg.type === 'undo') afterCampaignCommit(() => { delete session.undo; });
+          return outcome;
+        })
       : await dispatchMessage(session, msg);
     if (isDurableMessage(msg)) send(session.ws, { type: 'commandAck', requestId: requestId!, ...result });
   } catch (err) {
@@ -136,6 +150,15 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
 
 async function dispatchMessage(session: WsSession, msg: ClientMessage): Promise<CommandOutcome | void> {
     switch (msg.type) {
+      case 'undo': {
+        const entry = getCampaign(session.campaignId!)!;
+        const collection = await restoreUndo(session, msg.receiptId, entry);
+        if (collection === 'board') broadcastBoardUpdated(session.campaignId!, entry);
+        else if (collection === 'tokens') broadcastTokensUpdated(session.campaignId!, entry);
+        else if (collection === 'pieces') broadcastPiecesUpdated(session.campaignId!, entry);
+        else broadcastAoesUpdated(session.campaignId!, entry);
+        break;
+      }
       case 'join':
         await handleJoin(session, msg);
         break;
@@ -1154,7 +1177,6 @@ function broadcastAoesUpdated(campaignId: string, entry: NonNullable<ReturnType<
   broadcast(campaignId, { type: 'aoesUpdated', aoes: entry.runtime.state.aoes });
 }
 
-const AOE_MAX = 100; // sanity cap so the board can't be flooded
 
 // Anyone at the table can place an AoE template (like a ruler), and it persists.
 async function handleAoeAdd(

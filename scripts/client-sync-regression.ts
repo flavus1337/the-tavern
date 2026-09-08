@@ -38,7 +38,7 @@ class Socket {
 Object.assign(globalThis, { WebSocket: Socket });
 const initial = useStore.getState();
 const snapshot: ServerSnapshotPayload = {
-  type: 'snapshot', campaign: { id: 'test', name: 'Test', description: '' }, board: [],
+  type: 'snapshot', boardGeneration: 0, campaign: { id: 'test', name: 'Test', description: '' }, board: [],
   uploadsLocked: false, mapLocked: false, presence: [], members: [], rollLog: [], assets: [],
   documents: [], myNotes: [], chapters: [], characters: [], media: null, tokens: [],
   grid: initial.grid, pieces: [], aoes: [], initiative: initial.initiative,
