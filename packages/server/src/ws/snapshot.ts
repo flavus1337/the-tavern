@@ -41,6 +41,7 @@ function makeTokenView(campaignId: string, token: Token, entry: CampaignEntry): 
   }
   return {
     id: token.id,
+    revision: token.revision ?? 0,
     name: token.name,
     shape: token.shape,
     allegiance: token.allegiance,
@@ -141,6 +142,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
 
   return {
     type: 'snapshot',
+    boardGeneration: entry.boardGeneration ?? 0,
     campaign: {
       id: store.meta.id,
       name: store.meta.name,
@@ -162,7 +164,7 @@ export function buildSnapshot(session: WsSession, entry: CampaignEntry): ServerS
           assetId: entry.media.assetId,
           action: entry.media.action,
           time: entry.media.time,
-          elapsedMs: Date.now() - entry.media.atMs,
+          atMs: entry.media.atMs,
         }
       : null,
     tokens,
@@ -192,7 +194,7 @@ function characterToWire(c: Character): CharacterView {
 export function chapterViews(store: CampaignStore): ChapterView[] {
   return [...store.chapters.values()]
     .sort((a, b) => a.order - b.order)
-    .map((c) => ({ id: c.id, title: c.title, order: c.order, summary: c.summary, body: c.body }));
+    .map((c) => ({ id: c.id, revision: c.revision ?? 0, title: c.title, order: c.order, summary: c.summary ?? '', body: c.body ?? '' }));
 }
 
 /** Character views — shared by the snapshot and charactersUpdated broadcasts. */
@@ -203,6 +205,7 @@ export function characterViews(store: CampaignStore): CharacterView[] {
 export function noteToWire(note: NoteEntity): Note {
   return {
     id: note.id,
+    revision: note.revision ?? 0,
     title: note.title,
     body: note.body,
     sharing: note.sharing,

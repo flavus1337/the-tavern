@@ -1,5 +1,6 @@
+import { useSaveCommand } from './SaveFeedback';
 import { useRef, type ChangeEvent, useState } from 'react';
-import type { AssetManifest, UploadAssetResponse, ClientMessage, Sharing } from '@vtt/shared';
+import type { AssetManifest, UploadAssetResponse, Sharing } from '@vtt/shared';
 import { api, apiUpload, ApiRequestError } from '../lib/api';
 import { useStore } from '../store';
 import { ScrollArea } from './ui/scroll-area';
@@ -7,9 +8,10 @@ import { SharePicker, ShareBadge } from './SharePicker';
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB (videos)
 
-export function DocumentsPanel() {
+export function DocumentsPanel({ search = '' }: { search?: string }) {
   const campaignId = useStore((s) => s.activeCampaignId);
-  const documents = useStore((s) => s.documents);
+  const allDocuments = useStore((s) => s.documents);
+  const documents = allDocuments.filter((doc) => doc.title.toLowerCase().includes(search.trim().toLowerCase()));
   const self = useStore((s) => s.self);
   const uploadsLocked = useStore((s) => s.uploadsLocked);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -19,11 +21,6 @@ export function DocumentsPanel() {
   const openAudioDock = useStore((s) => s.openAudioDock);
   const openPanels = useStore((s) => s.openPanels);
   const connection = useStore((s) => s.connection);
-
-  function setDocumentSharing(assetId: string, sharing: Sharing) {
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'setDocumentSharing', assetId, sharing });
-  }
 
   const isDm = self?.role === 'dm';
   const uploadBlocked = !isDm && uploadsLocked;
@@ -111,6 +108,7 @@ export function DocumentsPanel() {
           className="hidden"
           onChange={(e) => { void handleUpload(e); }}
         />
+        <p className="text-xs mt-2" style={{ color: 'var(--low)' }}>Private files are hidden from other players. The DM can access campaign files. Choose Share to change the player audience.</p>
         {error && (
           <p role="alert" style={{ fontSize: 12, color: 'var(--garnet)', marginTop: 6 }}>{error}</p>
         )}
@@ -122,8 +120,7 @@ export function DocumentsPanel() {
           {documents.length === 0 ? (
             /* Explainer — only when list is empty */
             <p style={{ fontSize: 13, color: 'var(--faint)', lineHeight: 1.6, textAlign: 'center', padding: '30px 10px' }}>
-              Upload a file — a character sheet, a handout — and only you see it until you{' '}
-              <em style={{ fontStyle: 'italic' }}>share it with the table.</em>
+              Upload a character sheet or handout. It stays hidden from other players until you share it; the DM can access it.
             </p>
           ) : (
             (() => {
@@ -140,10 +137,8 @@ export function DocumentsPanel() {
                   isActive={openPanels.some((p) => p.kind === 'doc' && p.doc.id === doc.id)}
                   canDelete={isDm || doc.ownerUsername === self?.username}
                   canShare={connection === 'open' && (isDm || doc.ownerUsername === self?.username)}
-                  sharedByOther={doc.ownerUsername !== self?.username}
                   onDelete={() => { void handleDelete(doc.id); }}
                   onView={() => (doc.mime.startsWith('audio/') ? openAudioDock(doc.id) : openDocPanel(doc))}
-                  onSetSharing={(s) => setDocumentSharing(doc.id, s)}
                 />
               );
               return (
@@ -176,14 +171,13 @@ interface DocumentItemProps {
   isActive: boolean;
   canDelete: boolean;
   canShare: boolean;
-  sharedByOther: boolean;
   onDelete: () => void;
   onView: () => void;
-  onSetSharing: (sharing: Sharing) => void;
 }
 
-function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedByOther, onDelete, onView, onSetSharing }: DocumentItemProps) {
+function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, onDelete, onView }: DocumentItemProps) {
   const [shareOpen, setShareOpen] = useState(false);
+  const save = useSaveCommand();
   const sharing: Sharing = doc.sharing ?? { scope: 'private', userIds: [] };
   const extLabel = doc.mime === 'application/pdf' ? 'PDF'
     : doc.mime.startsWith('audio/') ? 'Audio'
@@ -250,13 +244,7 @@ function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedBy
             <p style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--faint)' }}>
               {doc.ownerUsername ? `by ${doc.ownerUsername} · ${extLabel}` : extLabel}
             </p>
-            {sharedByOther ? (
-              <span style={{ fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--teal)', background: '#69b7a61a', padding: '2px 6px', borderRadius: 4, letterSpacing: '0.08em' }}>
-                shared
-              </span>
-            ) : (
-              <ShareBadge sharing={sharing} />
-            )}
+            <ShareBadge sharing={sharing} />
           </div>
         </div>
       </button>
@@ -267,15 +255,13 @@ function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedBy
           type="button"
           onClick={() => setShareOpen((o) => !o)}
           disabled={!canShare}
-          style={{ width: 28, height: 28, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: shareOpen ? 'var(--teal)' : canShare ? 'var(--low)' : 'var(--faint)', background: 'none', border: 'none', cursor: canShare ? 'pointer' : 'not-allowed', transition: 'all 0.12s', opacity: canShare ? 1 : 0.4 }}
+          style={{ padding: '0 5px', height: 28, fontSize: 12, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', color: shareOpen ? 'var(--teal)' : canShare ? 'var(--low)' : 'var(--faint)', background: 'none', border: 'none', cursor: canShare ? 'pointer' : 'not-allowed', transition: 'all 0.12s', opacity: canShare ? 1 : 0.4 }}
           onMouseEnter={(e) => { if (canShare) (e.currentTarget as HTMLElement).style.color = 'var(--teal)'; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = shareOpen ? 'var(--teal)' : 'var(--low)'; }}
           aria-label={`Change who can see ${doc.title}`}
-          title="Sharing"
+          title="Share file"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-            <path d="M8.7 10.7l6.6-3.4M8.7 13.3l6.6 3.4M21 5a3 3 0 11-6 0 3 3 0 016 0zM9 12a3 3 0 11-6 0 3 3 0 016 0zm12 7a3 3 0 11-6 0 3 3 0 016 0z" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          Share
         </button>
         <a
           href={`/api/campaigns/${campaignId}/files/assets/${doc.file}`}
@@ -311,7 +297,13 @@ function DocumentItem({ doc, campaignId, isActive, canDelete, canShare, sharedBy
 
     {shareOpen && canShare && (
       <div style={{ padding: '8px 12px 2px' }}>
-        <SharePicker sharing={sharing} onChange={onSetSharing} />
+        <p className="text-xs mb-2" style={{ color: 'var(--mid)' }}>Player audience · the DM can always access this file</p>
+        <fieldset disabled={save.saving || save.blocked}>
+          <SharePicker sharing={sharing} onChange={(value) => { void save.run({ type: 'setDocumentSharing', assetId: doc.id, sharing: value }); }} />
+        </fieldset>
+        {save.saving && <p role="status" className="text-xs mt-2">Saving audience…</p>}
+        {save.error && <p role="alert" className="text-xs mt-2" style={{ color: 'var(--garnet)' }}>{save.error.uncertain ? 'Sharing is unconfirmed. Reconnect and review the displayed audience.' : save.error.message}</p>}
+        {save.blocked && <button type="button" className="text-xs underline mt-2" disabled={!canShare} onClick={save.review}>I reviewed the audience; enable changes</button>}
       </div>
     )}
    </div>

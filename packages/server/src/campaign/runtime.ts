@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { log } from '../log.js';
-import { randomId, parseSharing } from '@vtt/shared';
+import { recoverCampaign, withCampaignFiles, writeCampaignFile, updateCampaignMemory } from './commit.js';
+import { randomId, parseSharing, object, list, text, finite, oneOf, nullable, isSafeId } from '@vtt/shared';
 import type { RollLogEntry, GridState, Sharing, MapPiece, MapMeta, AoeTemplate, TokenStatBlock, InitiativeState } from '@vtt/shared';
 
 export interface BoardItem {
@@ -16,6 +17,7 @@ export interface BoardItem {
 }
 
 export interface Token {
+  revision?: number;
   id: string;
   name: string;
   shape: 'round' | 'square';
@@ -86,20 +88,21 @@ export const EMPTY_INITIATIVE: InitiativeState = { active: false, round: 0, turn
 
 export interface CampaignRuntime {
   state: RuntimeState;
+  templatesStored: boolean;
   rollLog: RollLogEntry[];
   dir: string; // .runtime/ dir
-  /** serializes state.json writes so concurrent saves never interleave */
-  stateWriteQueue: Promise<void>;
-  /** rolls appended since the last compaction (drives jsonl rewrite) */
-  rollsAppendedSinceCompaction: number;
 }
 
 const MAX_ROLL_LOG = 200;
-// Rewrite rolls.jsonl down to the last MAX_ROLL_LOG after this many appends,
-// so the file cannot grow without bound across a long campaign.
-const ROLLS_COMPACTION_THRESHOLD = 500;
+
+const savedBoard = object({ id: isSafeId, assetId: isSafeId, x: finite(), y: finite(), w: finite(), z: finite() }, { playersCanMove: oneOf([true, false]) });
+const savedPiece = object({ id: isSafeId, x: finite(), y: finite(), w: finite(), h: finite(), rotation: finite(), z: finite(), layer: oneOf(['terrain', 'props']), lockedToGrid: oneOf([true, false]) }, { builtin: nullable(text(80)), assetId: nullable(isSafeId), imageUrl: nullable(text(8000)) });
+const savedGrid = object({ cell: finite(), offsetX: finite(), offsetY: finite(), visible: oneOf([true, false]), snap: oneOf([true, false]), color: text(80) }, { unit: oneOf(['m', 'ft']) });
+const savedMeta = object({ name: text(200), areaTag: text(200) });
+const savedTemplates = list(object({ id: isSafeId, name: text(80), createdAt: text(100), board: list(savedBoard, Number.MAX_SAFE_INTEGER), pieces: list(savedPiece, Number.MAX_SAFE_INTEGER), grid: savedGrid, mapMeta: savedMeta }), Number.MAX_SAFE_INTEGER);
 
 export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime> {
+  await recoverCampaign(campaignDir);
   const runtimeDir = path.join(campaignDir, '.runtime');
   await fs.mkdir(runtimeDir, { recursive: true });
 
@@ -118,10 +121,27 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     mapTemplates: [],
   };
   const statePath = path.join(runtimeDir, 'state.json');
+  let legacyTemplates = false;
+  let externalTemplates = false;
+  let stateExists = false;
   try {
     const raw = await fs.readFile(statePath, 'utf8');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const parsed = JSON.parse(raw) as Record<string, any>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid runtime state object');
+    stateExists = true;
+    legacyTemplates = Object.hasOwn(parsed, 'mapTemplates');
+    if (Object.hasOwn(parsed, 'mapTemplatesExternal') && parsed['mapTemplatesExternal'] !== true) throw new Error('invalid map template storage marker');
+    externalTemplates = parsed['mapTemplatesExternal'] === true;
+    for (const key of ['board', 'tokens', 'pieces', 'aoes', 'mapTemplates', 'sharedDocumentIds']) {
+      if (key in parsed && !Array.isArray(parsed[key])) throw new Error(`invalid runtime ${key}`);
+    }
+    for (const key of ['grid', 'initiative', 'mapMeta']) {
+      if (key in parsed && (!parsed[key] || typeof parsed[key] !== 'object' || Array.isArray(parsed[key]))) throw new Error(`invalid runtime ${key}`);
+    }
+    for (const key of ['uploadsLocked', 'mapLocked']) {
+      if (key in parsed && typeof parsed[key] !== 'boolean') throw new Error(`invalid runtime ${key}`);
+    }
 
     // Migration: legacy state.json with currentImageAssetId and no board.
     let board: BoardItem[];
@@ -144,11 +164,14 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
       board = [];
     }
 
+    if (Array.isArray(parsed['tokens']) && parsed['tokens'].some((token: Token) => token.revision !== undefined && (!Number.isSafeInteger(token.revision) || token.revision < 0))) throw new Error('invalid token revision');
+
     // Lenient migration: tokens and grid may be absent in old state.json files;
     // pre-v5 tokens have no `sharing` field → default to private control.
     const tokens: Token[] = Array.isArray(parsed['tokens'])
       ? (parsed['tokens'] as Token[]).map((t) => ({
           ...t,
+          revision: t.revision ?? 0,
           sharing: parseSharing((t as { sharing?: unknown }).sharing),
           conditions: Array.isArray((t as { conditions?: unknown }).conditions)
             ? ((t as { conditions: unknown[] }).conditions.filter((c) => typeof c === 'string') as string[])
@@ -194,9 +217,24 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
       mapMeta,
       mapTemplates: Array.isArray(parsed['mapTemplates']) ? (parsed['mapTemplates'] as MapTemplate[]) : [],
     };
-  } catch {
-    // Missing is fine.
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`could not load runtime state: ${statePath}`, { cause: err });
   }
+
+  const templatesPath = path.join(runtimeDir, 'map-templates.json');
+  let archiveExists = false;
+  try {
+    const saved: unknown = JSON.parse(await fs.readFile(templatesPath, 'utf8'));
+    if (!object({ schemaVersion: oneOf([1]), templates: savedTemplates })(saved)) throw new Error('invalid saved map templates');
+    if (legacyTemplates) throw new Error('saved map templates exist in both runtime files');
+    state.mapTemplates = (saved as { templates: MapTemplate[] }).templates;
+    archiveExists = true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`could not load saved map templates: ${templatesPath}`, { cause: err });
+    if (externalTemplates) throw new Error(`missing saved map templates: ${templatesPath}`, { cause: err });
+    if (!savedTemplates(state.mapTemplates)) throw new Error(`invalid legacy saved map templates: ${statePath}`);
+  }
+  if (archiveExists && !stateExists) throw new Error(`missing runtime state for saved map templates: ${statePath}`);
 
   // Load last 200 lines from rolls.jsonl.
   const rollsPath = path.join(runtimeDir, 'rolls.jsonl');
@@ -206,65 +244,55 @@ export async function loadRuntime(campaignDir: string): Promise<CampaignRuntime>
     const lines = raw.split('\n').filter((l) => l.trim().length > 0);
     const last200 = lines.slice(-MAX_ROLL_LOG);
     for (const line of last200) {
-      try {
-        const entry = JSON.parse(line) as RollLogEntry;
-        rollLog.push(entry);
-      } catch {
-        log.warn(`Skipping malformed roll log line`);
-      }
+      const entry = JSON.parse(line) as RollLogEntry;
+      if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string') throw new Error('invalid roll log entry');
+      rollLog.push(entry);
     }
-  } catch {
-    // Missing is fine.
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`could not load roll log: ${rollsPath}`, { cause: err });
   }
 
-  return {
+  const runtime: CampaignRuntime = {
     state,
+    templatesStored: externalTemplates && archiveExists,
     rollLog,
     dir: runtimeDir,
-    stateWriteQueue: Promise.resolve(),
-    rollsAppendedSinceCompaction: 0,
   };
+  // Validate all runtime files before migrating either one. The existing journal
+  // restores both files if migration fails or the process stops midway through.
+  if (legacyTemplates || archiveExists && !externalTemplates) await persistTemplates(runtime);
+  return runtime;
 }
 
-export function persistState(runtime: CampaignRuntime): Promise<void> {
-  // Serialize writes through a per-runtime queue so two near-simultaneous saves
-  // never write the shared tmp file concurrently (which could corrupt it). Each
-  // write snapshots the latest in-memory state at write time.
-  runtime.stateWriteQueue = runtime.stateWriteQueue
-    .then(async () => {
-      const statePath = path.join(runtime.dir, 'state.json');
-      const tmpPath = statePath + '.tmp';
-      await fs.writeFile(tmpPath, JSON.stringify(runtime.state, null, 2), 'utf8');
-      await fs.rename(tmpPath, statePath);
-    })
-    .catch((err: unknown) => {
-      log.error(`Failed to persist state for ${runtime.dir}: ${String(err)}`);
+function stateJson(runtime: CampaignRuntime): string {
+  const { mapTemplates: _templates, ...state } = runtime.state;
+  return JSON.stringify({ ...state, mapTemplatesExternal: true }, null, 2);
+}
+
+export async function persistState(runtime: CampaignRuntime): Promise<void> {
+  await withCampaignFiles(path.dirname(runtime.dir), async () => {
+    if (!runtime.templatesStored) await persistTemplates(runtime);
+    else await writeCampaignFile(path.dirname(runtime.dir), path.join(runtime.dir, 'state.json'), stateJson(runtime));
+  });
+}
+
+export async function persistTemplates(runtime: CampaignRuntime): Promise<void> {
+  await withCampaignFiles(path.dirname(runtime.dir), async () => {
+    await writeCampaignFile(path.dirname(runtime.dir), path.join(runtime.dir, 'map-templates.json'), JSON.stringify({ schemaVersion: 1, templates: runtime.state.mapTemplates }, null, 2));
+    // The marker makes a missing archive distinguishable from a new campaign.
+    if (!runtime.templatesStored) await writeCampaignFile(path.dirname(runtime.dir), path.join(runtime.dir, 'state.json'), stateJson(runtime));
+    updateCampaignMemory(() => { runtime.templatesStored = true; });
+  });
+}
+
+export async function appendRollLog(runtime: CampaignRuntime, entry: RollLogEntry): Promise<void> {
+  await withCampaignFiles(path.dirname(runtime.dir), async () => {
+    // The log is already bounded to 200 entries. Replacing it atomically avoids a
+    // separate append/compaction race and makes rolls recoverable with other files.
+    const rollLog = [...runtime.rollLog, entry].slice(-MAX_ROLL_LOG);
+    await writeCampaignFile(path.dirname(runtime.dir), path.join(runtime.dir, 'rolls.jsonl'), rollLog.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    updateCampaignMemory(() => {
+      runtime.rollLog = rollLog;
     });
-  return runtime.stateWriteQueue;
-}
-
-export async function appendRollLog(
-  runtime: CampaignRuntime,
-  entry: RollLogEntry,
-): Promise<void> {
-  runtime.rollLog.push(entry);
-  if (runtime.rollLog.length > MAX_ROLL_LOG) {
-    runtime.rollLog.splice(0, runtime.rollLog.length - MAX_ROLL_LOG);
-  }
-
-  const rollsPath = path.join(runtime.dir, 'rolls.jsonl');
-
-  // Periodically compact the append-only log down to the last MAX_ROLL_LOG
-  // entries so the file cannot grow without bound.
-  runtime.rollsAppendedSinceCompaction += 1;
-  if (runtime.rollsAppendedSinceCompaction >= ROLLS_COMPACTION_THRESHOLD) {
-    runtime.rollsAppendedSinceCompaction = 0;
-    const tmpPath = rollsPath + '.tmp';
-    const content = runtime.rollLog.map((e) => JSON.stringify(e)).join('\n') + '\n';
-    await fs.writeFile(tmpPath, content, 'utf8');
-    await fs.rename(tmpPath, rollsPath);
-    return;
-  }
-
-  await fs.appendFile(rollsPath, JSON.stringify(entry) + '\n', 'utf8');
+  });
 }

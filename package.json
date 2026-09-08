@@ -2,12 +2,29 @@
   "name": "roll20-alternative",
   "private": true,
   "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "qs": "6.16.0",
+      "express>body-parser": "1.20.6"
+    }
+  },
   "scripts": {
     "dev": "concurrently \"pnpm --filter @vtt/server dev\" \"pnpm --filter @vtt/client dev\"",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "smoke": "tsx scripts/smoke-test.ts",
-    "start": "node packages/server/dist/index.js"
+    "start": "node packages/server/dist/index.js",
+    "persistence-regression": "tsx scripts/persistence-regression.ts",
+    "protocol-regression": "tsx scripts/protocol-regression.ts",
+    "session-regression": "tsx scripts/session-regression.ts",
+    "image-regression": "tsx scripts/image-regression.ts",
+    "server-transient-regression": "tsx scripts/server-transient-regression.ts",
+    "maintenance-regression": "tsx scripts/maintenance-regression.ts",
+    "launcher-regression": "node scripts/launcher-regression.mjs",
+    "undo-regression": "tsx scripts/undo-regression.ts"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13",

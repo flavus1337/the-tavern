@@ -1,16 +1,13 @@
 import { useRef, useState, type ChangeEvent } from 'react';
-import type { ClientMessage, UploadAssetResponse } from '@vtt/shared';
+import type { UploadAssetResponse } from '@vtt/shared';
 import { useStore } from '../../store';
 import type { GenKind } from '../../store';
 import { api, apiUpload, ApiRequestError } from '../../lib/api';
 import { Button } from '../ui/button';
 import { INK_LIBRARY } from '../../lib/inkArt';
 import { centredPlacement } from '../../lib/view';
+import { SaveFeedback, useSaveCommand } from '../SaveFeedback';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 interface GenImage { base64: string; mimeType: string }
 const STYLE_CHIPS: Record<GenKind, string[]> = {
@@ -44,9 +41,29 @@ export function GenDialog() {
   const [sel, setSel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const busy = useRef(false);
+  const save = useSaveCommand();
+  const [saved, setSaved] = useState<{ asset: UploadAssetResponse['asset']; generated: boolean; placed: boolean } | null>(null);
+  const working = phase === 'saving' || phase === 'gen';
+
+  async function finishPlacement(value: NonNullable<typeof saved>) {
+    if (kind === 'background') {
+      if (!value.placed) {
+        const w = 40 * grid.cell;
+        const p = value.generated ? centredPlacement(w, w, { cell: grid.cell, offsetX: 0, offsetY: 0 }) : { x: 0, y: 0 };
+        if (!await save.run({ type: 'boardAdd', assetId: value.asset.id, x: p.x, y: p.y, ...(value.generated ? { w } : {}) })) return;
+        value = { ...value, placed: true };
+        setSaved(value);
+      }
+      if (value.generated && !await save.run({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } })) return;
+    }
+    close(null);
+  }
+
 
   async function generate() {
-    if (!campaignId || prompt.trim() === '') return;
+    if (!campaignId || prompt.trim() === '' || busy.current || saved) return;
+    busy.current = true;
     setPhase('gen');
     setError(null);
     try {
@@ -57,7 +74,7 @@ export function GenDialog() {
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Generation failed');
       setPhase('idle');
-    }
+    } finally { busy.current = false; }
   }
 
   async function commitAsset(base64: string): Promise<UploadAssetResponse['asset'] | null> {
@@ -71,40 +88,41 @@ export function GenDialog() {
 
   async function useSelected() {
     const img = images[sel];
-    if (!img) return;
+    if ((!img && !saved) || busy.current || save.blocked) return;
+    busy.current = true;
     setPhase('saving');
     setError(null);
     try {
-      const asset = await commitAsset(img.base64);
-      if (asset && kind === 'background') {
-        // Scale the MAP (not the grid) to 40 cells wide and drop it centred in
-        // the current view, grid-aligned; keep the grid clearly visible.
-        const w = 40 * grid.cell;
-        const p = centredPlacement(w, w);
-        sendWs({ type: 'boardAdd', assetId: asset.id, x: p.x, y: p.y, w });
-        sendWs({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
+      let value = saved;
+      if (!value && img) {
+        const asset = await commitAsset(img.base64);
+        if (!asset) return;
+        value = { asset, generated: true, placed: false };
+        setSaved(value);
       }
-      close(null); // prop assets appear in the palette via assetsUpdated
+      if (value) await finishPlacement(value);
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Save failed');
-      setPhase('done');
-    }
+    } finally { busy.current = false; setPhase('done'); }
   }
 
   async function handleUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !campaignId) return;
+    if (!file || !campaignId || busy.current || saved) return;
+    busy.current = true;
+    setPhase('saving');
     setError(null);
     try {
       const res = await apiUpload<UploadAssetResponse>(`/api/campaigns/${campaignId}/assets`, file, {
         kind: kind === 'background' ? 'map' : 'token',
         ...(kind === 'prop' ? { category: category.trim() || 'Uploads' } : {}),
       });
-      if (kind === 'background') sendWs({ type: 'boardAdd', assetId: res.asset.id, x: 0, y: 0 });
-      close(null);
+      const value = { asset: res.asset, generated: false, placed: false };
+      setSaved(value);
+      await finishPlacement(value);
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Upload failed');
-    }
+    } finally { busy.current = false; setPhase('done'); }
   }
 
   const title = kind === 'background' ? 'New background' : 'New prop';
@@ -115,7 +133,7 @@ export function GenDialog() {
   return (
     <div
       style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000000a8', backdropFilter: 'blur(2px)' }}
-      onMouseDown={(e) => { if (e.target === e.currentTarget) close(null); }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !working) close(null); }}
     >
       <div
         style={{
@@ -129,7 +147,7 @@ export function GenDialog() {
             <svg viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="1.6" className="w-4 h-4"><rect x="3" y="4" width="18" height="16" rx="2.5" /><circle cx="8.5" cy="9.5" r="1.8" fill="var(--gold)" /><path d="M4 18l5-5 4 3 3-3 4 4" strokeLinejoin="round" /></svg>
             {title}
           </span>
-          <button type="button" onClick={() => close(null)} aria-label="Close" style={{ color: 'var(--low)', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <button type="button" onClick={() => close(null)} disabled={working} aria-label="Close" style={{ color: 'var(--low)', background: 'none', border: 'none', cursor: 'pointer' }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><path d="M18 6 6 18M6 6l12 12" strokeLinecap="round" /></svg>
           </button>
         </div>
@@ -141,7 +159,7 @@ export function GenDialog() {
             <div className="flex items-center gap-2">
               <span className="eyebrow shrink-0">Category</span>
               <input
-                list="gen-categories"
+                list="gen-categories" disabled={working || !!saved}
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 placeholder="e.g. Nature, Monsters…"
@@ -172,7 +190,7 @@ export function GenDialog() {
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              disabled={!enabled}
+              disabled={!enabled || working || !!saved}
               rows={3}
               className="w-full mt-1.5 px-3 py-2 text-sm rounded-[9px] resize-none focus:outline-none"
               style={{ background: '#100c0a', border: '1px solid var(--border)', color: 'var(--hi)', caretColor: 'var(--gold)' }}
@@ -194,7 +212,7 @@ export function GenDialog() {
             <button
               type="button"
               onClick={generate}
-              disabled={!enabled || phase === 'gen' || phase === 'saving'}
+              disabled={!enabled || working || !!saved}
               className="w-full mt-2.5 py-2.5 rounded-[9px] text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
               style={{ background: 'var(--ember)', color: 'var(--ink)', border: 'none', cursor: 'pointer' }}
             >
@@ -213,7 +231,7 @@ export function GenDialog() {
                     : images.map((img, i) => {
                         const on = sel === i;
                         return (
-                          <button key={i} type="button" onClick={() => setSel(i)}
+                          <button key={i} type="button" disabled={working || !!saved} onClick={() => setSel(i)}
                             style={{
                               position: 'relative', aspectRatio: kind === 'background' ? '16/10' : '1/1', borderRadius: 9, overflow: 'hidden', cursor: 'pointer', padding: 0,
                               border: `2px solid ${on ? 'var(--ember)' : 'var(--border)'}`,
@@ -226,8 +244,8 @@ export function GenDialog() {
                         );
                       })}
                 </div>
-                {phase !== 'gen' && images.length > 0 && (
-                  <Button className="w-full mt-2.5" onClick={useSelected} disabled={phase === 'saving'}>
+                {phase !== 'gen' && images.length > 0 && !saved && (
+                  <Button className="w-full mt-2.5" onClick={useSelected} disabled={phase === 'saving' || save.blocked}>
                     {phase === 'saving' ? 'Saving…' : kind === 'background' ? 'Use as background' : 'Add to palette'}
                   </Button>
                 )}
@@ -235,6 +253,11 @@ export function GenDialog() {
             )}
           </div>
 
+          <SaveFeedback save={save} conflicts={[]} latest={{}} onUseTable={() => {}} onKeepChanges={() => {}} />
+          {saved && <div className="space-y-2 text-sm" style={{ color: 'var(--mid)' }}>
+            <p>The image is saved in the library. {saved.placed ? 'Placement is confirmed; grid setup remains.' : 'Check the map before retrying placement.'}</p>
+            <Button onClick={useSelected} disabled={working || save.blocked}>{working ? 'Saving…' : saved.placed ? 'Finish grid setup' : 'Place saved image'}</Button>
+          </div>}
           {error && <p role="alert" className="text-xs" style={{ color: 'var(--garnet)' }}>{error}</p>}
 
           {/* Upload fallback */}
@@ -246,6 +269,7 @@ export function GenDialog() {
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
+            disabled={working || !!saved}
             className="w-full py-3 rounded-[10px] flex flex-col items-center gap-1"
             style={{ border: `1px dashed ${enabled ? 'var(--border)' : 'var(--ember)'}`, background: enabled ? 'transparent' : '#e08a4b10', color: 'var(--mid)', cursor: 'pointer' }}
           >

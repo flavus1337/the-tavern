@@ -52,7 +52,7 @@ function stylePrompt(kind: GenKind, subject: string): string {
  * Generate `n` candidate images for a subject via Gemini. Throws on misconfig
  * or provider error — callers map to HTTP 4xx/5xx.
  */
-export async function generateImages(kind: GenKind, subject: string, n: number): Promise<GeneratedImage[]> {
+export async function generateImages(kind: GenKind, subject: string, n: number, signal: AbortSignal): Promise<GeneratedImage[]> {
   if (!config.LLM_API_KEY) {
     throw Object.assign(new Error('Image generation is not configured (LLM_API_KEY unset)'), { code: 'GEN_DISABLED' });
   }
@@ -60,7 +60,7 @@ export async function generateImages(kind: GenKind, subject: string, n: number):
   const ref = styleRef(kind);
   // N independent calls — the image model returns one image per call.
   const results = await Promise.all(
-    Array.from({ length: n }, (_, i) => geminiGenerateOne(prompt, ref).catch((e: unknown) => {
+    Array.from({ length: n }, (_, i) => geminiGenerateOne(prompt, ref, signal).catch((e: unknown) => {
       log.warn(`imagegen take ${i} failed: ${String(e)}`);
       return null;
     })),
@@ -76,7 +76,7 @@ export async function generateImages(kind: GenKind, subject: string, n: number):
 // image data in candidates[].content.parts[].inlineData.
 const GEMINI_MODEL = process.env['LLM_IMAGE_MODEL'] ?? 'gemini-2.5-flash-image';
 
-async function geminiGenerateOne(prompt: string, ref: string | null): Promise<GeneratedImage> {
+async function geminiGenerateOne(prompt: string, ref: string | null, signal: AbortSignal): Promise<GeneratedImage> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${config.LLM_API_KEY}`;
   // With a reference, copy its art style (not its content); otherwise prompt-only.
   const parts = ref
@@ -87,6 +87,7 @@ async function geminiGenerateOne(prompt: string, ref: string | null): Promise<Ge
     : [{ text: prompt }];
   const res = await fetch(url, {
     method: 'POST',
+    signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts }],

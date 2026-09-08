@@ -1,12 +1,9 @@
-import type { ClientMessage, InitiativeState, InitiativeEntry } from '@vtt/shared';
+import { sendWs } from '../ws/connection';
+import type { InitiativeState, InitiativeEntry } from '@vtt/shared';
 import { randomId } from '@vtt/shared';
 import { useStore } from '../store';
 import { sortedInitiative, activeEntry } from '../lib/initiative';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 /**
  * Initiative + turn tracker. The turn order is visible to everyone; only the DM

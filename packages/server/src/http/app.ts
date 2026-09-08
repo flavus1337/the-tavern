@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
+import { validateId } from './validate.js';
 import { log } from '../log.js';
 import { requireAuth } from '../auth/middleware.js';
 import { previewInvite, redeemInvite } from '../auth/invites.js';
@@ -12,9 +13,11 @@ import campaignsRouter from './campaigns.js';
 import uploadRouter from './upload.js';
 import generateRouter from './generate.js';
 import type { RedeemInviteResponse } from '@vtt/shared';
+import { asyncRoute } from './asyncRoute.js';
 
 export function createApp(): express.Application {
   const app = express();
+  app.param('token', validateId);
 
   app.set('trust proxy', 1);
   // Image generation routes carry base64 bodies and bring their own larger JSON
@@ -43,9 +46,9 @@ export function createApp(): express.Application {
   });
 
   // Invite redeem (auth required).
-  app.post('/api/invites/:token/redeem', requireAuth, (req: Request, res: Response) => {
+  app.post('/api/invites/:token/redeem', requireAuth, asyncRoute(async (req: Request, res: Response) => {
     const token = param(req.params['token']);
-    const result = redeemInvite(token, req.user!.id);
+    const result = await redeemInvite(token, req.user!.id);
     if (!result.ok) {
       const status =
         result.reason === 'expired' || result.reason === 'exhausted' || result.reason === 'revoked'
@@ -56,7 +59,7 @@ export function createApp(): express.Application {
     }
     const body: RedeemInviteResponse = { joinedCampaignId: result.campaignId };
     res.json(body);
-  });
+  }));
 
   // Campaigns (includes file serving and asset management).
   app.use('/api/campaigns', campaignsRouter);
@@ -82,18 +85,23 @@ export function createApp(): express.Application {
   // instead of an unhandled rejection (which would crash the single process).
   // (Express forwards errors from sync throws and from `next(err)`.)
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (res.headersSent) { _next(err); return; }
     // Map known client errors (oversized body, multer file-size) to their real
     // status; everything else is a 500. Either way the process keeps running.
     const code = (err as { type?: string; code?: string } | null)?.type ?? (err as { code?: string } | null)?.code;
     const tooLarge = code === 'entity.too.large' || code === 'LIMIT_FILE_SIZE';
-    if (!tooLarge) {
-      log.error(`Unhandled route error: ${err instanceof Error ? err.stack : String(err)}`);
+    const malformedJson = code === 'entity.parse.failed';
+    const status = (err as { status?: number } | null)?.status;
+    const clientError = typeof status === 'number' && status >= 400 && status < 500;
+    if (!tooLarge && !malformedJson && !clientError) {
+      log.error(`Request failed: ${err instanceof Error ? err.stack : String(err)}`);
     }
-    if (!res.headersSent) {
-      res
-        .status(tooLarge ? 413 : 500)
-        .json({ error: tooLarge ? 'Payload too large' : 'Internal server error' });
-    }
+    res
+      .status(tooLarge ? 413 : malformedJson ? 400 : clientError ? status : 500)
+      .json({ error: tooLarge ? 'Payload too large' : malformedJson ? 'Invalid JSON body' :
+        clientError && err instanceof Error ? err.message : 'Internal server error',
+        ...(clientError && typeof code === 'string' ? { code } : {}),
+      });
   });
 
   return app;

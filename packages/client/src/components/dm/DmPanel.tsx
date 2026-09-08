@@ -1,18 +1,20 @@
-import { useState } from 'react';
-import type { ClientMessage, GridState } from '@vtt/shared';
+import { sendWs } from '../../ws/connection';
+import { useEffect, useState } from 'react';
+import type { GridState } from '@vtt/shared';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { AssetPicker } from './AssetPicker';
 import { InviteManager } from './InviteManager';
 import { ChaptersPanel } from './ChaptersPanel';
 import { useStore } from '../../store';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 export function DmPanel() {
   const [tab, setTab] = useState<'chapters' | 'assets' | 'board' | 'invites'>('chapters');
+  useEffect(() => {
+    const selectTab = (event: Event) => { if ((event as CustomEvent).detail === 'invites') setTab('invites'); };
+    window.addEventListener('vtt:dm-tab', selectTab);
+    return () => window.removeEventListener('vtt:dm-tab', selectTab);
+  }, []);
   const uploadsLocked = useStore((s) => s.uploadsLocked);
   const connection = useStore((s) => s.connection);
 
@@ -21,16 +23,14 @@ export function DmPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="flex flex-col h-full">
       <div className="p-3 border-b border-[var(--border)] space-y-2">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <TabsList className="w-full">
+          <TabsList label="Dungeon master tools" className="w-full">
             <TabsTrigger value="chapters">Chapters</TabsTrigger>
-            <TabsTrigger value="assets">Assets</TabsTrigger>
+            <TabsTrigger value="assets">Library</TabsTrigger>
             <TabsTrigger value="board">Board</TabsTrigger>
             <TabsTrigger value="invites">Invites</TabsTrigger>
           </TabsList>
-        </Tabs>
         {/* Upload lock toggle */}
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <button
@@ -55,12 +55,12 @@ export function DmPanel() {
         </label>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {tab === 'chapters' && <ChaptersPanel />}
-        {tab === 'assets' && <AssetPicker />}
-        {tab === 'board' && <BoardControls />}
-        {tab === 'invites' && <InviteManager />}
+        <TabsContent value="chapters"><ChaptersPanel /></TabsContent>
+        <TabsContent value="assets"><AssetPicker /></TabsContent>
+        <TabsContent value="board"><BoardControls /></TabsContent>
+        <TabsContent value="invites"><InviteManager /></TabsContent>
       </div>
-    </div>
+    </Tabs>
   );
 }
 

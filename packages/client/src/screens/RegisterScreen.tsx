@@ -6,7 +6,8 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { D20Logo } from '../components/D20Logo';
-import loginHero from '../assets/login-hero.png';
+import { restoreCampaign } from '../lib/navigation';
+import loginHero from '../assets/login-hero.webp';
 
 // Shared hero/card layout wrapper. Defined at module scope — defining it inside
 // the screen would create a new component type on every render, remounting the
@@ -62,7 +63,6 @@ export function RegisterScreen() {
   const setRoute = useStore((s) => s.setRoute);
   const setUser = useStore((s) => s.setUser);
   const setCampaigns = useStore((s) => s.setCampaigns);
-  const setActiveCampaignId = useStore((s) => s.setActiveCampaignId);
   const clearInviteToken = useStore((s) => s.clearInviteToken);
 
   const [preview, setPreview] = useState<InvitePreviewResponse | null>(null);
@@ -110,14 +110,14 @@ export function RegisterScreen() {
     try {
       const body: RegisterRequest = { username, password, inviteToken };
       const res = await api.post<RegisterResponse>('/api/auth/register', body);
+      useStore.getState().resetTable();
       setUser(res.user);
 
       const campaigns = await api.get<CampaignListItem[]>('/api/campaigns');
       setCampaigns(campaigns);
 
       clearInviteToken();
-      setActiveCampaignId(res.joinedCampaignId);
-      setRoute('lobby');
+      restoreCampaign(campaigns, res.joinedCampaignId);
     } catch (err) {
       if (err instanceof ApiRequestError) {
         setError(err.message);

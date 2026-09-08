@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { useFrameState } from '../lib/frame';
+import { renderPdfPage } from '../lib/pdfPage';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -14,7 +16,7 @@ export function PdfView({ url, title }: { url: string; title: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [width, setWidth] = useState(0);
+  const [width, widthFrame] = useFrameState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,14 +44,14 @@ export function PdfView({ url, title }: { url: string; title: string }) {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    setWidth(el.clientWidth);
+    widthFrame.set(el.clientWidth);
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width;
-      if (w) setWidth(Math.floor(w));
+      if (w) widthFrame.set(Math.floor(w));
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    return () => { ro.disconnect(); widthFrame.cancel(); };
+  }, [widthFrame]);
 
   return (
     <div
@@ -76,7 +78,7 @@ export function PdfView({ url, title }: { url: string; title: string }) {
       {pdf && width > 0 && (
         <div className="flex flex-col items-center gap-3 p-3">
           {Array.from({ length: pdf.numPages }, (_, i) => (
-            <PdfPage key={i + 1} pdf={pdf} pageNumber={i + 1} width={Math.min(width - 24, 1100)} />
+            <PdfPage key={i + 1} pdf={pdf} pageNumber={i + 1} width={Math.max(1, Math.min(width - 24, 1100))} />
           ))}
         </div>
       )}
@@ -86,68 +88,38 @@ export function PdfView({ url, title }: { url: string; title: string }) {
 
 function PdfPage({ pdf, pageNumber, width }: { pdf: PDFDocumentProxy; pageNumber: number; width: number }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [visible, setVisible] = useState(pageNumber <= 2); // first pages render eagerly
-  const [aspect, setAspect] = useState(11 / 8.5); // letter portrait until measured
+  const canvasHostRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [aspect, setAspect] = useState(11 / 8.5);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (visible) return;
     const el = wrapperRef.current;
     if (!el) return;
+    // Use the viewport and its ancestor clipping: DocumentViewer owns scrolling,
+    // while PdfView's own overflow element can grow to the full document height.
     const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setVisible(true);
-          io.disconnect();
-        }
-      },
-      { rootMargin: '800px' },
+      (entries) => setVisible(entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: '500px' },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [visible]);
+  }, []);
 
   useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const page = await pdf.getPage(pageNumber);
-        if (cancelled) return;
-        const base = page.getViewport({ scale: 1 });
-        setAspect(base.height / base.width);
-        const scale = width / base.width;
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const viewport = page.getViewport({ scale: scale * dpr });
-
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        await page.render({ canvas, canvasContext: ctx, viewport }).promise;
-      } catch {
-        // Page render errors are non-fatal; the placeholder stays.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    if (!visible || !canvasHostRef.current) return;
+    setFailed(false);
+    const render = renderPdfPage(pdf, pageNumber, width, canvasHostRef.current, setAspect, () => setFailed(true));
+    return () => render.cancel();
   }, [visible, pdf, pageNumber, width]);
 
   return (
-    <div
-      ref={wrapperRef}
-      className="bg-white rounded shadow-lg"
-      style={{ width, minHeight: visible ? undefined : width * aspect }}
-    >
-      <canvas ref={canvasRef} className="block rounded" aria-label={`Page ${pageNumber}`} />
+    <div ref={wrapperRef} className="bg-white rounded shadow-lg relative shrink-0"
+      style={{ width, height: width * aspect }}>
+      <div ref={canvasHostRef} />
+      {failed && <p role="status" className="absolute inset-0 flex items-center justify-center p-4 text-sm text-stone-700">
+        Page {pageNumber} could not be rendered. Scroll away and back to retry, or download the PDF.
+      </p>}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { RollLogEntry, RollPart } from '@vtt/shared';
 import { useStore } from '../store';
 import type { DiceScene, DieTheme } from '../lib/dice3d';
+import { diceDelay, countDiceTotal } from '../lib/dicePlayback';
 import { diceGrid, DICE_SPACING, DICE_ROWGAP, DICE_PX_PER_UNIT } from '../lib/diceLayout';
 
 const DIE_THEME: DieTheme = 'bone';
@@ -59,135 +60,119 @@ function plan(entry: RollLogEntry): Plan | null {
   return { sides: primary.sides, finals, keptIndex, dropIndices, pairs, rows, total: entry.total, crit, fumble };
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+interface DiceRun { id: string; controller: AbortController; scene: DiceScene | null }
 
-/**
- * BG3-style shared roll overlay: dims the room, spins a real 3D die in place,
- * tallies modifiers one row at a time, counts up the total, and flashes a
- * crit/fumble flourish. Driven entirely off the server-resolved RollLogEntry,
- * so the die settles on the true value. Plays for every received roll (private
- * rolls only reach the DM, so only they see those).
- */
+/** Server results are always in the log. Cinematic presentation is optional. */
 export function DiceOverlay() {
   const rollQueue = useStore((s) => s.rollQueue);
-  const shiftRollQueue = useStore((s) => s.shiftRollQueue);
-  const dismissRollToast = useStore((s) => s.dismissRollToast);
-
+  const diceDisplay = useStore((s) => s.diceDisplay);
+  const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [failed, setFailed] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const sceneRef = useRef<DiceScene | null>(null);
-  const busy = useRef(false);
-  const runRef = useRef<{ cancelled: boolean } | null>(null);
-
+  const runRef = useRef<DiceRun | null>(null);
   const [active, setActive] = useState<{ entry: RollLogEntry; plan: Plan } | null>(null);
   const [shownRows, setShownRows] = useState(0);
   const [totalShown, setTotalShown] = useState<number | null>(null);
   const [showTotal, setShowTotal] = useState(false);
   const [outcome, setOutcome] = useState<'crit' | 'fumble' | null>(null);
 
-  // Drain the live roll queue one at a time. Fed only by addRollEntry, so the
-  // snapshot's historical rolls never replay on join. Every finish()/skip shifts
-  // the queue, which re-runs this effect to pick up the next roll.
   useEffect(() => {
-    if (busy.current) return;
-    const next = rollQueue[0];
-    if (!next) return;
-    const p = plan(next);
-    if (!p) { shiftRollQueue(); return; } // modifier-only roll — nothing to animate
-    busy.current = true;
-    dismissRollToast(next.id); // the overlay is the notification; suppress the redundant toast
-    void play(next, p);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rollQueue]);
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReduced(query.matches);
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+  useEffect(() => setFailed(false), [diceDisplay]);
 
-  async function play(entry: RollLogEntry, p: Plan) {
-    const run = { cancelled: false };
+  useEffect(() => {
+    const entry = rollQueue[0];
+    if (!entry) { setActive(null); return; }
+    const p = plan(entry);
+    if (diceDisplay !== 'cinematic' || reduced || failed || !p) {
+      if (diceDisplay !== 'instant') useStore.getState().showRollToast(entry);
+      useStore.getState().shiftRollQueue(entry.id);
+      return;
+    }
+    const run: DiceRun = { id: entry.id, controller: new AbortController(), scene: null };
     runRef.current = run;
     setActive({ entry, plan: p });
-    setShownRows(0);
-    setTotalShown(null);
-    setShowTotal(false);
-    setOutcome(null);
+    setShownRows(0); setTotalShown(null); setShowTotal(false); setOutcome(null);
+    void play(entry, p, run);
+    return () => {
+      run.controller.abort();
+      run.scene?.dispose();
+      if (runRef.current === run) runRef.current = null;
+    };
+  }, [rollQueue, diceDisplay, reduced, failed]);
 
-    await sleep(0); // let the canvas mount
-    const canvas = canvasRef.current;
-    if (canvas && !run.cancelled) {
+  async function play(entry: RollLogEntry, p: Plan, run: DiceRun) {
+    const signal = run.controller.signal;
+    try {
+      await diceDelay(0, signal); // let the canvas mount
       const { DiceScene } = await import('../lib/dice3d');
-      sceneRef.current?.dispose();
+      signal.throwIfAborted();
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('Dice canvas unavailable');
       const scene = new DiceScene(canvas);
-      sceneRef.current = scene;
-      scene.resize();
+      run.scene = scene;
+      useStore.getState().dismissRollToast(entry.id);
       await scene.roll({ sides: p.sides, theme: DIE_THEME, finals: p.finals, pairs: p.pairs });
-      if (run.cancelled) return finish(run);
+      signal.throwIfAborted();
       p.dropIndices.forEach((i) => scene.dropDie(i));
       if (p.crit) scene.setOutcome(p.keptIndex, 'crit');
       else if (p.fumble) scene.setOutcome(p.keptIndex, 'fumble');
+      if (p.crit) setOutcome('crit');
+      else if (p.fumble) setOutcome('fumble');
+      for (let i = 0; i < p.rows.length; i++) {
+        signal.throwIfAborted();
+        setShownRows(i + 1);
+        await diceDelay(230, signal);
+      }
+      setShowTotal(true);
+      await countDiceTotal(p.total, setTotalShown, signal);
+      await diceDelay(p.crit || p.fumble ? 2200 : 1400, signal);
+    } catch {
+      if (!signal.aborted) {
+        useStore.getState().showRollToast(entry);
+        setFailed(true);
+      }
+    } finally {
+      run.scene?.dispose();
+      if (runRef.current === run) {
+        runRef.current = null;
+        setActive(null);
+        useStore.getState().shiftRollQueue(entry.id);
+      }
     }
-
-    if (p.crit) setOutcome('crit');
-    else if (p.fumble) setOutcome('fumble');
-
-    // tally rows in one at a time
-    for (let i = 0; i < p.rows.length; i++) {
-      if (run.cancelled) return finish(run);
-      setShownRows(i + 1);
-      await sleep(230);
-    }
-
-    // count up the total
-    if (run.cancelled) return finish(run);
-    setShowTotal(true);
-    await countUp(p.total, run);
-
-    if (run.cancelled) return finish(run);
-    await sleep(p.crit || p.fumble ? 2200 : 1400);
-    finish(run);
-  }
-
-  function countUp(total: number, run: { cancelled: boolean }): Promise<void> {
-    return new Promise((resolve) => {
-      const t0 = performance.now(), span = 560;
-      const step = (t: number) => {
-        if (run.cancelled) { setTotalShown(total); return resolve(); }
-        const k = Math.min(1, (t - t0) / span);
-        setTotalShown(Math.round((1 - (1 - k) ** 3) * total));
-        if (k < 1) requestAnimationFrame(step);
-        else { setTotalShown(total); resolve(); }
-      };
-      requestAnimationFrame(step);
-    });
-  }
-
-  function finish(run: { cancelled: boolean }) {
-    if (runRef.current !== run) return; // a newer roll already owns the stage
-    runRef.current = null;
-    setActive(null);
-    sceneRef.current?.dispose();
-    sceneRef.current = null;
-    busy.current = false;
-    shiftRollQueue(); // re-runs the drain effect for the next roll
   }
 
   function dismiss() {
     const run = runRef.current;
-    if (run) { run.cancelled = true; finish(run); }
+    if (!run) return;
+    run.controller.abort();
+    run.scene?.dispose();
+    runRef.current = null;
+    setActive(null);
+    useStore.getState().shiftRollQueue(run.id);
   }
 
-  // Esc / click to skip
   useEffect(() => {
     if (!active) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismiss(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss(); };
+    const onResize = () => {
+      try { runRef.current?.scene?.resize(); }
+      catch { setFailed(true); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    window.addEventListener('resize', onResize);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('resize', onResize); };
   }, [active]);
 
-  useEffect(() => {
-    const onResize = () => sceneRef.current?.resize();
-    window.addEventListener('resize', onResize);
-    return () => { window.removeEventListener('resize', onResize); sceneRef.current?.dispose(); };
-  }, []);
-
-  if (!active) return null;
+  if (!active) return failed ? <div role="status" className="fixed right-4 bottom-20 z-40 max-w-xs rounded-lg border p-3 text-xs"
+    style={{ background: 'var(--surface2)', borderColor: 'var(--border)', color: 'var(--mid)' }}>
+    3D dice are unavailable. Results appear in compact notifications and the log.
+    <button type="button" className="mt-2 block underline" onClick={() => setFailed(false)}>Try 3D on the next roll</button>
+  </div> : null;
   const { entry, plan: p } = active;
   const priv = entry.visibility === 'dm';
   const fx = outcome;
@@ -248,7 +233,7 @@ export function DiceOverlay() {
         </div>
 
         {/* 3D dice */}
-        <canvas ref={canvasRef} style={{ width: canvasW, height: canvasH, maxWidth: '92vw', margin: '4px 0' }} />
+        <canvas key={entry.id} ref={canvasRef} style={{ width: canvasW, height: canvasH, maxWidth: '92vw', margin: '4px 0' }} />
 
         {/* tally */}
         <div className="flex flex-col gap-0.5" style={{ width: 280, marginTop: 6 }}>

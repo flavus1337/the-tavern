@@ -7,6 +7,7 @@ import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { CampaignLobby } from './screens/CampaignLobby';
 import { TableLayout } from './components/TableLayout';
+import { restoreCampaign, syncCampaignUrl, handleCampaignPopState } from './lib/navigation';
 
 // ---------------------------------------------------------------------------
 // Error Boundary
@@ -78,6 +79,8 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryS
 function AppContent() {
   const route = useStore((s) => s.route);
   const authChecked = useStore((s) => s.authChecked);
+  const user = useStore((s) => s.user);
+  const activeCampaignId = useStore((s) => s.activeCampaignId);
   const {
     setUser,
     setAuthChecked,
@@ -85,7 +88,6 @@ function AppContent() {
     setInviteToken,
     clearInviteToken,
     setCampaigns,
-    setActiveCampaignId,
   } = useStore(
     useShallow((s) => ({
       setUser: s.setUser,
@@ -94,7 +96,6 @@ function AppContent() {
       setInviteToken: s.setInviteToken,
       clearInviteToken: s.clearInviteToken,
       setCampaigns: s.setCampaigns,
-      setActiveCampaignId: s.setActiveCampaignId,
     })),
   );
 
@@ -116,6 +117,7 @@ function AppContent() {
         const me = await api.get<MeResponse>('/api/auth/me');
         setUser(me.user);
 
+        let joinedId: string | undefined;
         // 3. Redeem invite if present, then load campaigns
         if (inviteToken) {
           try {
@@ -123,7 +125,7 @@ function AppContent() {
             clearInviteToken();
             const campaigns = await api.get<CampaignListItem[]>('/api/campaigns');
             setCampaigns(campaigns);
-            setActiveCampaignId(redeemRes.joinedCampaignId);
+            joinedId = redeemRes.joinedCampaignId;
           } catch {
             // Invite redeem failed (already member, etc.) — still load campaigns
             clearInviteToken();
@@ -135,7 +137,7 @@ function AppContent() {
           setCampaigns(campaigns);
         }
 
-        setRoute('lobby');
+        restoreCampaign(useStore.getState().campaigns, joinedId);
       } catch (err) {
         if (err instanceof ApiRequestError && err.status === 401) {
           // Not authenticated
@@ -151,6 +153,15 @@ function AppContent() {
 
     void bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    syncCampaignUrl();
+  }, [authChecked, user, route, activeCampaignId]);
+
+  useEffect(() => {
+    window.addEventListener('popstate', handleCampaignPopState);
+    return () => window.removeEventListener('popstate', handleCampaignPopState);
   }, []);
 
   if (!authChecked) {

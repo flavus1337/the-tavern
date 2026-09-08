@@ -3,11 +3,14 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { loadCampaign } from './loader.js';
 import { loadRuntime } from './runtime.js';
+import { campaignView } from './commit.js';
 import { log } from '../log.js';
 import type { CampaignStore } from './loader.js';
 import type { CampaignRuntime } from './runtime.js';
 
 export interface CampaignEntry {
+  /** Transient guard for session-local Undo; resets when the process restarts. */
+  boardGeneration?: number;
   store: CampaignStore;
   runtime: CampaignRuntime;
   /** WS room: set of session IDs (managed by hub). */
@@ -45,7 +48,8 @@ export async function scanCampaigns(): Promise<void> {
 }
 
 export function getCampaign(id: string): CampaignEntry | undefined {
-  return registry.get(id);
+  const entry = registry.get(id);
+  return entry ? campaignView(entry) : undefined;
 }
 
 export function addCampaign(

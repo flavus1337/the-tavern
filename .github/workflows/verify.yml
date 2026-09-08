@@ -1,0 +1,37 @@
+name: Verify
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r build
+      - run: pnpm smoke
+      - run: pnpm persistence-regression
+      - run: pnpm exec tsx scripts/auth-regression.ts
+      - run: pnpm protocol-regression
+      - run: pnpm session-regression
+      - run: pnpm undo-regression
+      - run: pnpm server-transient-regression
+      - run: pnpm image-regression
+      - run: pnpm maintenance-regression
+      - run: pnpm launcher-regression
+      - run: pnpm exec tsx scripts/client-sync-regression.ts
+      - run: pnpm exec tsx scripts/client-performance-regression.ts
+      - run: pnpm exec tsx scripts/client-session-regression.ts
+      - run: pnpm exec tsx scripts/client-resources-regression.ts
+      - run: pnpm exec tsx scripts/client-undo-regression.ts
+      - run: pnpm exec tsx scripts/client-navigation-regression.ts

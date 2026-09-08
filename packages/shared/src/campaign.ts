@@ -104,6 +104,8 @@ export interface CampaignMeta {
 }
 
 export interface Chapter {
+  /** Missing on legacy authored files; loaded as revision zero. */
+  revision?: number;
   type: 'chapter';
   schemaVersion: number;
   id: string;
@@ -141,6 +143,8 @@ export type NoteKind = (typeof NOTE_KINDS)[number];
 export const isNoteKind = (x: unknown): x is NoteKind => NOTE_KINDS.includes(x as NoteKind);
 
 export interface NoteEntity {
+  /** Missing on legacy authored files; loaded as revision zero. */
+  revision?: number;
   type: 'note';
   schemaVersion: number;
   id: string;
@@ -242,6 +246,7 @@ function applyDefaults(expectedType: EntityType, raw: Record<string, unknown>): 
     case 'chapter': {
       return {
         ...base,
+        revision: Number.isSafeInteger(raw['revision']) && (raw['revision'] as number) >= 0 ? raw['revision'] as number : 0,
         type: 'chapter',
         schemaVersion: raw['schemaVersion'] as number,
         id: raw['id'] as string,
@@ -281,6 +286,7 @@ function applyDefaults(expectedType: EntityType, raw: Record<string, unknown>): 
       }
       return {
         ...base,
+        revision: Number.isSafeInteger(raw['revision']) && (raw['revision'] as number) >= 0 ? raw['revision'] as number : 0,
         type: 'note',
         schemaVersion: raw['schemaVersion'] as number,
         id: raw['id'] as string,
@@ -342,6 +348,10 @@ export function parseEntity(
 
   if (typeof raw['schemaVersion'] !== 'number') {
     return { ok: false, reason: 'schemaVersion must be a number' };
+  }
+
+  if ((expectedType === 'note' || expectedType === 'chapter') && raw['revision'] !== undefined && (!Number.isSafeInteger(raw['revision']) || (raw['revision'] as number) < 0)) {
+    return { ok: false, reason: 'revision must be a non-negative safe integer' };
   }
 
   const maxVersion = SCHEMA_VERSIONS[expectedType];

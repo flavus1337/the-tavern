@@ -12,6 +12,7 @@ import os from 'node:os';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import WebSocket from 'ws';
+import { PROTOCOL_VERSION } from '../packages/shared/src/protocol.js';
 
 // ---------------------------------------------------------------------------
 // Config / paths
@@ -210,6 +211,9 @@ async function uploadFile(
 
 type WsMessage = Record<string, unknown>;
 
+const revisions = new WeakMap<WebSocket, Map<string, number>>();
+let commandSequence = 0;
+
 function openWs(
   wsUrl: string,
   cookieJar: CookieJar,
@@ -220,6 +224,7 @@ function openWs(
     const ws = new WebSocket(wsUrl, {
       headers: cookieStr ? { Cookie: cookieStr } : undefined,
     });
+    revisions.set(ws, new Map());
     const timeout = setTimeout(() => {
       ws.terminate();
       reject(new Error('WS open timeout'));
@@ -230,7 +235,12 @@ function openWs(
     });
     ws.on('message', (data) => {
       try {
-        messages.push(JSON.parse(data.toString()) as WsMessage);
+        const message = JSON.parse(data.toString()) as WsMessage;
+        messages.push(message);
+        const entities = [message['note'], ...((message['tokens'] ?? []) as unknown[]), ...((message['chapters'] ?? []) as unknown[]), ...((message['myNotes'] ?? []) as unknown[])];
+        for (const entity of entities) {
+          if (entity && typeof entity === 'object' && 'id' in entity && 'revision' in entity) revisions.get(ws)?.set(String(entity.id), Number(entity.revision));
+        }
       } catch {
         // ignore
       }
@@ -243,7 +253,11 @@ function openWs(
 }
 
 function send(ws: WebSocket, msg: unknown): void {
-  ws.send(JSON.stringify(msg));
+  const command = { ...(msg as Record<string, unknown>) };
+  if (!['join', 'ping', 'measure'].includes(String(command['type']))) command['requestId'] ??= `smoke_${++commandSequence}`;
+  const id = command['noteId'] ?? command['chapterId'] ?? (command['type'] === 'tokenUpdate' ? command['tokenId'] : undefined);
+  if (id && ['saveNote', 'saveChapter', 'tokenUpdate'].includes(String(command['type']))) command['baseRevision'] ??= revisions.get(ws)?.get(String(id)) ?? 0;
+  ws.send(JSON.stringify(command));
 }
 
 function waitForMessage(
@@ -696,7 +710,7 @@ async function main(): Promise<void> {
     // D4: player1 ws join demo-campaign → NOT_MEMBER fatal
     {
       const { ws, messages } = await openWs(wsUrl, player1Jar);
-      send(ws, { type: 'join', protocolVersion: 6, campaignId: 'demo-campaign' });
+      send(ws, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId: 'demo-campaign' });
       try {
         const err = await waitForMessage(messages, (m) => m['type'] === 'error');
         assert(err['code'] === 'NOT_MEMBER', 'D4: player1 join demo-campaign → NOT_MEMBER');
@@ -758,8 +772,8 @@ async function main(): Promise<void> {
     const { ws: p1Ws, messages: p1Messages } = await openWs(wsUrl, player1Jar);
 
     // Join both (protocol version 3)
-    send(adminWs, { type: 'join', protocolVersion: 6, campaignId });
-    send(p1Ws, { type: 'join', protocolVersion: 6, campaignId });
+    send(adminWs, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
+    send(p1Ws, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
 
     await waitForMessage(adminMessages, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1Messages, (m) => m['type'] === 'joined', 3000);
@@ -1033,12 +1047,12 @@ async function main(): Promise<void> {
 
       // F7j: late joiners get the playback state in the snapshot
       const { ws: lateWs, messages: lateMsgs } = await openWs(wsUrl, player2Jar);
-      send(lateWs, { type: 'join', protocolVersion: 6, campaignId });
+      send(lateWs, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
       try {
         const snap = await waitForMessage(lateMsgs, (m) => m['type'] === 'snapshot', 3000);
-        const media = snap['media'] as { assetId?: string; action?: string; elapsedMs?: number } | null;
+        const media = snap['media'] as { assetId?: string; action?: string; atMs?: number } | null;
         assert(
-          media?.assetId === audioAsset.id && media.action === 'play' && typeof media.elapsedMs === 'number',
+          media?.assetId === audioAsset.id && media.action === 'play' && typeof media.atMs === 'number',
           'F7j: snapshot carries active playback for late joiners',
         );
       } catch {
@@ -1079,7 +1093,7 @@ async function main(): Promise<void> {
 
     // Set up player2 WS
     const { ws: p2Ws, messages: p2Messages } = await openWs(wsUrl, player2Jar);
-    send(p2Ws, { type: 'join', protocolVersion: 6, campaignId });
+    send(p2Ws, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     await waitForMessage(p2Messages, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p2Messages, (m) => m['type'] === 'snapshot', 3000);
 
@@ -1235,7 +1249,7 @@ async function main(): Promise<void> {
 
     // Admin joins second campaign
     const { ws: adminWs2, messages: adminMessages2 } = await openWs(wsUrl, adminJar);
-    send(adminWs2, { type: 'join', protocolVersion: 6, campaignId: camp2Id });
+    send(adminWs2, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId: camp2Id });
     await waitForMessage(adminMessages2, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(adminMessages2, (m) => m['type'] === 'snapshot', 3000);
 
@@ -1299,7 +1313,7 @@ async function main(): Promise<void> {
 
     // Reopen with same cookie + join
     const { ws: p1WsNew, messages: p1MessagesNew } = await openWs(wsUrl, player1Jar);
-    send(p1WsNew, { type: 'join', protocolVersion: 6, campaignId });
+    send(p1WsNew, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     await waitForMessage(p1MessagesNew, (m) => m['type'] === 'joined', 3000);
 
     // Snapshot contains board items (re-pinned earlier) + prior rolls
@@ -1371,7 +1385,7 @@ async function main(): Promise<void> {
 
     // Snapshot still has board items + roll history
     const { ws: adminWsRestart, messages: adminMsgsRestart } = await openWs(wsUrl2, adminJar);
-    send(adminWsRestart, { type: 'join', protocolVersion: 6, campaignId });
+    send(adminWsRestart, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     await waitForMessage(adminMsgsRestart, (m) => m['type'] === 'joined', 3000);
     try {
       const snapRestart = await waitForMessage(adminMsgsRestart, (m) => m['type'] === 'snapshot', 3000);
@@ -1392,7 +1406,7 @@ async function main(): Promise<void> {
 
     // Reopen p1WsNew connection on port2
     const { ws: p1WsPort2, messages: p1MsgsPort2 } = await openWs(wsUrl2, player1Jar);
-    send(p1WsPort2, { type: 'join', protocolVersion: 6, campaignId });
+    send(p1WsPort2, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1MsgsPort2, (m) => m['type'] === 'snapshot', 3000);
 
@@ -1428,7 +1442,7 @@ async function main(): Promise<void> {
 
     // J7: dm can save dm-scope notes
     const { ws: adminWsPort2Notes, messages: adminMsgsPort2Notes } = await openWs(wsUrl2, adminJar);
-    send(adminWsPort2Notes, { type: 'join', protocolVersion: 6, campaignId });
+    send(adminWsPort2Notes, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     await waitForMessage(adminMsgsPort2Notes, (m) => m['type'] === 'joined', 3000);
 
     // J6: player1 may now share a note with the DM (scope 'dm') — allowed, and
@@ -1495,7 +1509,7 @@ async function main(): Promise<void> {
     // J10: non-owner non-dm cannot edit a shared note
     if (sharedNoteId) {
       const { ws: p2WsNotes, messages: p2MsgsNotes } = await openWs(wsUrl2, player2Jar);
-      send(p2WsNotes, { type: 'join', protocolVersion: 6, campaignId });
+      send(p2WsNotes, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
       await waitForMessage(p2MsgsNotes, (m) => m['type'] === 'joined', 3000);
       send(p2WsNotes, {
         type: 'saveNote',
@@ -1544,8 +1558,8 @@ async function main(): Promise<void> {
     // Open fresh WS connections on port2
     const { ws: adminWsLock, messages: adminMsgsLock } = await openWs(wsUrl2, adminJar);
     const { ws: p1WsLock, messages: p1MsgsLock } = await openWs(wsUrl2, player1Jar);
-    send(adminWsLock, { type: 'join', protocolVersion: 6, campaignId });
-    send(p1WsLock, { type: 'join', protocolVersion: 6, campaignId });
+    send(adminWsLock, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
+    send(p1WsLock, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     await waitForMessage(adminMsgsLock, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1MsgsLock, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(adminMsgsLock, (m) => m['type'] === 'snapshot', 3000);
@@ -1615,15 +1629,15 @@ async function main(): Promise<void> {
 
     const { ws: adminWsTok, messages: adminMsgsTok } = await openWs(wsUrl2, adminJar);
     const { ws: p1WsTok, messages: p1MsgsTok } = await openWs(wsUrl2, player1Jar);
-    send(adminWsTok, { type: 'join', protocolVersion: 6, campaignId });
-    send(p1WsTok, { type: 'join', protocolVersion: 6, campaignId });
+    send(adminWsTok, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
+    send(p1WsTok, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     const adminJoinedTok = await waitForMessage(adminMsgsTok, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(p1MsgsTok, (m) => m['type'] === 'joined', 3000);
     await waitForMessage(adminMsgsTok, (m) => m['type'] === 'snapshot', 3000);
     await waitForMessage(p1MsgsTok, (m) => m['type'] === 'snapshot', 3000);
 
     // M1: joined handshake reports protocol version 6
-    assertEqual(adminJoinedTok['protocolVersion'], 6, 'M1: server protocol version is 6');
+    assertEqual(adminJoinedTok['protocolVersion'], PROTOCOL_VERSION, 'M1: server protocol version matches shared contract');
 
     const player1Id = (reg1Body as { user?: { id?: string } })?.user?.id ?? null;
     assert(typeof player1Id === 'string', 'M2-pre: player1 id available');
@@ -1888,7 +1902,7 @@ async function main(): Promise<void> {
     const { ws: p1WsN, messages: p1MsgsN } = await openWs(wsUrl2, player1Jar);
     const { ws: p2WsN, messages: p2MsgsN } = await openWs(wsUrl2, player2Jar);
     const { ws: p3WsN, messages: p3MsgsN } = await openWs(wsUrl2, player3Jar);
-    for (const ws of [adminWsN, p1WsN, p2WsN, p3WsN]) send(ws, { type: 'join', protocolVersion: 6, campaignId });
+    for (const ws of [adminWsN, p1WsN, p2WsN, p3WsN]) send(ws, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     const adminSnapN = await waitForMessage(adminMsgsN, (m) => m['type'] === 'snapshot', 3000);
     await waitForMessage(p1MsgsN, (m) => m['type'] === 'snapshot', 3000);
     await waitForMessage(p2MsgsN, (m) => m['type'] === 'snapshot', 3000);
@@ -2032,8 +2046,8 @@ async function main(): Promise<void> {
 
     const { ws: adminWsO, messages: adminMsgsO } = await openWs(wsUrl2, adminJar);
     const { ws: p1WsO, messages: p1MsgsO } = await openWs(wsUrl2, player1Jar);
-    send(adminWsO, { type: 'join', protocolVersion: 6, campaignId });
-    send(p1WsO, { type: 'join', protocolVersion: 6, campaignId });
+    send(adminWsO, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
+    send(p1WsO, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     const adminSnapO = await waitForMessage(adminMsgsO, (m) => m['type'] === 'snapshot', 3000);
     await waitForMessage(p1MsgsO, (m) => m['type'] === 'snapshot', 3000);
 
@@ -2164,7 +2178,7 @@ async function main(): Promise<void> {
     // O7c: aoeAdd persists into the snapshot (survives reconnect).
     {
       const { ws: probeWs, messages: probeMsgs } = await openWs(wsUrl2, player1Jar);
-      send(probeWs, { type: 'join', protocolVersion: 6, campaignId });
+      send(probeWs, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
       try {
         const snap = await waitForMessage(probeMsgs, (m) => m['type'] === 'snapshot', 3000);
         const list = (snap['aoes'] as Array<{ id?: string }>) || [];
@@ -2261,8 +2275,8 @@ async function main(): Promise<void> {
 
     const { ws: adminWsQ, messages: adminMsgsQ } = await openWs(wsUrl2, adminJar);
     const { ws: p1WsQ, messages: p1MsgsQ } = await openWs(wsUrl2, player1Jar);
-    send(adminWsQ, { type: 'join', protocolVersion: 6, campaignId });
-    send(p1WsQ, { type: 'join', protocolVersion: 6, campaignId });
+    send(adminWsQ, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
+    send(p1WsQ, { type: 'join', protocolVersion: PROTOCOL_VERSION, campaignId });
     const adminSnapQ = await waitForMessage(adminMsgsQ, (m) => m['type'] === 'snapshot', 3000);
     await waitForMessage(p1MsgsQ, (m) => m['type'] === 'snapshot', 3000);
     assert(Array.isArray(adminSnapQ['templates']), 'Q0: snapshot has templates[]');

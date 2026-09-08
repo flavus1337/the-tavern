@@ -4,11 +4,15 @@ import type { Duplex } from 'node:stream';
 import { resolveSessionFromCookieHeader } from '../auth/sessions.js';
 import { findUserById } from '../auth/users.js';
 import { getCampaign } from '../campaign/registry.js';
+import { afterCampaignCommit } from '../campaign/commit.js';
 import { log } from '../log.js';
+import { recordConnection, recordDisconnect } from '../metrics.js';
 import { handleMessage } from './handlers.js';
 import type { Role, ServerMessage, PresenceEntry } from '@vtt/shared';
+import type { UndoReceipt } from './undo.js';
 
 export interface WsSession {
+  undo?: UndoReceipt;
   id: string; // random session key for room membership
   ws: WebSocket;
   userId: string;
@@ -16,6 +20,7 @@ export interface WsSession {
   campaignId: string | null;
   role: Role | null;
   isAlive: boolean;
+  joining?: boolean;
 }
 
 // Singleton WSS. maxPayload bounds a single frame (default is 100 MiB) so a
@@ -29,8 +34,7 @@ let sessionCounter = 0;
 const PING_INTERVAL = 30_000;
 const PONG_TIMEOUT = 45_000;
 
-setInterval(() => {
-  const now = Date.now();
+const heartbeat = setInterval(() => {
   for (const sess of sessions.values()) {
     if (!sess.isAlive) {
       log.debug(`Terminating unresponsive WS session for ${sess.username}`);
@@ -45,11 +49,14 @@ setInterval(() => {
       if (!sess.isAlive) {
         sess.ws.terminate();
       }
-    }, PONG_TIMEOUT - PING_INTERVAL);
+    }, PONG_TIMEOUT - PING_INTERVAL).unref();
   }
 }, PING_INTERVAL);
+heartbeat.unref();
+let stopping = false;
 
 export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  if (stopping) { socket.destroy(); return; }
   const url = req.url ?? '';
   if (url !== '/ws' && !url.startsWith('/ws?')) {
     socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
@@ -83,6 +90,7 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
       isAlive: true,
     };
     sessions.set(sessId, wsSession);
+    recordConnection(user.id);
 
     ws.on('pong', () => {
       wsSession.isAlive = true;
@@ -91,11 +99,16 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
     ws.on('close', () => {
       const campaignId = wsSession.campaignId;
       sessions.delete(sessId);
+      delete wsSession.undo;
+      recordDisconnect(wsSession.userId);
 
       if (campaignId) {
         const entry = getCampaign(campaignId);
         if (entry) {
           entry.room.delete(sessId);
+          if (!getSessionsInRoom(campaignId).some((session) => session.userId === wsSession.userId)) {
+            broadcast(campaignId, { type: 'measureShared', kind: 'clear', by: wsSession.username });
+          }
           broadcastPresenceWithDisconnected(campaignId, wsSession.userId, wsSession.username, wsSession.role);
         }
       }
@@ -118,10 +131,57 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
   });
 }
 
-export function send(ws: WebSocket, msg: ServerMessage): void {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
+const MAX_PREVIEW_BUFFER = 64 * 1024;
+interface PendingMeasures { latest: Map<string, string>; timer?: NodeJS.Timeout; closed: () => void }
+const pendingMeasures = new WeakMap<WebSocket, PendingMeasures>();
+
+function forgetMeasures(ws: WebSocket, pending: PendingMeasures): void {
+  clearTimeout(pending.timer);
+  ws.removeListener('close', pending.closed);
+  pendingMeasures.delete(ws);
+}
+
+function flushMeasures(ws: WebSocket, pending: PendingMeasures): void {
+  if (ws.readyState !== WebSocket.OPEN) { forgetMeasures(ws, pending); return; }
+  try {
+    for (const [by, payload] of pending.latest) {
+      if (ws.bufferedAmount > MAX_PREVIEW_BUFFER) break;
+      ws.send(payload);
+      pending.latest.delete(by);
+    }
+  } catch (error) {
+    forgetMeasures(ws, pending);
+    log.warn(`Could not send live preview: ${String(error)}`);
+    ws.close(1011, 'Could not send live preview');
+    return;
   }
+  if (!pending.latest.size) { forgetMeasures(ws, pending); return; }
+  pending.timer = setTimeout(() => flushMeasures(ws, pending), 50);
+  pending.timer.unref();
+}
+
+export function send(ws: WebSocket, msg: ServerMessage): void {
+  const payload = JSON.stringify(msg);
+  afterCampaignCommit(() => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    // Retain one latest endpoint/clear per origin while this peer is slow.
+    // Durable commands and state publications keep their existing send path.
+    if (msg.type === 'measureShared') {
+      let pending = pendingMeasures.get(ws);
+      if (pending || ws.bufferedAmount > MAX_PREVIEW_BUFFER) {
+        if (!pending) {
+          pending = { latest: new Map(), closed: () => forgetMeasures(ws, pending!) };
+          pendingMeasures.set(ws, pending);
+          ws.once('close', pending.closed);
+          pending.timer = setTimeout(() => flushMeasures(ws, pending!), 50);
+          pending.timer.unref();
+        }
+        pending.latest.set(msg.by, payload);
+        return;
+      }
+    }
+    ws.send(payload);
+  });
 }
 
 export function getSessionsInRoom(campaignId: string): WsSession[] {
@@ -132,7 +192,7 @@ export function getSessionsInRoom(campaignId: string): WsSession[] {
   const out: WsSession[] = [];
   for (const sessId of entry.room) {
     const sess = sessions.get(sessId);
-    if (sess && sess.ws.readyState === WebSocket.OPEN) out.push(sess);
+    if (sess && sess.campaignId === campaignId && sess.ws.readyState === WebSocket.OPEN) out.push(sess);
   }
   return out;
 }
@@ -177,4 +237,15 @@ export function broadcastPresenceWithDisconnected(
   role: Role | null,
 ): void {
   broadcast(campaignId, { type: 'presence', entries: getPresenceEntries(campaignId, { userId, username, role }) });
+}
+
+/** Close sockets explicitly: wss.close alone waits forever for connected clients. */
+export async function closeWebSockets(): Promise<void> {
+  stopping = true;
+  clearInterval(heartbeat);
+  for (const ws of wss.clients) ws.close(1001, 'server shutting down');
+  const timeout = setTimeout(() => { for (const ws of wss.clients) ws.terminate(); }, 2000);
+  timeout.unref();
+  try { await new Promise<void>((resolve) => wss.close(() => resolve())); }
+  finally { clearTimeout(timeout); }
 }

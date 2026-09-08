@@ -13,20 +13,22 @@ git clone git@github.com:flavus1337/the-tavern.git && cd the-tavern
 node deploy/start.mjs
 ```
 
-Only prerequisite: Node 22+. The launcher starts a Cloudflare **quick tunnel** (new random URL each start, printed in a banner together with the first-run DM credentials), then the server with `PUBLIC_ORIGIN` wired so invite links point at the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before the first start to migrate a world. Ctrl-C stops both.
+Use Node 24 LTS (minimum 22.13) and Corepack or the pinned pnpm 9.0.0. The launcher starts a Cloudflare **quick tunnel** (new random URL each start, printed with first-run DM credentials), then the server with `PUBLIC_ORIGIN` wired to the tunnel. World data lives in `./live/` (gitignored); copy an existing `live/` folder in before first start to migrate a world. Ctrl-C asks the server to drain accepted writes, waits for its exit, and stops the tunnel. A stuck child is terminated after 12 seconds; any pending journal recovers on restart.
+
+Use `node deploy/start.mjs --local` without a tunnel. The launcher detects changed source files and dependency manifests automatically. After `git pull`, `node deploy/start.mjs --update` forces a frozen install and build; `--rebuild` forces only a build. These options never pull changes or modify the lockfile.
 
 For a **permanent URL** and autostart on boot, follow the named-tunnel + systemd sections below instead of the launcher.
 
 ---
 
-## 1. Install Node 22
+## 1. Install Node 24 LTS
 
 Use the NodeSource repository for a system-wide install:
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs
-node --version   # should print v22.x.x
+node --version   # should print v24.x.x
 ```
 
 Alternatively, use nvm:
@@ -34,9 +36,9 @@ Alternatively, use nvm:
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 source ~/.bashrc
-nvm install 22
-nvm use 22
-nvm alias default 22
+nvm install 24
+nvm use 24
+nvm alias default 24
 ```
 
 ---
@@ -44,8 +46,8 @@ nvm alias default 22
 ## 2. Install pnpm
 
 ```bash
-npm install -g pnpm@9
-pnpm --version   # should print 9.x.x
+npm install -g pnpm@9.0.0
+pnpm --version   # should print 9.0.0 (pinned in package.json)
 ```
 
 ---
@@ -67,7 +69,7 @@ cd /opt/vtt
 
 ```bash
 cd /opt/vtt
-pnpm install        # installs all workspace dependencies, compiles sharp for Linux
+pnpm install --frozen-lockfile # installs the reviewed workspace dependencies
 pnpm build          # transpiles server and client to dist/
 ```
 
@@ -226,7 +228,7 @@ Verify at `https://vtt.<your-domain>` — the login page should load over HTTPS 
 ```bash
 cd /opt/vtt
 git pull
-pnpm install        # picks up any new/changed dependencies, rebuilds native modules for Linux
+pnpm install --frozen-lockfile # installs the checked-in dependency versions
 pnpm build          # recompiles server and client
 sudo systemctl restart vtt
 ```
@@ -283,7 +285,7 @@ If still failing, delete `node_modules` and reinstall:
 
 ```bash
 rm -rf node_modules packages/*/node_modules
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 sudo systemctl restart vtt
 ```

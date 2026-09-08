@@ -1,10 +1,45 @@
-import { PROTOCOL_VERSION } from '@vtt/shared';
-import type { ClientMessage, ServerMessage } from '@vtt/shared';
+import { PROTOCOL_VERSION, isDurableMessage, randomId } from '@vtt/shared';
+import type { ClientMessage, ServerMessage, ServerCommandAckPayload } from '@vtt/shared';
 import { useStore } from '../store';
+import { clockSample } from '../lib/media';
 
 const PING_INTERVAL_MS = 25_000;
 const SILENCE_TIMEOUT_MS = 45_000;
 const BACKOFF_STEPS = [1000, 2000, 4000, 8000, 15000];
+const MEASURE_INTERVAL_MS = 50;
+const TRANSIENT_BUFFER_LIMIT = 64 * 1024;
+type MeasureCommand = Extract<ClientMessage, { type: 'measure' }>;
+const COMMAND_TIMEOUT_MS = 15_000;
+export type DurableCommand = Exclude<ClientMessage, { type: 'join' | 'ping' | 'measure' }>;
+
+export class CommandError extends Error {
+  constructor(message: string, readonly code: string, readonly uncertain = false) { super(message); }
+}
+
+function reportCommandError(error: CommandError): void {
+  useStore.setState({ lastErrorMessage: error.message, saveOutcome: error.uncertain ? 'unconfirmed' : 'failed' });
+}
+
+/** Await this for editors/actions that must retain input until confirmed. */
+export function sendCommand(msg: DurableCommand): Promise<ServerCommandAckPayload> {
+  const connection = (window as unknown as { __vttConn?: TableConnection }).__vttConn;
+  if (connection) return connection.send(msg);
+  const error = new CommandError('Not connected. Your change was not sent.', 'OFFLINE');
+  reportCommandError(error);
+  return Promise.reject(error);
+}
+
+/** Non-editor actions still report failures, without unhandled rejected promises. */
+export function sendWs(msg: ClientMessage): void {
+  const connection = (window as unknown as { __vttConn?: TableConnection }).__vttConn;
+  if (connection) void connection.send(msg).catch(() => {});
+  else if (isDurableMessage(msg)) reportCommandError(new CommandError('Not connected. Your change was not sent.', 'OFFLINE'));
+}
+
+/** Only the latest ruler preview matters; the terminal endpoint bypasses cadence. */
+export function sendMeasure(message: MeasureCommand, final = false): void {
+  (window as unknown as { __vttConn?: TableConnection }).__vttConn?.sendMeasure(message, final);
+}
 
 export class TableConnection {
   private ws: WebSocket | null = null;
@@ -15,6 +50,19 @@ export class TableConnection {
   private reconnectAttempt = 0;
   private intentionalClose = false;
   private lastMessageTime = 0;
+  private ready = false;
+  private measureTimer: ReturnType<typeof setTimeout> | null = null;
+  private measurePending: { message: MeasureCommand; final: boolean } | null = null;
+  private lastMeasureAt = -Infinity;
+  private pendingPings = new Set<number>();
+  private clockSamples: Array<{ rtt: number; offset: number }> = [];
+  private pending = new Map<string, {
+    epoch: number;
+    undoReceiptId?: string;
+    resolve: (ack: ServerCommandAckPayload) => void;
+    reject: (error: CommandError) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
   // --------------------------------------------------------------------------
   // Public API
@@ -39,10 +87,86 @@ export class TableConnection {
     document.removeEventListener('visibilitychange', this._handleVisibility);
   }
 
-  send(msg: ClientMessage): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
+  send(msg: DurableCommand): Promise<ServerCommandAckPayload>;
+  send(msg: ClientMessage): Promise<ServerCommandAckPayload | void>;
+  send(msg: ClientMessage): Promise<ServerCommandAckPayload | void> {
+    const durable = isDurableMessage(msg);
+    if (this.ws?.readyState !== WebSocket.OPEN || ((durable || msg.type === 'measure') && !this.ready)) {
+      const error = new CommandError('Reconnecting. Your change was not sent; try again when connected.', 'OFFLINE');
+      if (durable) reportCommandError(error);
+      return Promise.reject(error);
     }
+    if (msg.type === 'measure') { this.sendMeasure(msg); return Promise.resolve(); }
+    if (!durable) {
+      // Transient traffic has no durable acknowledgment and is never retained.
+      try { this.ws.send(JSON.stringify(msg)); return Promise.resolve(); }
+      catch { return Promise.reject(new CommandError('Connection interrupted.', 'OFFLINE')); }
+    }
+    const requestId = msg.requestId ?? randomId('req');
+    const payload = JSON.stringify({ ...msg, requestId });
+    if (new TextEncoder().encode(payload).byteLength > 1024 * 1024) {
+      const error = new CommandError('Change is too large to send. Shorten the text before saving; your draft is kept.', 'TOO_LARGE');
+      reportCommandError(error);
+      return Promise.reject(error);
+    }
+    if (this.pending.has(requestId)) {
+      const error = new CommandError('This action is already pending.', 'PENDING');
+      reportCommandError(error);
+      return Promise.reject(error);
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.rejectPending();
+        this.ws?.close();
+      }, COMMAND_TIMEOUT_MS);
+      this.pending.set(requestId, { resolve, reject, timer, epoch: useStore.getState().snapshotEpoch, undoReceiptId: msg.type === 'undo' ? msg.receiptId : undefined });
+      useStore.setState({ pendingCommands: this.pending.size });
+      try { this.ws!.send(payload); }
+      catch { this.rejectPending(); this.ws?.close(); }
+    });
+  }
+
+  sendMeasure(message: MeasureCommand, final = false): void {
+    if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) return;
+    this.measurePending = { message, final: final || message.kind === 'clear' };
+    this.flushMeasure();
+  }
+
+  private flushMeasure(): void {
+    if (this.measureTimer !== null) clearTimeout(this.measureTimer);
+    this.measureTimer = null;
+    const pending = this.measurePending;
+    if (!pending) return;
+    if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) { this.clearMeasure(); return; }
+    const delay = MEASURE_INTERVAL_MS - (Date.now() - this.lastMeasureAt);
+    const pressured = this.ws.bufferedAmount > TRANSIENT_BUFFER_LIMIT;
+    if (pressured || (!pending.final && delay > 0)) {
+      this.measureTimer = setTimeout(() => this.flushMeasure(), pressured ? MEASURE_INTERVAL_MS : delay);
+      return;
+    }
+    this.measurePending = null;
+    try { this.ws.send(JSON.stringify(pending.message)); this.lastMeasureAt = Date.now(); }
+    catch { /* A transient preview is disposable; socket lifecycle handles reconnect. */ }
+  }
+
+  private clearMeasure(): void {
+    if (this.measureTimer !== null) clearTimeout(this.measureTimer);
+    this.measureTimer = null;
+    this.measurePending = null;
+    this.lastMeasureAt = -Infinity;
+  }
+
+  private rejectPending(): void {
+    this.clearMeasure();
+    this.ready = false;
+    const error = new CommandError('Connection interrupted. An action may already have saved. Review the table after reconnecting before trying it again.', 'UNCONFIRMED', true);
+    if (this.pending.size) reportCommandError(error);
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+    useStore.setState({ pendingCommands: 0, undoReceipt: null });
   }
 
   // --------------------------------------------------------------------------
@@ -50,6 +174,10 @@ export class TableConnection {
   // --------------------------------------------------------------------------
 
   private _openSocket(): void {
+    this.rejectPending();
+    this.pendingPings.clear();
+    this.clockSamples = [];
+    useStore.setState({ clockOffsetMs: null });
     if (this.ws) {
       this.ws.onopen = null;
       this.ws.onmessage = null;
@@ -70,12 +198,11 @@ export class TableConnection {
 
     ws.onopen = () => {
       this._resetSilenceTimer();
-      this._startPing();
-      this.send({
+      void this.send({
         type: 'join',
         protocolVersion: PROTOCOL_VERSION,
         campaignId: this.campaignId!,
-      });
+      }).catch(() => {});
     };
 
     ws.onmessage = (evt) => {
@@ -93,6 +220,7 @@ export class TableConnection {
     };
 
     ws.onclose = () => {
+      this.rejectPending();
       this._stopPing();
       this._clearSilenceTimer();
       if (!this.intentionalClose) {
@@ -110,14 +238,32 @@ export class TableConnection {
 
     switch (msg.type) {
       case 'joined':
-        store.setConnection('open');
         store.setSelf({ userId: msg.userId, username: msg.username, role: msg.role });
-        store.setLastErrorMessage(null);
-        this.reconnectAttempt = 0;
+        this._startPing();
+        this._sendPing();
         break;
 
       case 'snapshot':
+        this.clearMeasure();
         store.applySnapshot(msg);
+        this.ready = true;
+        this.reconnectAttempt = 0;
+        store.setConnection('open');
+        break;
+
+      case 'commandAck': {
+        const pending = this.pending.get(msg.requestId);
+        if (!pending) break;
+        clearTimeout(pending.timer);
+        this.pending.delete(msg.requestId);
+        useStore.setState((s) => ({ pendingCommands: this.pending.size, saveOutcome: s.lastErrorMessage ? s.saveOutcome : 'saved',
+          ...(msg.undo && msg.undo.boardGeneration === s.boardGeneration && pending.epoch === s.snapshotEpoch ? { undoReceipt: msg.undo } : {}) }));
+        pending.resolve(msg);
+        break;
+      }
+
+      case 'undoInvalidated':
+        useStore.setState((state) => msg.boardGeneration >= state.boardGeneration ? { boardGeneration: msg.boardGeneration, undoReceipt: null } : {});
         break;
 
       case 'presence':
@@ -216,7 +362,7 @@ export class TableConnection {
       case 'mediaControl': {
         // Record the table-playback state — the audio dock follows it
         // (including docks that mount later, e.g. via the auto-open below).
-        store.setMediaSync(msg.assetId, { action: msg.action, time: msg.time, atMs: Date.now() });
+        store.setMediaSync(msg.assetId, { action: msg.action, time: msg.time, atMs: msg.atMs });
         if (msg.action === 'play') {
           store.openAudioDock(msg.assetId);
         } else if (msg.action === 'stop') {
@@ -228,6 +374,18 @@ export class TableConnection {
       }
 
       case 'error': {
+        if (msg.requestId) {
+          const pending = this.pending.get(msg.requestId);
+          if (pending) {
+            const error = new CommandError(msg.message, msg.code);
+            if (msg.code === 'UNDO_STALE') useStore.setState((state) => state.undoReceipt?.receiptId === pending.undoReceiptId ? { undoReceipt: null } : {});
+            clearTimeout(pending.timer);
+            this.pending.delete(msg.requestId);
+            useStore.setState({ pendingCommands: this.pending.size });
+            reportCommandError(error);
+            pending.reject(error);
+          }
+        }
         const authCodes: string[] = ['NOT_MEMBER', 'FORBIDDEN', 'PROTOCOL_MISMATCH'];
         if (msg.fatal) {
           this.intentionalClose = true;
@@ -245,9 +403,15 @@ export class TableConnection {
         break;
       }
 
-      case 'pong':
-        // heartbeat acknowledged — silence timer already reset on message receipt
+      case 'pong': {
+        if (!this.pendingPings.delete(msg.sentAt) || !Number.isFinite(msg.serverAt)) break;
+        const sample = clockSample(msg.sentAt, Date.now(), msg.serverAt);
+        if (sample.rtt < 0 || sample.rtt > 10_000) break;
+        this.clockSamples = [...this.clockSamples.slice(-4), sample];
+        const best = this.clockSamples.reduce((a, b) => a.rtt < b.rtt ? a : b);
+        useStore.setState({ clockOffsetMs: best.offset });
         break;
+      }
 
       default:
         // Unknown message type — ignore for forward-compat
@@ -255,10 +419,17 @@ export class TableConnection {
     }
   }
 
+  private _sendPing(): void {
+    const sentAt = Date.now();
+    this.pendingPings.clear();
+    this.pendingPings.add(sentAt);
+    void this.send({ type: 'ping', sentAt }).catch(() => this.pendingPings.delete(sentAt));
+  }
+
   private _startPing(): void {
     this._stopPing();
     this.pingTimer = setInterval(() => {
-      this.send({ type: 'ping', sentAt: Date.now() });
+      this._sendPing();
     }, PING_INTERVAL_MS);
   }
 
@@ -324,6 +495,7 @@ export class TableConnection {
   };
 
   private _cleanup(): void {
+    this.rejectPending();
     this._stopPing();
     this._clearSilenceTimer();
     if (this.reconnectTimer !== null) {

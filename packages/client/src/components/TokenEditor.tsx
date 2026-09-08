@@ -1,29 +1,20 @@
 import { useRef, useState, type ChangeEvent } from 'react';
-import type { ClientMessage, TokenView, Sharing, UploadAssetResponse, TokenStatBlock } from '@vtt/shared';
+import type { TokenView, Sharing, UploadAssetResponse, TokenStatBlock } from '@vtt/shared';
 import { defaultSharing, CONDITIONS } from '@vtt/shared';
 import { useStore } from '../store';
 import { apiUpload, ApiRequestError } from '../lib/api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { SharePicker } from './SharePicker';
+import { draftPatch, useDraft } from '../lib/draft';
+import { SaveFeedback, useSaveCommand } from './SaveFeedback';
+import { usePanelPosition } from '../lib/panel';
+import { snapToGrid } from '../lib/grid';
+import { viewportCenterBoard } from '../lib/view';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 const FILL_SWATCHES = ['#5b86c2', '#69b7a6', '#b6485a', '#e08a4b', '#9b7bd0', '#7d9b54', '#c2974b', '#8a8a8a'];
 const MAX_IMG_SIZE = 100 * 1024 * 1024;
-
-// Board-space coordinate at the centre of the visible canvas (for placing a new token).
-function viewportCenterBoardPoint(): { x: number; y: number } {
-  const el = document.querySelector('[aria-label="Campaign map canvas"]') as HTMLElement | null;
-  const view = useStore.getState().boardView;
-  const rect = el?.getBoundingClientRect();
-  const cx = rect ? rect.width / 2 : 400;
-  const cy = rect ? rect.height / 2 : 300;
-  return { x: (cx - view.x) / view.scale, y: (cy - view.y) / view.scale };
-}
 
 /**
  * Token create/edit panel rendered over the canvas (non-modal). The DM may
@@ -41,33 +32,46 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
   const uploadsLocked = useStore((s) => s.uploadsLocked);
   const closePanel = useStore((s) => s.closePanel);
   const bringPanelToFront = useStore((s) => s.bringPanelToFront);
+  const { panelRef, pos } = usePanelPosition(stackIndex);
 
   const isDm = self?.role === 'dm';
   const existing: TokenView | undefined = tokenId ? tokens.find((t) => t.id === tokenId) : undefined;
 
-  const [name, setName] = useState(existing?.name ?? '');
-  const [shape, setShape] = useState<TokenView['shape']>(existing?.shape ?? 'round');
-  const [allegiance, setAllegiance] = useState<TokenView['allegiance']>(existing?.allegiance ?? 'ally');
-  const [size, setSize] = useState<TokenView['size']>(existing?.size ?? 'M');
-  const [ownerUserId, setOwnerUserId] = useState<string | null>(existing?.ownerUserId ?? (isDm ? null : self?.userId ?? null));
-  const [fill, setFill] = useState(existing?.fill ?? FILL_SWATCHES[0]!);
-  const [hasHp, setHasHp] = useState(existing?.maxHp != null);
-  const [hp, setHp] = useState(existing?.hp ?? 10);
-  const [maxHp, setMaxHp] = useState(existing?.maxHp ?? 10);
-  const [dmOnly, setDmOnly] = useState(existing?.dmOnly ?? false);
-  const [sharing, setSharing] = useState<Sharing>(existing?.sharing ?? defaultSharing());
-  const [conditions, setConditions] = useState<string[]>(existing?.conditions ?? []);
   const BLANK_SB: TokenStatBlock = { ac: null, speed: '', str: null, dex: null, con: null, int: null, wis: null, cha: null, notes: '' };
-  const [hasStats, setHasStats] = useState(existing?.statBlock != null);
-  const [sb, setSb] = useState<TokenStatBlock>(existing?.statBlock ?? BLANK_SB);
-  const setSbField = (k: keyof TokenStatBlock, v: number | string | null) => setSb((s) => ({ ...s, [k]: v }));
+  const latest = {
+    name: existing?.name ?? '', shape: existing?.shape ?? 'round', allegiance: existing?.allegiance ?? 'ally', size: existing?.size ?? 'M',
+    ownerUserId: existing ? existing.ownerUserId : isDm ? null : self?.userId ?? null,
+    fill: existing ? existing.fill : FILL_SWATCHES[0]!, hp: existing?.hp ?? null, maxHp: existing?.maxHp ?? null,
+    dmOnly: existing?.dmOnly ?? false, sharing: existing?.sharing ?? defaultSharing(), conditions: existing?.conditions ?? [], statBlock: existing?.statBlock ?? null,
+  };
+  const draft = useDraft(latest, existing?.revision ?? 0);
+  const { name, shape, allegiance, size, ownerUserId, dmOnly, sharing, conditions } = draft.draft;
+  const fill = draft.draft.fill ?? FILL_SWATCHES[0]!;
+  const hp = draft.draft.hp ?? 10, maxHp = draft.draft.maxHp ?? 10;
+  const hasHp = draft.draft.maxHp !== null, hasStats = draft.draft.statBlock !== null;
+  const sb = draft.draft.statBlock ?? BLANK_SB;
+  const setName = (v: string) => draft.setField('name', v);
+  const setShape = (v: TokenView['shape']) => draft.setField('shape', v);
+  const setAllegiance = (v: TokenView['allegiance']) => draft.setField('allegiance', v);
+  const setSize = (v: TokenView['size']) => draft.setField('size', v);
+  const setOwnerUserId = (v: string | null) => draft.setField('ownerUserId', v);
+  const setFill = (v: string) => draft.setField('fill', v);
+  const setHp = (v: number) => draft.setField('hp', v);
+  const setMaxHp = (v: number) => draft.setField('maxHp', v);
+  const setHasHp = (v: boolean) => { draft.setField('hp', v ? hp : null); draft.setField('maxHp', v ? maxHp : null); };
+  const setDmOnly = (v: boolean) => draft.setField('dmOnly', v);
+  const setSharing = (v: Sharing) => draft.setField('sharing', v);
+  const setHasStats = (v: boolean) => draft.setField('statBlock', v ? BLANK_SB : null);
+  const setSbField = (k: keyof TokenStatBlock, v: number | string | null) => draft.setField('statBlock', (s) => ({ ...(s ?? BLANK_SB), [k]: v }));
+  const save = useSaveCommand();
   const [assetId, setAssetId] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(existing?.imageUrl ?? null);
   const [uploading, setUploading] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(Boolean(tokenId));
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const canSubmit = connection === 'open' && name.trim() !== '';
+  const canSubmit = connection === 'open' && name.trim() !== '' && !save.saving && !save.blocked && !uploading && (!tokenId || !!existing);
   const candidates = members.filter((m) => m.role === 'player');
   const uploadBlocked = !isDm && uploadsLocked;
   // Image can only be set at creation time (tokenUpdate doesn't carry an asset).
@@ -91,20 +95,23 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
     }
   }
 
-  function submit() {
+  async function submit() {
     if (!canSubmit) return;
     const hpFields = hasHp ? { hp, maxHp } : { hp: null, maxHp: null };
     const combat = { conditions, statBlock: hasStats ? sb : null };
+    let ack;
     if (tokenId && existing) {
-      sendWs({
-        type: 'tokenUpdate', tokenId, name: name.trim(), shape, allegiance, size, fill, sharing, ...hpFields, ...combat,
-        ...(isDm ? { ownerUserId, dmOnly } : {}),
-      });
+      const patch = draftPatch(draft.base, { ...draft.draft, name: name.trim() });
+      if (!isDm) {
+        delete patch.changes.ownerUserId; delete patch.expected.ownerUserId;
+        delete patch.changes.dmOnly; delete patch.expected.dmOnly;
+      }
+      ack = await save.run({ type: 'tokenUpdate', tokenId, baseRevision: draft.revision, expected: patch.expected, ...patch.changes });
     } else {
-      const pt = viewportCenterBoardPoint();
-      const x = grid.snap ? Math.round((pt.x - grid.offsetX) / grid.cell) * grid.cell + grid.offsetX : pt.x;
-      const y = grid.snap ? Math.round((pt.y - grid.offsetY) / grid.cell) * grid.cell + grid.offsetY : pt.y;
-      sendWs({
+      const pt = viewportCenterBoard();
+      const x = grid.snap ? snapToGrid(pt.x, grid.cell, grid.offsetX) : pt.x;
+      const y = grid.snap ? snapToGrid(pt.y, grid.cell, grid.offsetY) : pt.y;
+      ack = await save.run({
         type: 'tokenAdd', name: name.trim(), shape, allegiance, size, fill, sharing, x, y, ...combat,
         // For players the server forces owner=self & dmOnly=false; sending sane defaults.
         ownerUserId: isDm ? ownerUserId : (self?.userId ?? null),
@@ -113,24 +120,26 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
         ...hpFields,
       });
     }
-    closePanel(panelId);
+    if (ack) closePanel(panelId);
   }
 
   const toggleCondition = (c: string) =>
-    setConditions((cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
+    draft.setField('conditions', (cs) => (cs.includes(c) ? cs.filter((x) => x !== c) : [...cs, c]));
 
   const labelCls = 'eyebrow';
   const rowCls = 'flex flex-col gap-1.5';
 
   return (
     <div
-      className="absolute inset-0 flex flex-col lg:inset-auto lg:top-4 lg:bottom-4 lg:w-[380px] lg:rounded-xl lg:shadow-2xl lg:overflow-hidden"
+      ref={panelRef} tabIndex={-1} role="dialog" aria-label="Token editor"
+      className="absolute flex flex-col rounded-xl shadow-2xl overflow-hidden"
+      onFocusCapture={() => bringPanelToFront(panelId)}
       onPointerDownCapture={() => bringPanelToFront(panelId)}
       style={{
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         zIndex: 8 + stackIndex,
-        right: `calc(1rem + ${(stackIndex % 5) * 36}px)`,
+        left: pos.x, top: pos.y, width: 380, maxWidth: 'calc(100% - 16px)', height: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)',
       }}
     >
       {/* Header */}
@@ -144,6 +153,7 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
         <button
           type="button"
           onClick={() => closePanel(panelId)}
+          disabled={save.saving || uploading}
           className="p-1.5 rounded transition-colors"
           style={{ color: 'var(--low)' }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--hi)'; }}
@@ -157,8 +167,10 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
         </button>
       </div>
 
+      <SaveFeedback save={save} conflicts={draft.conflicts} latest={latest} onUseTable={draft.reset} onKeepChanges={draft.keepChanges} />
+      {tokenId && !existing && <p role="alert" className="p-3 text-sm">This token was removed or is no longer visible. Your draft is kept here.</p>}
       {/* Body */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-4">
+      <fieldset disabled={save.saving} className="flex-1 min-h-0 min-w-0 overflow-y-auto p-4 flex flex-col gap-4">
         {/* Live preview + name */}
         <div className="flex items-center gap-3">
           <div
@@ -174,7 +186,7 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
             </div>
           </div>
           <div className="flex-1">
-            <Input placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} autoFocus={!tokenId} />
+            <Input aria-label="Token name" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} autoFocus={!tokenId} />
           </div>
         </div>
 
@@ -288,6 +300,9 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
           )}
         </div>
 
+        <details open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer text-sm py-2" style={{ color: 'var(--mid)' }}>Conditions and combat stats · optional</summary>
+          <div className="space-y-3 pt-2">
         {/* Conditions — visible to everyone */}
         <div className={rowCls}>
           <span className={labelCls}>Conditions</span>
@@ -357,6 +372,9 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
           )}
         </div>
 
+          </div>
+        </details>
+
         {/* DM only visibility — DM only */}
         {isDm && (
           <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--mid)' }}>
@@ -366,12 +384,12 @@ export function TokenEditor({ tokenId, panelId, stackIndex }: { tokenId: string 
         )}
 
         {error && <p role="alert" className="text-xs" style={{ color: 'var(--garnet)' }}>{error}</p>}
-      </div>
+      </fieldset>
 
       {/* Footer */}
       <div className="flex items-center justify-end gap-2 px-4 py-3 shrink-0" style={{ borderTop: '1px solid var(--border-soft)' }}>
-        <Button size="sm" variant="ghost" onClick={() => closePanel(panelId)}>Cancel</Button>
-        <Button size="sm" onClick={submit} disabled={!canSubmit}>{tokenId ? 'Save' : 'Place on board'}</Button>
+        <Button size="sm" variant="ghost" onClick={() => closePanel(panelId)} disabled={save.saving || uploading}>Cancel</Button>
+        <Button size="sm" onClick={submit} disabled={!canSubmit}>{save.saving ? 'Saving…' : save.error ? 'Retry save' : tokenId ? 'Save' : 'Place on board'}</Button>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { readDiceDisplay, persistDiceDisplay, type DiceDisplay } from './lib/dicePlayback';
 import type {
   PublicUser,
   CampaignListItem,
@@ -10,6 +11,7 @@ import type {
   ChapterView,
   CharacterView,
   ServerSnapshotPayload,
+  ServerCommandAckPayload,
   TokenView,
   GridState,
   MemberEntry,
@@ -71,6 +73,16 @@ export interface ActivePalettePiece {
 
 /** AI generator dialog target. */
 export type GenKind = 'background' | 'prop';
+
+/** Full broadcasts reuse unchanged scene objects so memoized items stay idle. */
+function retainEntities<T extends { id: string }>(previous: T[], incoming: T[]): T[] {
+  const byId = new Map(previous.map((item) => [item.id, item]));
+  const next = incoming.map((item) => {
+    const old = byId.get(item.id);
+    return old && JSON.stringify(old) === JSON.stringify(item) ? old : item;
+  });
+  return next.length === previous.length && next.every((item, i) => item === previous[i]) ? previous : next;
+}
 
 const ROLL_LOG_MAX = 200;
 
@@ -151,6 +163,11 @@ const DEFAULT_GRID: GridState = {
 
 interface TableSlice {
   connection: ConnectionState;
+  snapshotEpoch: number;
+  pendingCommands: number;
+  saveOutcome: 'idle' | 'saved' | 'failed' | 'unconfirmed';
+  boardGeneration: number;
+  undoReceipt: NonNullable<ServerCommandAckPayload['undo']> | null;
   self: SelfInfo | null;
   campaignName: string;
   presence: PresenceEntry[];
@@ -167,7 +184,8 @@ interface TableSlice {
   documents: AssetManifest[];
   /** open floating panels over the board (docs + notes + token editor), render order = z-order */
   openPanels: TablePanel[];
-  /** latest table-playback command per audio asset (drives synced players) */
+  /** The single accepted table timeline, keyed by its current audio asset. */
+  clockOffsetMs: number | null;
   mediaSync: Record<string, { action: 'play' | 'pause' | 'stop'; time: number; atMs: number }>;
   /** bottom audio dock — one active track at a time */
   audioDock: { assetId: string; minimized: boolean } | null;
@@ -175,6 +193,9 @@ interface TableSlice {
   rollToasts: RollLogEntry[];
   /** rolls awaiting the cinematic dice overlay — fed only by live rolls, never the snapshot */
   rollQueue: RollLogEntry[];
+  diceDisplay: DiceDisplay;
+  setDiceDisplay: (value: DiceDisplay) => void;
+  showRollToast: (entry: RollLogEntry) => void;
   /** transient presence-join popups */
   joinToasts: JoinToast[];
   /** transient nat-20 board moment IDs (ring sweep) */
@@ -233,7 +254,7 @@ interface TableSlice {
   setBoardView: (view: BoardView) => void;
   addRollEntry: (entry: RollLogEntry) => void;
   dismissRollToast: (id: string) => void;
-  shiftRollQueue: () => void;
+  shiftRollQueue: (id: string) => void;
   addJoinToast: (entry: PresenceEntry) => void;
   dismissJoinToast: (id: string) => void;
   addBoardMoment: (id: string) => void;
@@ -289,6 +310,11 @@ type StoreState = AuthSlice & RouteSlice & LobbySlice & TableSlice;
 
 const tableDefaults = {
   connection: 'closed' as ConnectionState,
+  snapshotEpoch: 0,
+  pendingCommands: 0,
+  saveOutcome: 'idle' as const,
+  boardGeneration: 0,
+  undoReceipt: null as NonNullable<ServerCommandAckPayload['undo']> | null,
   self: null,
   campaignName: '',
   presence: [],
@@ -301,6 +327,7 @@ const tableDefaults = {
   assets: null,
   documents: [],
   openPanels: [] as TablePanel[],
+  clockOffsetMs: null,
   mediaSync: {},
   audioDock: null,
   rollToasts: [],
@@ -374,19 +401,25 @@ export const useStore = create<StoreState>()((set) => ({
   // -------------------------------------------------------------------------
   ...tableDefaults,
 
-  setConnection: (connection) => set({ connection }),
+  setConnection: (connection) => set({ connection, ...(connection === 'open' ? {} : { undoReceipt: null }) }),
   setSelf: (self) => set({ self }),
 
   applySnapshot: (snap) =>
-    set({
+    set((s) => ({
+      snapshotEpoch: s.snapshotEpoch + 1,
+      boardGeneration: snap.boardGeneration,
+      undoReceipt: null,
+      ownMeasure: null,
+      ownMeasureShared: false,
+      sharedMeasures: {},
       mediaSync: snap.media
-        ? { [snap.media.assetId]: { action: snap.media.action, time: snap.media.time, atMs: Date.now() - snap.media.elapsedMs } }
+        ? { [snap.media.assetId]: { action: snap.media.action, time: snap.media.time, atMs: snap.media.atMs } }
         : {},
       audioDock: snap.media
         ? { assetId: snap.media.assetId, minimized: false }
         : null,
       campaignName: snap.campaign.name,
-      board: snap.board,
+      board: retainEntities(s.board, snap.board),
       uploadsLocked: snap.uploadsLocked,
       mapLocked: snap.mapLocked,
       presence: snap.presence,
@@ -397,38 +430,41 @@ export const useStore = create<StoreState>()((set) => ({
       myNotes: snap.myNotes,
       chapters: snap.chapters,
       characters: snap.characters,
-      tokens: snap.tokens,
+      tokens: retainEntities(s.tokens, snap.tokens),
       grid: snap.grid,
-      pieces: snap.pieces,
-      aoes: snap.aoes ?? [],
+      pieces: retainEntities(s.pieces, snap.pieces),
+      aoes: retainEntities(s.aoes, snap.aoes ?? []),
       initiative: snap.initiative ?? { active: false, round: 0, turnIndex: 0, entries: [] },
       mapMeta: snap.mapMeta,
       features: snap.features,
       templates: snap.templates,
-      lastErrorMessage: null,
-    }),
+    })),
 
   setPresence: (entries) => set({ presence: entries }),
-  setBoard: (items) => set({ board: items }),
+  setBoard: (items) => set((s) => ({ board: retainEntities(s.board, items) })),
   setUploadsLocked: (locked) => set({ uploadsLocked: locked }),
   setMapLocked: (locked) => set({ mapLocked: locked }),
   setBoardView: (view) => set({ boardView: view }),
 
+  diceDisplay: readDiceDisplay(),
+  setDiceDisplay: (value) => {
+    persistDiceDisplay(value);
+    set({ diceDisplay: value, rollQueue: [], ...(value === 'instant' ? { rollToasts: [] } : {}) });
+  },
+  showRollToast: (entry) => set((s) => ({ rollToasts: [...s.rollToasts.filter((roll) => roll.id !== entry.id), entry].slice(-3) })),
   addRollEntry: (entry) =>
     set((s) => ({
       rollLog: [entry, ...s.rollLog].slice(0, ROLL_LOG_MAX),
-      // Every received roll also pops a transient toast (max 3 stacked).
-      rollToasts: [...s.rollToasts, entry].slice(-3),
-      // …and queues the cinematic overlay. Only LIVE rolls land here (the
-      // snapshot sets rollLog wholesale and never touches this), so joining a
-      // campaign never replays past rolls. Cap so a flurry can't back up forever.
-      rollQueue: [...s.rollQueue, entry].slice(-8),
+      rollToasts: s.diceDisplay === 'instant' ? [] : [...s.rollToasts, entry].slice(-3),
+      // One cinematic result at a time. Burst results appear immediately in
+      // compact toasts and the log rather than building a fullscreen backlog.
+      rollQueue: s.diceDisplay === 'cinematic' && !s.rollQueue.length ? [entry] : s.rollQueue,
     })),
 
   dismissRollToast: (id) =>
     set((s) => ({ rollToasts: s.rollToasts.filter((t) => t.id !== id) })),
 
-  shiftRollQueue: () => set((s) => ({ rollQueue: s.rollQueue.slice(1) })),
+  shiftRollQueue: (id) => set((s) => ({ rollQueue: s.rollQueue.filter((entry) => entry.id !== id) })),
 
   addJoinToast: (entry) =>
     set((s) => ({
@@ -439,7 +475,8 @@ export const useStore = create<StoreState>()((set) => ({
     set((s) => ({ joinToasts: s.joinToasts.filter((t) => t.id !== id) })),
 
   addBoardMoment: (id) =>
-    set((s) => ({ boardMoments: [...s.boardMoments, id].slice(-5) })),
+    set((s) => ({ boardMoments: s.diceDisplay === 'instant' || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+      ? s.boardMoments : [...s.boardMoments, id].slice(-5) })),
 
   removeBoardMoment: (id) =>
     set((s) => ({ boardMoments: s.boardMoments.filter((m) => m !== id) })),
@@ -512,7 +549,7 @@ export const useStore = create<StoreState>()((set) => ({
     }),
 
   setMediaSync: (assetId, cmd) =>
-    set((s) => ({ mediaSync: { ...s.mediaSync, [assetId]: cmd } })),
+    set({ mediaSync: cmd.action === 'stop' ? {} : { [assetId]: cmd } }),
 
   openAudioDock: (assetId) =>
     set((s) => ({
@@ -541,8 +578,7 @@ export const useStore = create<StoreState>()((set) => ({
   removeNote: (noteId) =>
     set((s) => ({
       myNotes: s.myNotes.filter((n) => n.id !== noteId),
-      // Close any panel showing the deleted note.
-      openPanels: s.openPanels.filter((p) => !(p.kind === 'note' && p.noteId === noteId)),
+      // Editors retain drafts when another user deletes a note or revokes access.
     })),
 
   setChapters: (chapters) => set({ chapters }),
@@ -554,7 +590,7 @@ export const useStore = create<StoreState>()((set) => ({
   resetTable: () => set(tableDefaults),
 
   // Token & grid actions
-  setTokens: (tokens) => set({ tokens }),
+  setTokens: (tokens) => set((s) => ({ tokens: retainEntities(s.tokens, tokens) })),
   setGrid: (grid) => set({ grid }),
   setBoardTool: (tool) => set({ boardTool: tool }),
   setAoeShape: (shape) => set({ aoeShape: shape }),
@@ -573,8 +609,8 @@ export const useStore = create<StoreState>()((set) => ({
   setSelectedTokenId: (id) => set({ selectedTokenId: id }),
 
   // Map creation
-  setPieces: (pieces) => set({ pieces }),
-  setAoes: (aoes) => set({ aoes }),
+  setPieces: (pieces) => set((s) => ({ pieces: retainEntities(s.pieces, pieces) })),
+  setAoes: (aoes) => set((s) => ({ aoes: retainEntities(s.aoes, aoes) })),
   setInitiative: (initiative) => set({ initiative }),
   setMapMeta: (mapMeta) => set({ mapMeta }),
   setEditorMode: (editorMode) =>

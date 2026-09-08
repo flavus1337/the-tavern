@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { PresenceEntry } from '@vtt/shared';
 import { useStore } from '../store';
-import { TableConnection } from '../ws/connection';
+import { TableConnection, sendWs } from '../ws/connection';
 import { CanvasViewer } from './CanvasViewer';
 import { DocumentViewer } from './DocumentViewer';
 import { NoteEditor } from './NoteEditor';
 import { TokenEditor } from './TokenEditor';
+import { TokensPanel } from './TokensPanel';
+import { UndoControl } from './UndoControl';
 import { RollToasts } from './RollToasts';
 import { DiceOverlay } from './DiceOverlay';
 import { AudioDock } from './AudioDock';
@@ -20,7 +22,6 @@ import { BuildInspector } from './build/BuildInspector';
 import { GenDialog } from './build/GenDialog';
 import { D20Logo } from './D20Logo';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
-import type { ClientMessage } from '@vtt/shared';
 
 export function TableLayout() {
   const activeCampaignId = useStore((s) => s.activeCampaignId);
@@ -31,6 +32,8 @@ export function TableLayout() {
   const documents = useStore((s) => s.documents);
   const self = useStore((s) => s.self);
   const lastErrorMessage = useStore((s) => s.lastErrorMessage);
+  const pendingCommands = useStore((s) => s.pendingCommands);
+  const saveOutcome = useStore((s) => s.saveOutcome);
   const openPanels = useStore((s) => s.openPanels);
   const setRoute = useStore((s) => s.setRoute);
   const resetTable = useStore((s) => s.resetTable);
@@ -42,8 +45,10 @@ export function TableLayout() {
   const genDialog = useStore((s) => s.genDialog);
 
   const connRef = useRef<TableConnection | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<'dice' | 'combat' | 'docs' | 'notes' | 'dm'>('dice');
+  const [sidebarTab, setSidebarTab] = useState<'dice' | 'tokens' | 'combat' | 'docs' | 'notes' | 'dm'>('dice');
 
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const menuRef = useRef<HTMLDetailsElement>(null);
   const isDm = self?.role === 'dm';
   const isConnected = connection === 'open';
   const buildMode = isDm && editorMode === 'build';
@@ -72,25 +77,28 @@ export function TableLayout() {
     setRoute('lobby');
   }
 
-  // Dismiss error toast after 5s
-  useEffect(() => {
-    if (!lastErrorMessage) return;
-    const t = setTimeout(() => {
-      useStore.getState().setLastErrorMessage(null);
-    }, 5000);
-    return () => clearTimeout(t);
-  }, [lastErrorMessage]);
-
   const handlePresenceJoin = useCallback((entry: PresenceEntry) => {
     addJoinToast(entry);
   }, [addJoinToast]);
+
+  // Opening an editor returns the available height to its board container on small screens.
+  useEffect(() => { if (openPanels.length) setDrawerOpen(false); }, [openPanels]);
+
+  useEffect(() => {
+    const closeOutside = (event: Event) => {
+      if (menuRef.current?.open && !menuRef.current.contains(event.target as Node)) menuRef.current.open = false;
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, []);
 
   // Listen for empty-board DM CTA tab switch
   useEffect(() => {
     function onSwitchTab(e: Event) {
       const tab = (e as CustomEvent<string>).detail;
-      if (tab === 'dice' || tab === 'combat' || tab === 'docs' || tab === 'notes' || tab === 'dm') {
-        setSidebarTab(tab as 'dice' | 'combat' | 'docs' | 'notes' | 'dm');
+      if (tab === 'dice' || tab === 'tokens' || tab === 'combat' || tab === 'docs' || tab === 'notes' || tab === 'dm') {
+        setSidebarTab(tab as typeof sidebarTab);
+        setDrawerOpen(true);
       }
     }
     window.addEventListener('vtt:switch-sidebar-tab', onSwitchTab);
@@ -100,133 +108,46 @@ export function TableLayout() {
   return (
     <div className="h-dvh flex flex-col overflow-hidden" style={{ background: 'var(--bg)' }}>
 
-      {/* Top bar — 56px, three zones */}
-      <header
-        style={{
-          height: 56,
-          flexShrink: 0,
-          background: 'var(--surface)',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          paddingLeft: 18,
-          paddingRight: 16,
-          gap: 16,
-          zIndex: 10,
-          position: 'relative',
-        }}
-      >
-        {/* Left zone: d20 + campaign name */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
-          <span style={{ color: 'var(--ember)', flexShrink: 0 }}>
-            <D20Logo size={26} />
-          </span>
-          <span
-            style={{
-              fontFamily: 'var(--serif)',
-              fontSize: 17,
-              fontWeight: 600,
-              color: 'var(--hi)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
+      <header className="table-header">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="shrink-0" style={{ color: 'var(--ember)' }}><D20Logo size={24} /></span>
+          <span className="truncate font-semibold" style={{ fontFamily: 'var(--serif)', fontSize: 17, color: 'var(--hi)' }}>
             {campaignName || 'Loading…'}
           </span>
-          {buildMode && (
-            <>
-              <span style={{ width: 1, height: 20, background: 'var(--border)' }} aria-hidden="true" />
-              <input
-                defaultValue={mapMeta.name}
-                key={mapMeta.name}
-                onBlur={(e) => {
-                  const name = e.target.value.trim() || 'Untitled map';
-                  if (name !== mapMeta.name) {
-                    const conn = (window as unknown as { __vttConn?: { send: (m: ClientMessage) => void } }).__vttConn;
-                    conn?.send({ type: 'setMapMeta', name });
-                  }
-                }}
-                aria-label="Map name"
-                style={{
-                  fontFamily: 'var(--serif)', fontSize: 15, color: 'var(--hi)', background: 'transparent',
-                  border: '1px solid transparent', borderRadius: 7, padding: '3px 7px', minWidth: 80, maxWidth: 220,
-                }}
-                onFocus={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; }}
-              />
-            </>
-          )}
         </div>
-
-        {/* Center zone: presence pill */}
-        <div style={{ display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
-          <PresenceBar entries={presence} onJoin={handlePresenceJoin} />
-        </div>
-
-        {/* Right zone: build/play switch + connection status + Leave */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, justifyContent: 'flex-end' }}>
-          {isDm && (
-            <div style={{ display: 'flex', overflow: 'hidden', borderRadius: 9, border: '1px solid var(--border)' }}>
-              {(['build', 'play'] as const).map((m) => {
-                const on = editorMode === m;
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setEditorMode(m)}
-                    aria-pressed={on}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12, fontWeight: 600,
-                      border: 'none', cursor: 'pointer', textTransform: 'capitalize',
-                      background: on ? 'var(--ember)' : 'transparent', color: on ? 'var(--ink)' : 'var(--mid)',
-                    }}
-                  >
-                    {m === 'build' ? (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="w-3.5 h-3.5"><path d="M14 7l4-4 3 3-4 4-3-3zm-1 1l-9 9 3 3 9-9-3-3z" strokeLinejoin="round" /></svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path d="M7 5l12 7-12 7z" /></svg>
-                    )}
-                    {m}
-                  </button>
-                );
-              })}
+        <div className="table-presence"><PresenceBar entries={presence} onJoin={handlePresenceJoin} /></div>
+        <div className="flex items-center gap-2 shrink-0">
+          {isDm && <div className="flex rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+            {(['play', 'build'] as const).map((mode) => <button key={mode} type="button" aria-pressed={editorMode === mode}
+              onClick={() => { setEditorMode(mode); if (mode === 'build') setDrawerOpen(true); }}
+              className="px-2 py-2 text-xs font-semibold capitalize"
+              style={{ background: editorMode === mode ? 'var(--ember)' : 'transparent', color: editorMode === mode ? 'var(--ink)' : 'var(--mid)' }}>{mode}</button>)}
+          </div>}
+          <span className="table-connection" role="status" aria-label={isConnected ? 'Connected' : connection === 'closed' ? 'Disconnected' : 'Reconnecting'}
+            title={isConnected ? 'Connected' : connection === 'closed' ? 'Disconnected' : 'Reconnecting'}>
+            <span aria-hidden="true" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: isConnected ? 'var(--teal)' : 'var(--gold)' }} />
+            <span className="table-connection-label">{isConnected ? 'Connected' : connection === 'closed' ? 'Disconnected' : 'Reconnecting'}</span>
+          </span>
+          <span role="status" className="text-xs whitespace-nowrap" style={{ color: saveOutcome === 'failed' || saveOutcome === 'unconfirmed' ? 'var(--gold)' : 'var(--mid)' }}>
+            {pendingCommands ? 'Saving…' : saveOutcome === 'saved' ? 'Saved' : saveOutcome === 'failed' ? 'Save failed' : saveOutcome === 'unconfirmed' ? 'Unconfirmed' : ''}
+          </span>
+          <details ref={menuRef} className="table-menu" onKeyDown={(event) => {
+            if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); }
+          }}>
+            <summary aria-label="Table menu" className="cursor-pointer rounded-lg px-2 py-2 text-sm font-semibold">⋯</summary>
+            <div className="table-menu-content">
+              <p className="text-sm">{isConnected ? 'Connected to the table' : connection === 'closed' ? 'Disconnected from the table' : 'Reconnecting to the table…'}</p>
+              <p className="eyebrow">At the table</p>
+              <ul className="space-y-1 text-sm">{presence.map((entry) => <li key={entry.userId}>{entry.username}{entry.role === 'dm' ? ' · DM' : ''}{entry.connected ? '' : ' · away'}</li>)}</ul>
+              {buildMode && <label className="block text-xs">Map name
+                <input key={mapMeta.name} defaultValue={mapMeta.name} aria-label="Map name"
+                  className="mt-1 w-full rounded-lg border p-2 text-sm" style={{ background: 'var(--bg)', borderColor: 'var(--border)', color: 'var(--hi)' }}
+                  onBlur={(event) => { const name = event.target.value.trim() || 'Untitled map'; if (name !== mapMeta.name) sendWs({ type: 'setMapMeta', name }); }} />
+              </label>}
+              <button type="button" onClick={handleLeave} disabled={pendingCommands > 0}
+                className="w-full rounded-lg border px-3 py-2 text-sm text-left disabled:opacity-50" style={{ borderColor: 'var(--border)' }}>Leave table</button>
             </div>
-          )}
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--mid)' }}
-            title={connection === 'open' ? 'Connected' : connection === 'connecting' ? 'Connecting…' : connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
-          >
-            <span
-              style={{
-                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                background: isConnected ? 'var(--teal)' : connection === 'connecting' || connection === 'reconnecting' ? 'var(--gold)' : 'var(--faint)',
-                boxShadow: isConnected ? '0 0 9px var(--teal)' : undefined,
-              }}
-              aria-hidden="true"
-            />
-            {isConnected ? 'Connected' : connection === 'connecting' ? 'Connecting…' : connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
-          </div>
-
-          <button
-            type="button"
-            onClick={handleLeave}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--low)',
-              fontSize: 13,
-              cursor: 'pointer',
-              padding: '6px 10px',
-              borderRadius: 7,
-              fontWeight: 500,
-              fontFamily: 'var(--sans)',
-              transition: 'color 0.15s',
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--hi)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--low)'; }}
-          >
-            Leave
-          </button>
+          </details>
         </div>
       </header>
 
@@ -249,7 +170,7 @@ export function TableLayout() {
           <span>{lastErrorMessage}</span>
           <button
             type="button"
-            onClick={() => useStore.getState().setLastErrorMessage(null)}
+            onClick={() => useStore.setState({ lastErrorMessage: null, saveOutcome: 'idle' })}
             style={{ color: 'var(--garnet)', background: 'none', border: 'none', cursor: 'pointer', marginLeft: 12, fontSize: 16 }}
             aria-label="Dismiss error"
           >
@@ -259,10 +180,11 @@ export function TableLayout() {
       )}
 
       {/* Main layout */}
-      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+      <div className={`table-main flex-1 min-h-0 ${drawerOpen ? 'drawer-expanded' : ''}`}>
         {/* Board area */}
-        <div className="flex-1 min-w-0 min-h-0 relative flex">
+        <div className="table-board flex-1 min-w-0 min-h-0 relative flex">
           <CanvasViewer />
+          <UndoControl />
           {openPanels.map((panel, i) => {
             if (panel.kind === 'doc') {
               return <DocumentViewer key={panel.panelId} panelId={panel.panelId} doc={panel.doc} stackIndex={i} />;
@@ -278,7 +200,7 @@ export function TableLayout() {
 
         {/* Sidebar — build inspector in build mode, else the play tabs */}
         <aside
-          className="w-full h-2/5 border-t md:w-[340px] md:h-auto md:border-t-0 md:border-l"
+          className={`table-sidebar ${drawerOpen ? 'drawer-open' : ''}`}
           style={{
             borderColor: 'var(--border)',
             background: 'var(--surface)',
@@ -288,6 +210,12 @@ export function TableLayout() {
             flexShrink: 0,
           }}
         >
+          <button type="button" className="sidebar-toggle" aria-expanded={drawerOpen} aria-controls="table-sidebar-content"
+            onClick={() => setDrawerOpen((open) => !open)}>
+            {drawerOpen ? 'Back to table' : 'Open tools'} · {buildMode ? 'Build' : sidebarTab === 'dm' ? 'DM' : sidebarTab.charAt(0).toUpperCase() + sidebarTab.slice(1)}
+            <span aria-hidden="true">{drawerOpen ? '⌄' : '⌃'}</span>
+          </button>
+          <div id="table-sidebar-content" className="sidebar-body">
           {buildMode ? (
             <div className="flex flex-col h-full"><BuildInspector /></div>
           ) : (
@@ -297,8 +225,9 @@ export function TableLayout() {
               onValueChange={(v) => setSidebarTab(v as typeof sidebarTab)}
               className="flex flex-col h-full"
             >
-              <TabsList>
+              <TabsList label="Table tools">
                 <TabsTrigger value="dice">Dice</TabsTrigger>
+                <TabsTrigger value="tokens">Tokens</TabsTrigger>
                 <TabsTrigger value="combat">Combat</TabsTrigger>
                 <TabsTrigger value="docs">
                   Docs
@@ -331,6 +260,8 @@ export function TableLayout() {
                 </div>
               </TabsContent>
 
+              <TabsContent value="tokens" className="flex flex-col overflow-hidden"><TokensPanel /></TabsContent>
+
               <TabsContent value="combat" className="flex flex-col h-full overflow-hidden">
                 <InitiativePanel />
               </TabsContent>
@@ -351,6 +282,7 @@ export function TableLayout() {
             </Tabs>
           </div>
           )}
+          </div>
         </aside>
       </div>
 

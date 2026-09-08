@@ -8,11 +8,15 @@ import { initMembershipsStore } from './auth/memberships.js';
 import { initInvitesStore } from './auth/invites.js';
 import { scanCampaigns, getAllCampaigns } from './campaign/registry.js';
 import { createApp } from './http/app.js';
-import { wss, handleUpgrade } from './ws/hub.js';
+import { closeWebSockets, handleUpgrade } from './ws/hub.js';
+import { drainCampaigns } from './campaign/commit.js';
+import { closeAssetWork, initAssetWork } from './http/assetWork.js';
+import { startMetrics } from './metrics.js';
 
 async function main(): Promise<void> {
   // Ensure data directory exists.
   await fs.mkdir(config.DATA_DIR, { recursive: true });
+  await initAssetWork();
 
   // Initialize stores.
   await initUsersStore();
@@ -39,6 +43,7 @@ async function main(): Promise<void> {
   });
 
   const campaignCount = getAllCampaigns().size;
+  const stopMetrics = startMetrics();
 
   log.info('');
   log.info('=== VTT Server Started ===');
@@ -50,19 +55,41 @@ async function main(): Promise<void> {
   log.info('=========================');
   log.info('');
 
-  // Graceful shutdown.
+  // Stop intake immediately, drain accepted commands, and bound socket teardown.
+  let stopping = false;
   const shutdown = (): void => {
+    if (stopping) return;
+    stopping = true;
     log.info('Shutting down...');
-    wss.close(() => {
-      server.close(() => {
-        log.info('Server closed');
-        process.exit(0);
-      });
+    const timeout = setTimeout(() => {
+      stopMetrics();
+      log.error('Shutdown timed out; pending journal will recover on restart');
+      process.exit(1);
+    }, 10_000);
+    void Promise.all([
+      drainCampaigns().then(closeAssetWork),
+      closeWebSockets(),
+      new Promise<void>((resolve) => server.close(() => resolve())),
+    ]).then(() => {
+      clearTimeout(timeout);
+      stopMetrics();
+      log.info('Server closed');
+      process.exit(0);
+    }).catch((err: unknown) => {
+      stopMetrics();
+      log.error(`Shutdown failed: ${String(err)}`);
+      process.exit(1);
     });
   };
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  if (process.send) {
+    process.on('message', (message: unknown) => {
+      if (message && typeof message === 'object' && 'type' in message && message.type === 'shutdown') shutdown();
+    });
+    process.once('disconnect', shutdown);
+  }
 }
 
 // Single-process server: a stray rejection or throw must NOT take down everyone's

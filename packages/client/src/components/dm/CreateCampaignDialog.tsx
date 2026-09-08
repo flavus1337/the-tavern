@@ -41,6 +41,7 @@ export function CreateCampaignDialog({ open, onClose, onCreate }: CreateCampaign
     <Dialog open={open} onClose={onClose}>
       <DialogContent title="New Campaign">
         <DialogHeader title="New Campaign" />
+        <p className="mb-4 text-sm" style={{ color: 'var(--low)' }}>Next, place your first map and create a player invitation from the table.</p>
         <form onSubmit={(e) => { void handleSubmit(e); }}>
           <div className="space-y-4">
             <div className="space-y-1.5">

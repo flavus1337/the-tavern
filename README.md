@@ -38,7 +38,7 @@ It is built for small groups: one DM, a few players — shared maps, tokens, dic
 
 ## Quick start
 
-The only requirement is **Node 22+** ([nodejs.org](https://nodejs.org)). Same flow on Linux, macOS, and Windows:
+Use **Node 24 LTS** ([nodejs.org](https://nodejs.org)); the minimum supported version is 22.13. The launcher uses Corepack when available, or an installed `pnpm@9.0.0` (`npm install -g pnpm@9.0.0`). Same flow on Linux, macOS, and Windows:
 
 ```bash
 git clone https://github.com/flavus1337/the-tavern.git
@@ -46,7 +46,7 @@ cd the-tavern
 node deploy/start.mjs
 ```
 
-The launcher checks dependencies, installs and builds on first run (this takes a minute), downloads `cloudflared` if it is not installed, optionally asks for a Gemini key to enable AI map generation, starts everything, and prints what you need:
+The launcher installs the frozen lockfile when dependencies change and rebuilds when source files change. It downloads `cloudflared` if needed, optionally asks for a Gemini key, starts everything, and prints what you need:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
@@ -61,6 +61,7 @@ Share the URL with your players. Log in as DM, create a campaign, build or pin a
 
 Notes:
 
+- Use `node deploy/start.mjs --local` to run without a public tunnel. After updating the checkout, `--update` forces a frozen dependency install and build; `--rebuild` forces only the build. Ctrl-C waits for the server to finish accepted writes before exiting.
 - The tunnel URL changes on every restart (free Cloudflare quick tunnel: no account, no port forwarding). For a permanent URL and start-on-boot, follow [DEPLOY.md](DEPLOY.md).
 - **AI map generation is optional.** Paste a [Google Gemini](https://aistudio.google.com/apikey) API key when the launcher asks (or set `LLM_API_KEY`) to turn it on for the session — skip it and everything else still works. The key is passed to the server in memory only, never saved.
 - On a remote Linux box, run the launcher inside `tmux` so it survives disconnects: `tmux new -d -s tavern "node deploy/start.mjs"`, then `tmux attach -t tavern` to read the banner.
@@ -70,7 +71,8 @@ Notes:
 ## Development
 
 ```bash
-pnpm install
+nvm use          # optional, selects Node 24 from .nvmrc
+pnpm install --frozen-lockfile
 pnpm dev          # server on :8080 + client with hot reload on :5173
 ```
 
@@ -108,8 +110,14 @@ scripts/    smoke-test.ts, an end-to-end test against a real server instance
 Single Node process, JSON files for persistence, WebSockets for live sync, scrypt plus httpOnly-cookie sessions for auth. The board (maps, tokens, pieces, AoE templates, initiative, grid) is server-authoritative and broadcast to everyone live. No database, no Docker required, no external services at game time (AI generation is the only optional outbound call).
 
 ```bash
-pnpm -r typecheck && pnpm -r build && pnpm smoke   # full verification suite (200+ assertions)
+pnpm -r typecheck && pnpm -r build && pnpm smoke
+pnpm persistence-regression && pnpm protocol-regression && pnpm session-regression
+pnpm maintenance-regression && pnpm launcher-regression
 ```
+
+CI runs these and the auth, image, transient transport, and client regressions on Node 22 and 24. Fixtures use temporary directories. Saved maps live in each campaign's `.runtime/map-templates.json`; older embedded templates migrate atomically on load. Back up the whole campaign directory, including `.runtime`, while the server is stopped.
+
+The server writes one local metrics summary per minute and on shutdown: command and commit durations, commit failures, queue depth, reconnect observations, and event-loop delay. Duration samples are bounded to the most recent 512 per metric; reports contain no user or campaign labels and send no telemetry elsewhere.
 
 ## Roadmap
 

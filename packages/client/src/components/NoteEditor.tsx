@@ -1,11 +1,14 @@
 import { useRef, useState } from 'react';
-import type { ClientMessage, Sharing } from '@vtt/shared';
+import type { Sharing } from '@vtt/shared';
 import { defaultSharing } from '@vtt/shared';
 import { useStore } from '../store';
 import { renderMarkdown } from '../lib/markdown';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { SharePicker, ShareBadge } from './SharePicker';
+import { draftPatch, useDraft } from '../lib/draft';
+import { SaveFeedback, useSaveCommand } from './SaveFeedback';
+import { usePanelPosition } from '../lib/panel';
 
 /**
  * Note editor rendered over the canvas area (non-modal — the sidebar stays
@@ -17,35 +20,37 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
   const connection = useStore((s) => s.connection);
   const closePanel = useStore((s) => s.closePanel);
   const bringPanelToFront = useStore((s) => s.bringPanelToFront);
+  const { panelRef, pos } = usePanelPosition(stackIndex);
 
   const existing = noteId ? myNotes.find((n) => n.id === noteId) : undefined;
   const isDm = self?.role === 'dm';
   // Recipients of a shared note can read it but not edit/delete/unshare.
   const isOwner = !existing || existing.ownerUsername === self?.username;
-  const canModify = isOwner || isDm;
+  const canModify = noteId === null || Boolean(existing && (isOwner || isDm));
 
-  const [title, setTitle] = useState(existing?.title ?? '');
-  const [body, setBody] = useState(existing?.body ?? '');
-  const [sharing, setSharing] = useState<Sharing>(
-    existing?.sharing ?? (isDm ? { scope: 'dm', userIds: [] } : defaultSharing()),
-  );
+  const latest = { title: existing?.title ?? '', body: existing?.body ?? '',
+    sharing: existing?.sharing ?? (isDm ? { scope: 'dm' as const, userIds: [] } : defaultSharing()) };
+  const draft = useDraft(latest, existing?.revision ?? 0);
+  const { title, body, sharing } = draft.draft;
+  const setTitle = (value: string) => draft.setField('title', value);
+  const setBody = (value: string) => draft.setField('body', value);
+  const setSharing = (value: Sharing) => draft.setField('sharing', value);
+  const save = useSaveCommand();
   const [mode, setMode] = useState<'write' | 'preview'>('write');
   // Existing notes open in read mode; new notes go straight to editing.
   const [editing, setEditing] = useState(noteId === null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const canSave = connection === 'open' && title.trim() !== '';
+  const canSave = connection === 'open' && title.trim() !== '' && canModify && !save.saving && !save.blocked;
 
-  function save() {
+  async function saveNote() {
     if (!canSave) return;
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({
-      type: 'saveNote',
-      ...(noteId ? { noteId } : {}),
-      title: title.trim(),
-      body,
-      sharing,
-    });
+    const fields = { title: title.trim(), body, sharing };
+    const patch = draftPatch(draft.base, fields);
+    const ack = await save.run(noteId
+      ? { type: 'saveNote', noteId, baseRevision: draft.revision, expected: patch.expected, ...patch.changes }
+      : { type: 'saveNote', ...fields });
+    if (!ack) return;
     if (noteId) {
       // Back to reading the (locally up-to-date) note.
       setEditing(false);
@@ -56,19 +61,16 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
     }
   }
 
-  function deleteThisNote() {
+  async function deleteThisNote() {
     if (!noteId) return;
     if (!window.confirm(`Delete "${title || 'this note'}"? This cannot be undone.`)) return;
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'deleteNote', noteId });
-    // The noteDeleted broadcast removes it from the list and closes this editor.
+    const ack = await save.run({ type: 'deleteNote', noteId });
+    if (ack) closePanel(panelId);
   }
 
   function cancelEdit() {
     if (noteId && existing) {
-      setTitle(existing.title);
-      setBody(existing.body);
-      setSharing(existing.sharing);
+      draft.reset();
       setEditing(false);
       setMode('write');
     } else {
@@ -121,14 +123,15 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
 
   return (
     <div
-      className="absolute inset-0 flex flex-col lg:inset-auto lg:top-4 lg:bottom-4 lg:w-[55%] lg:max-w-3xl lg:rounded-xl lg:shadow-2xl lg:overflow-hidden"
+      ref={panelRef} tabIndex={-1} role="dialog" aria-label="Note editor"
+      className="absolute flex flex-col rounded-xl shadow-2xl overflow-hidden"
+      onFocusCapture={() => bringPanelToFront(panelId)}
       onPointerDownCapture={() => bringPanelToFront(panelId)}
       style={{
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         zIndex: 8 + stackIndex,
-        // Stagger stacked panels on large screens (right-anchored).
-        right: `calc(1rem + ${(stackIndex % 5) * 36}px)`,
+        left: pos.x, top: pos.y, width: 620, maxWidth: 'calc(100% - 16px)', height: 'calc(100% - 16px)', maxHeight: 'calc(100% - 16px)',
       }}
     >
       {/* Header */}
@@ -142,17 +145,17 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
         <div className="flex items-center gap-2 shrink-0">
           {editing ? (
             <>
-              <Button size="sm" variant="ghost" onClick={cancelEdit}>
+              <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={save.saving}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={save} disabled={!canSave}>
-                Save
+              <Button size="sm" onClick={saveNote} disabled={!canSave}>
+                {save.saving ? 'Saving…' : save.error ? 'Retry save' : 'Save'}
               </Button>
             </>
           ) : (
             <>
               {canModify && (
-                <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+                <Button size="sm" variant="secondary" onClick={() => { draft.reset(); setEditing(true); }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
                     <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
@@ -164,7 +167,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
                   size="sm"
                   variant="destructive"
                   onClick={deleteThisNote}
-                  disabled={connection !== 'open'}
+                  disabled={connection !== 'open' || save.saving || save.blocked}
                   aria-label="Delete note"
                   title="Delete note"
                 >
@@ -178,6 +181,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
           <button
             type="button"
             onClick={() => closePanel(panelId)}
+            disabled={save.saving}
             className="p-1.5 rounded transition-colors"
             style={{ color: 'var(--low)' }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--hi)'; }}
@@ -192,6 +196,9 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
         </div>
       </div>
 
+      <SaveFeedback save={save} conflicts={editing ? draft.conflicts : []} latest={latest} onUseTable={draft.reset} onKeepChanges={draft.keepChanges} />
+      {noteId && !existing && <p role="alert" className="p-3 text-sm">This note was removed or is no longer shared with you. Any open draft is kept here for copying.</p>}
+
       {/* Read mode */}
       {!editing && (
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -201,7 +208,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
                 className="text-2xl font-bold"
                 style={{ fontFamily: 'var(--serif)', color: 'var(--hi)' }}
               >
-                {title}
+                {existing?.title ?? title}
               </h1>
               <ShareBadge sharing={existing?.sharing ?? sharing} />
               {existing && !isOwner && existing.ownerUsername && (
@@ -210,10 +217,10 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
                 </span>
               )}
             </div>
-            {body.trim() === '' ? (
+            {(existing?.body ?? '').trim() === '' ? (
               <p className="text-sm italic" style={{ color: 'var(--faint)' }}>This note is empty — hit Edit to write something.</p>
             ) : (
-              renderMarkdown(body)
+              renderMarkdown(existing?.body ?? '')
             )}
           </div>
         </div>
@@ -221,7 +228,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
 
       {/* Editor */}
       {editing && (
-      <div className="flex-1 min-h-0 flex flex-col p-4 gap-2 max-w-3xl w-full mx-auto">
+      <fieldset disabled={save.saving} className="flex-1 min-h-0 min-w-0 flex flex-col p-4 gap-2 max-w-3xl w-full mx-auto">
         <Input
           placeholder="Title"
           value={title}
@@ -319,7 +326,7 @@ export function NoteEditor({ noteId, panelId, stackIndex }: { noteId: string | n
             )}
           </div>
         )}
-      </div>
+      </fieldset>
       )}
     </div>
   );

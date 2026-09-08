@@ -23,22 +23,18 @@ export async function initMembershipsStore(): Promise<void> {
   );
 }
 
-export function addMembership(campaignId: string, userId: string, role: Role): void {
-  const existing = store
-    .get()
-    .memberships.find((m) => m.campaignId === campaignId && m.userId === userId);
-  if (existing) {
-    // Idempotent — keep existing role.
-    return;
-  }
-
+export async function addMembership(campaignId: string, userId: string, role: Role): Promise<void> {
   const record: MembershipRecord = {
     campaignId,
     userId,
     role,
     joinedAt: new Date().toISOString(),
   };
-  store.mutate((s) => ({ memberships: [...s.memberships, record] }));
+  await store.mutate((s) => {
+    // Check inside the ordered mutation; concurrent redeems stay idempotent.
+    if (s.memberships.some((m) => m.campaignId === campaignId && m.userId === userId)) return s;
+    return { memberships: [...s.memberships, record] };
+  });
 }
 
 export function getRole(campaignId: string, userId: string): Role | null {

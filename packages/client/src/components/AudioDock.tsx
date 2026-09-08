@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClientMessage } from '@vtt/shared';
 import { useStore } from '../store';
+import { playbackPosition } from '../lib/media';
+import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
 function fmt(t: number): string {
   if (!Number.isFinite(t)) return '0:00';
@@ -20,11 +21,15 @@ export function AudioDock() {
   const self = useStore((s) => s.self);
   const connection = useStore((s) => s.connection);
   const sync = useStore((s) => (dock ? s.mediaSync[dock.assetId] : undefined));
-  const closeAudioDock = useStore((s) => s.closeAudioDock);
+  const clockOffsetMs = useStore((s) => s.clockOffsetMs);
   const setAudioDockMinimized = useStore((s) => s.setAudioDockMinimized);
 
   const audioRef = useRef<HTMLAudioElement>(null);
-  const applyingRemote = useRef(false);
+  const gestureBlocked = useRef(false);
+  const followRef = useRef<() => void>(() => {});
+  const save = useSaveCommand();
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [needsGesture, setNeedsGesture] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
@@ -36,77 +41,94 @@ export function AudioDock() {
   const canDrive = !!doc && (self?.role === 'dm' || doc.ownerUsername === self?.username);
   const url = doc ? `/api/campaigns/${campaignId}/files/assets/${doc.file}` : '';
 
-  function emit(action: 'play' | 'pause' | 'stop', time?: number) {
-    if (!canDrive || applyingRemote.current || !doc) return;
-    const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-    conn?.send({ type: 'mediaControl', assetId: doc.id, action, time: time ?? audioRef.current?.currentTime ?? 0 });
+  async function emit(action: 'play' | 'pause' | 'stop', time?: number) {
+    if (!canDrive || !doc) return;
+    const ack = await save.run({ type: 'mediaControl', assetId: doc.id, action, time: time ?? audioRef.current?.currentTime ?? 0 });
+    if (!ack) followRef.current();
+    return ack;
   }
 
-  function syncedTime(cmd: { action: string; time: number; atMs: number }): number {
-    return cmd.action === 'play' ? cmd.time + (Date.now() - cmd.atMs) / 1000 : cmd.time;
-  }
-
-  // Follow the table-playback state.
+  // Every browser, including the controller, follows the accepted server timeline.
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !sync || sync.action === 'stop') return;
-    applyingRemote.current = true;
-    const target = syncedTime(sync);
-    if (Math.abs(audio.currentTime - target) > 1.5) audio.currentTime = target;
-    const done = () => setTimeout(() => { applyingRemote.current = false; }, 150);
-    if (sync.action === 'play') {
-      audio.play().then(() => { setNeedsGesture(false); done(); }).catch(() => { setNeedsGesture(true); done(); });
-    } else {
-      audio.pause();
-      setNeedsGesture(false);
-      done();
+    if (!audio) return;
+    let alive = true;
+    function follow(force = false) {
+      if (!sync || clockOffsetMs === null || connection !== 'open') { audio!.pause(); return; }
+      const end = Number.isFinite(audio!.duration) ? audio!.duration : Infinity;
+      const target = Math.min(end, playbackPosition(sync, clockOffsetMs));
+      if (audio!.readyState >= 1 && (force || Math.abs(audio!.currentTime - target) > 0.25)) audio!.currentTime = target;
+      if (sync.action !== 'play' || target >= end) {
+        audio!.pause(); gestureBlocked.current = false; setNeedsGesture(false);
+      } else if (audio!.paused && !gestureBlocked.current) {
+        void audio!.play().then(() => {
+          if (alive) { setNeedsGesture(false); setPlaybackError(null); }
+        }).catch((error: unknown) => {
+          if (!alive || (error as { name?: string }).name === 'AbortError') return;
+          gestureBlocked.current = true;
+          setNeedsGesture(true);
+        });
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sync]);
+    const reconcile = () => follow(true);
+    followRef.current = reconcile;
+    reconcile();
+    const timer = setInterval(() => follow(), 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') reconcile(); };
+    audio.addEventListener('loadedmetadata', reconcile);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      audio.removeEventListener('loadedmetadata', reconcile);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [sync, clockOffsetMs, connection, url]);
 
-  // Keep element volume in sync with the (local-only) slider.
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume;
-  }, [volume]);
+    setPosition(0); setDuration(0); setSeekPreview(null); setPlaybackError(null);
+  }, [url]);
+
+  // Volume belongs to this browser, never to the shared playhead.
+  useEffect(() => { if (audioRef.current) audioRef.current.volume = volume; }, [volume, url]);
 
   function joinPlayback() {
+    if (sync?.action !== 'play' || clockOffsetMs === null || connection !== 'open') return;
     const audio = audioRef.current;
-    if (!audio || !sync) return;
-    applyingRemote.current = true;
-    audio.currentTime = syncedTime(sync);
-    audio.play().catch(() => undefined).finally(() => {
-      setTimeout(() => { applyingRemote.current = false; }, 150);
-    });
-    setNeedsGesture(false);
+    if (!audio) return;
+    followRef.current();
+    void audio.play().then(() => {
+      gestureBlocked.current = false;
+      setNeedsGesture(false); setPlaybackError(null);
+      followRef.current();
+    }).catch(() => { setNeedsGesture(true); });
   }
 
   function togglePlay() {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) {
-      audio.play().catch(() => undefined);
-      emit('play');
+    if (sync?.action === 'play') {
+      void emit('pause');
     } else {
-      audio.pause();
-      emit('pause');
+      // Preserve user activation for the controller; the accepted echo reconciles it.
+      void audio.play().catch((error: unknown) => {
+        if ((error as { name?: string }).name === 'AbortError') return;
+        gestureBlocked.current = true; setNeedsGesture(true);
+      });
+      void emit('play');
     }
   }
 
-  function seekTo(t: number) {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = t;
-    emit(audio.paused ? 'pause' : 'play', t);
+  async function seekTo(t: number) {
+    if (await emit(sync?.action === 'play' ? 'play' : 'pause', t)) setSeekPreview(null);
   }
 
-  function stopForTable() {
-    audioRef.current?.pause();
-    emit('stop', 0);
-    closeAudioDock();
-  }
+  function stopForTable() { void emit('stop', 0); }
 
   if (!dock || !doc) return null;
   const minimized = dock.minimized;
+  const controlsDisabled = connection !== 'open' || save.saving || save.blocked;
+  const tablePlaying = sync?.action === 'play';
 
   return (
     <div
@@ -116,7 +138,7 @@ export function AudioDock() {
         left: '50%',
         transform: 'translateX(-50%)',
         zIndex: 25,
-        width: minimized ? 'auto' : 'min(520px, calc(100% - 32px))',
+        width: minimized && !needsGesture && !save.error ? 'auto' : 'min(520px, calc(100% - 32px))',
         background: 'var(--surface2)',
         border: '1px solid var(--border)',
         borderRadius: 11,
@@ -135,9 +157,12 @@ export function AudioDock() {
         onPause={() => setPlaying(false)}
         onTimeUpdate={() => setPosition(audioRef.current?.currentTime ?? 0)}
         onDurationChange={() => setDuration(audioRef.current?.duration ?? 0)}
-        onEnded={() => { setPlaying(false); if (canDrive) emit('pause', 0); }}
+        onEnded={() => { setPlaying(false); if (canDrive && connection === 'open') void emit('pause', audioRef.current?.duration ?? 0); }}
+        onError={() => setPlaybackError('Could not load this audio. Check that the file is available and try again.')}
       />
 
+      <SaveFeedback save={save} conflicts={[]} latest={{}} onUseTable={() => {}} onKeepChanges={() => {}} />
+      {playbackError && <p role="alert" className="text-xs" style={{ color: 'var(--garnet)' }}>{playbackError}</p>}
       {/* Header row — always visible */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         {/* Music note / playing indicator */}
@@ -175,6 +200,7 @@ export function AudioDock() {
           <button
             type="button"
             onClick={stopForTable}
+            disabled={controlsDisabled}
             style={{ background: 'none', border: 'none', color: 'var(--low)', cursor: 'pointer', padding: 4, flexShrink: 0, fontSize: 13, lineHeight: 1 }}
             aria-label="Stop for the table and close"
             title="Stop for everyone"
@@ -192,15 +218,15 @@ export function AudioDock() {
               <button
                 type="button"
                 onClick={togglePlay}
-                disabled={connection !== 'open'}
+                disabled={controlsDisabled}
                 style={{
                   width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
                   background: 'var(--ember)', color: 'var(--ink)', border: 'none',
                   cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-                aria-label={playing ? 'Pause for the table' : 'Play for the table'}
+                aria-label={tablePlaying ? 'Pause for the table' : 'Play for the table'}
               >
-                {playing ? '❚❚' : '▶'}
+                {tablePlaying ? '❚❚' : '▶'}
               </button>
               <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--faint)', flexShrink: 0 }}>
                 {fmt(position)}
@@ -210,8 +236,13 @@ export function AudioDock() {
                 min={0}
                 max={duration || 0}
                 step={0.1}
-                value={Math.min(position, duration || 0)}
-                onChange={(e) => seekTo(Number(e.target.value))}
+                value={Math.min(seekPreview ?? position, duration || 0)}
+                disabled={controlsDisabled}
+                onChange={(e) => setSeekPreview(Number(e.target.value))}
+                onPointerUp={(e) => { void seekTo(Number(e.currentTarget.value)); }}
+                onPointerCancel={() => setSeekPreview(null)}
+                onKeyUp={(e) => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) void seekTo(Number(e.currentTarget.value)); }}
+                onBlur={(e) => { if (seekPreview !== null && !controlsDisabled) void seekTo(Number(e.currentTarget.value)); }}
                 style={{ flex: 1, accentColor: 'var(--ember)', minWidth: 60 }}
                 aria-label="Seek"
               />
@@ -242,10 +273,11 @@ export function AudioDock() {
       )}
 
       {/* Autoplay-blocked join */}
-      {!minimized && needsGesture && (
+      {needsGesture && (
         <button
           type="button"
           onClick={joinPlayback}
+          disabled={connection !== 'open' || clockOffsetMs === null}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             padding: '9px 12px', fontSize: 13, fontWeight: 600,
@@ -253,7 +285,7 @@ export function AudioDock() {
             border: 'none', borderRadius: 9, cursor: 'pointer',
           }}
         >
-          ▶ Join playback
+          ▶ Join audio
         </button>
       )}
     </div>

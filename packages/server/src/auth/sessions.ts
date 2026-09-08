@@ -2,6 +2,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { JsonFileStore } from '../data/jsonStore.js';
 import { config } from '../config.js';
+import { updateCampaignMemory, withCampaignFiles } from '../campaign/commit.js';
+import { log } from '../log.js';
 import type { Response } from 'express';
 
 export interface SessionRecord {
@@ -24,18 +26,17 @@ let store: JsonFileStore<SessionsFile>;
 // array on every request/WS upgrade).
 const index = new Map<string, SessionRecord>();
 
-function pruneExpired(): void {
+async function pruneExpired(): Promise<void> {
   const now = new Date().toISOString();
-  let removed = 0;
-  for (const [token, sess] of index) {
-    if (sess.expiresAt <= now) {
-      index.delete(token);
-      removed++;
-    }
-  }
-  if (removed > 0) {
-    store.mutate((s) => ({ sessions: s.sessions.filter((sess) => sess.expiresAt > now) }));
-  }
+  await withCampaignFiles(config.DATA_DIR, async () => {
+    if (!store.get().sessions.some((sess) => sess.expiresAt <= now)) return;
+    await store.mutate((s) => ({ sessions: s.sessions.filter((sess) => sess.expiresAt > now) }));
+    updateCampaignMemory(() => {
+      for (const [token, sess] of index) {
+        if (sess.expiresAt <= now) index.delete(token);
+      }
+    });
+  });
 }
 
 export async function initSessionsStore(): Promise<void> {
@@ -45,10 +46,12 @@ export async function initSessionsStore(): Promise<void> {
 
   index.clear();
   for (const sess of store.get().sessions) index.set(sess.token, sess);
-  pruneExpired();
+  await pruneExpired();
 
   // Keep memory + disk from accumulating expired sessions over long uptime.
-  const timer = setInterval(pruneExpired, PRUNE_INTERVAL_MS);
+  const timer = setInterval(() => {
+    void pruneExpired().catch((err: unknown) => { log.error(`Session pruning failed: ${String(err)}`); });
+  }, PRUNE_INTERVAL_MS);
   timer.unref?.();
 }
 
@@ -64,8 +67,10 @@ export async function createSession(userId: string): Promise<SessionRecord> {
     expiresAt: expiresAt.toISOString(),
   };
 
-  index.set(token, session);
-  store.mutate((s) => ({ sessions: [...s.sessions, session] }));
+  await withCampaignFiles(config.DATA_DIR, async () => {
+    await store.mutate((s) => ({ sessions: [...s.sessions, session] }));
+    updateCampaignMemory(() => { index.set(token, session); });
+  });
   return session;
 }
 
@@ -81,11 +86,13 @@ export function resolveSession(token: string): SessionRecord | null {
   return session;
 }
 
-export function deleteSession(token: string): void {
-  index.delete(token);
-  store.mutate((s) => ({
-    sessions: s.sessions.filter((sess) => sess.token !== token),
-  }));
+export async function deleteSession(token: string): Promise<void> {
+  await withCampaignFiles(config.DATA_DIR, async () => {
+    await store.mutate((s) => ({
+      sessions: s.sessions.filter((sess) => sess.token !== token),
+    }));
+    updateCampaignMemory(() => { index.delete(token); });
+  });
 }
 
 export function resolveSessionFromCookieHeader(header: string | undefined): SessionRecord | null {

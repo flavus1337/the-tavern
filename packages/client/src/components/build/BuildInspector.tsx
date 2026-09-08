@@ -1,13 +1,9 @@
-import { useRef, useState, type ChangeEvent } from 'react';
-import type { ClientMessage, UploadAssetResponse } from '@vtt/shared';
+import { sendCommand, sendWs } from '../../ws/connection';
 import { useStore } from '../../store';
-import { apiUpload, ApiRequestError } from '../../lib/api';
 import { centredPlacement } from '../../lib/view';
+import { AssetPicker } from '../dm/AssetPicker';
+import { openInvites } from '../../lib/navigation';
 
-function sendWs(msg: ClientMessage): void {
-  const conn = (window as unknown as { __vttConn?: { send: (msg: ClientMessage) => void } }).__vttConn;
-  conn?.send(msg);
-}
 
 const SIZE_PRESETS: Array<['S' | 'M' | 'L' | 'H', number]> = [['S', 0.6], ['M', 1], ['L', 1.6], ['H', 2.4]];
 
@@ -20,42 +16,22 @@ export function BuildInspector() {
   const grid = useStore((s) => s.grid);
   const selectedPieceId = useStore((s) => s.selectedPieceId);
   const setSelectedPieceId = useStore((s) => s.setSelectedPieceId);
-  const activePalettePiece = useStore((s) => s.activePalettePiece);
-  const setActivePalettePiece = useStore((s) => s.setActivePalettePiece);
-  const setBoardTool = useStore((s) => s.setBoardTool);
   const layerVisible = useStore((s) => s.layerVisible);
   const toggleLayerVisible = useStore((s) => s.toggleLayerVisible);
 
-  const campaignId = useStore((s) => s.activeCampaignId);
   const boardTool = useStore((s) => s.boardTool);
   const setBoardToolDirect = useStore((s) => s.setBoardTool);
-  const assets = useStore((s) => s.assets);
   const setGenDialog = useStore((s) => s.setGenDialog);
   const templates = useStore((s) => s.templates);
   const mapMeta = useStore((s) => s.mapMeta);
-  // Image assets usable as stamps (props/uploads/generated) — not backgrounds.
-  const stampAssets = (assets ?? []).filter((a) => a.assetKind === 'token' || a.assetKind === 'art');
   const board = useStore((s) => s.board);
   const mapLocked = useStore((s) => s.mapLocked);
-  const [search, setSearch] = useState('');
-  const [bgUploading, setBgUploading] = useState(false);
-  const [bgError, setBgError] = useState<string | null>(null);
-  const bgInputRef = useRef<HTMLInputElement>(null);
   const selected = selectedPieceId ? pieces.find((p) => p.id === selectedPieceId) : undefined;
 
   function removeBackground() {
     if (board.length === 0) return;
     if (board.length > 1 && !window.confirm(`Remove all ${board.length} background images?`)) return;
     for (const item of board) sendWs({ type: 'boardRemove', itemId: item.id });
-  }
-
-  // Scale a background to 40 cells, drop it centred in the current view (grid
-  // aligned), and set a clean, visible grid.
-  function placeBackground(assetId: string) {
-    const w = 40 * grid.cell;
-    const p = centredPlacement(w, w);
-    sendWs({ type: 'boardAdd', assetId, x: p.x, y: p.y, w });
-    sendWs({ type: 'setGrid', grid: { offsetX: 0, offsetY: 0, unit: 'm', visible: true, color: '#00000059' } });
   }
 
   function resetGrid() {
@@ -65,48 +41,13 @@ export function BuildInspector() {
     const bg = board[0];
     if (bg && !mapLocked) {
       const w = 40 * std;
-      const p = centredPlacement(w, w);
+      const p = centredPlacement(w, w, { cell: std, offsetX: 0, offsetY: 0 });
       sendWs({ type: 'boardMove', itemId: bg.id, x: p.x, y: p.y, w });
     }
   }
 
-  async function uploadBackground(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !campaignId) return;
-    setBgUploading(true);
-    setBgError(null);
-    try {
-      const res = await apiUpload<UploadAssetResponse>(`/api/campaigns/${campaignId}/assets`, file, { kind: 'map' });
-      placeBackground(res.asset.id);
-    } catch (err) {
-      setBgError(err instanceof ApiRequestError ? err.message : 'Upload failed');
-    } finally {
-      setBgUploading(false);
-      if (bgInputRef.current) bgInputRef.current.value = '';
-    }
-  }
-
-  function armAsset(assetId: string, url: string) {
-    setActivePalettePiece({ builtin: null, assetId, url, layer: 'props', lockedToGrid: false });
-    setBoardTool('stamp');
-  }
-
-  const q = search.trim().toLowerCase();
-  // Saved backgrounds (generated/uploaded maps) to reuse.
-  const bgAssets = (assets ?? []).filter((a) => a.assetKind === 'map');
-  // Prop assets grouped by their category (search-filtered). Default props are
-  // gone — the palette is your generated/uploaded props.
-  const assetsByCat: Record<string, typeof stampAssets> = {};
-  for (const a of stampAssets) {
-    if (q && !(a.title.toLowerCase().includes(q) || (a.category ?? '').toLowerCase().includes(q))) continue;
-    (assetsByCat[a.category || 'Uploads'] ||= []).push(a);
-  }
-  const groups = Object.keys(assetsByCat)
-    .sort()
-    .map((c) => ({ section: c, pieces: [] as never[], assets: assetsByCat[c]! }));
-
   return (
-    <div className="flex flex-col h-full" style={{ overflow: 'hidden' }}>
+    <div className="flex flex-col h-full overflow-y-auto">
       {/* Selected-piece card */}
       {selected && (
         <SelectedPieceCard
@@ -118,52 +59,23 @@ export function BuildInspector() {
           builtin={selected.builtin}
           onSize={(w) => sendWs({ type: 'pieceUpdate', id: selected.id, w, h: w })}
           onRotate={(r) => sendWs({ type: 'pieceUpdate', id: selected.id, rotation: r })}
-          onDelete={() => { sendWs({ type: 'pieceRemove', id: selected.id }); setSelectedPieceId(null); }}
+          onDelete={() => { void sendCommand({ type: 'pieceRemove', id: selected.id }).then(() => { if (useStore.getState().selectedPieceId === selected.id) setSelectedPieceId(null); }, () => {}); }}
         />
       )}
 
-      {/* Background */}
-      <div className="p-3 space-y-2" style={{ borderBottom: '1px solid var(--border-soft)' }}>
-        <p className="eyebrow">Background</p>
-        <button
-          type="button"
-          onClick={() => setGenDialog('background')}
-          className="w-full py-2 rounded-[9px] text-xs font-semibold flex items-center justify-center gap-1.5"
-          style={{ background: 'var(--gold)', color: 'var(--ink)', border: 'none', cursor: 'pointer' }}
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path d="M12 3l1.8 5.6L19 10l-5.2 1.4L12 17l-1.8-5.6L5 10l5.2-1.4z" /></svg>
-          Generate background
-        </button>
+      <div className="p-3 space-y-2 shrink-0" style={{ borderBottom: '1px solid var(--border-soft)' }}>
+        <p className="text-sm" style={{ color: 'var(--mid)' }}>1. Place a map from the library. 2. Invite your players.</p>
+        <button type="button" onClick={openInvites} className="text-sm underline" style={{ color: 'var(--ember)' }}>Invite players →</button>
+        <div className="flex flex-wrap gap-3">
+          <button type="button" onClick={() => setGenDialog('background')} className="text-xs underline" style={{ color: 'var(--mid)' }}>Generate a map</button>
+          <button type="button" onClick={() => setGenDialog('prop')} className="text-xs underline" style={{ color: 'var(--mid)' }}>Generate a prop</button>
+        </div>
+      </div>
+      <AssetPicker build />
 
-        {bgAssets.length > 0 && (
-          <div>
-            <p className="eyebrow" style={{ margin: '4px 0 6px' }}>Saved maps · click to use</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(64px, 1fr))', gap: 6, maxHeight: 168, overflowY: 'auto' }}>
-              {bgAssets.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => placeBackground(a.id)}
-                  title={`Use “${a.title}”`}
-                  className="rounded-[8px] overflow-hidden"
-                  style={{ aspectRatio: '1 / 1', border: '1px solid var(--border)', cursor: 'pointer', background: '#0008' }}
-                >
-                  <img src={`/api/campaigns/${campaignId}/files/assets/${a.file}`} alt={a.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={() => bgInputRef.current?.click()}
-          disabled={bgUploading}
-          className="w-full py-2 rounded-[9px] text-xs font-semibold disabled:opacity-50"
-          style={{ background: 'var(--raised)', color: 'var(--hi)', border: '1px solid var(--border)', cursor: 'pointer' }}
-        >
-          {bgUploading ? 'Uploading…' : '⤓ Upload image'}
-        </button>
+      <details className="p-3 shrink-0" style={{ borderTop: '1px solid var(--border-soft)' }}>
+        <summary className="text-sm cursor-pointer" style={{ color: 'var(--mid)' }}>Grid and map controls</summary>
+        <div className="space-y-2 pt-3">
         <div className="flex gap-2">
           <button
             type="button"
@@ -197,11 +109,9 @@ export function BuildInspector() {
             Remove background{board.length > 1 ? ` (${board.length})` : ''}
           </button>
         )}
-        <input ref={bgInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { void uploadBackground(e); }} />
         {boardTool === 'calibrate' && (
           <p className="text-[11px]" style={{ color: 'var(--gold)' }}>Drag a box over a known number of grid squares on the image.</p>
         )}
-        {bgError && <p role="alert" className="text-xs" style={{ color: 'var(--garnet)' }}>{bgError}</p>}
 
         <label className="flex items-center justify-between cursor-pointer select-none pt-1">
           <span className="text-xs" style={{ color: 'var(--mid)' }}>
@@ -219,8 +129,11 @@ export function BuildInspector() {
         </label>
       </div>
 
-      {/* Templates */}
-      <div className="p-3 space-y-2" style={{ borderBottom: '1px solid var(--border-soft)' }}>
+      </details>
+
+      <details className="p-3 shrink-0" style={{ borderTop: '1px solid var(--border-soft)' }}>
+        <summary className="text-sm cursor-pointer" style={{ color: 'var(--mid)' }}>Saved map templates</summary>
+        <div className="space-y-2 pt-3">
         <div className="flex items-center justify-between">
           <p className="eyebrow">Templates</p>
           <button
@@ -254,74 +167,10 @@ export function BuildInspector() {
         )}
       </div>
 
-      {/* Palette */}
-      <div className="flex flex-col min-h-0 flex-1">
-        <div className="p-3 space-y-2" style={{ borderBottom: '1px solid var(--border-soft)' }}>
-          <div className="flex items-center justify-between">
-            <p className="eyebrow">Build · terrain &amp; props</p>
-            <button
-              type="button"
-              onClick={() => setGenDialog('prop')}
-              className="flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-[7px]"
-              style={{ color: 'var(--ember)', background: '#e08a4b14', border: '1px solid #e08a4b3a', cursor: 'pointer' }}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3 h-3"><path d="M12 5v14M5 12h14" strokeLinecap="round" /></svg>
-              Add asset
-            </button>
-          </div>
-          <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-[9px]" style={{ background: '#100c0a', border: '1px solid var(--border)' }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="w-4 h-4" style={{ color: 'var(--low)' }}><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" strokeLinecap="round" /></svg>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search trees, rocks, props…"
-              className="flex-1 bg-transparent text-sm focus:outline-none"
-              style={{ color: 'var(--hi)' }}
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
-          {groups.map((g) => (
-            <div key={g.section} className="space-y-2">
-              <p className="eyebrow">{g.section}</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 8 }}>
-                {g.assets.map((a) => {
-                  const url = `/api/campaigns/${campaignId}/files/assets/${a.file}`;
-                  const on = activePalettePiece?.assetId === a.id;
-                  return (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => armAsset(a.id, url)}
-                      title={a.title}
-                      className="flex flex-col items-center gap-1 p-1.5 rounded-[10px] transition-colors"
-                      style={{
-                        background: on ? '#e08a4b1a' : 'var(--surface2)',
-                        border: `1px solid ${on ? 'var(--ember)' : 'var(--border)'}`,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 7, overflow: 'hidden', background: '#0008' }}>
-                        <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                      </div>
-                      <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: on ? 'var(--ember)' : 'var(--mid)', textTransform: 'uppercase', letterSpacing: '0.06em', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.title}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-          {groups.length === 0 && (
-            <p className="text-xs italic text-center py-6" style={{ color: 'var(--faint)' }}>
-              {search ? `No props match “${search}”.` : 'No props yet — use “Add asset” to generate or upload one.'}
-            </p>
-          )}
-        </div>
-      </div>
+      </details>
 
       {/* Layers */}
-      <div className="p-3 space-y-2" style={{ borderTop: '1px solid var(--border)' }}>
+      <div className="p-3 space-y-2 shrink-0" style={{ borderTop: '1px solid var(--border)' }}>
         <p className="eyebrow">Layers</p>
         <LayerRow label="Props" hint="trees · camp" on={layerVisible.props} onToggle={() => toggleLayerVisible('props')} />
         <LayerRow label="Terrain" hint="walls · doors" on={layerVisible.terrain} onToggle={() => toggleLayerVisible('terrain')} />

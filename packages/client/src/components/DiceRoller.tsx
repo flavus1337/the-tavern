@@ -1,14 +1,18 @@
 import { useState } from 'react';
+import type { DiceDisplay } from '../lib/dicePlayback';
 import { parseDiceExpression, randomId } from '@vtt/shared';
 import type { DieSides, RollVisibility } from '@vtt/shared';
 import { useStore } from '../store';
 import { Input } from './ui/input';
+import { SaveFeedback, useSaveCommand } from './SaveFeedback';
 
 const QUICK_DICE: DieSides[] = [4, 6, 8, 10, 12, 20, 100];
 
 export function DiceRoller() {
   const connection = useStore((s) => s.connection);
   const self = useStore((s) => s.self);
+  const diceDisplay = useStore((s) => s.diceDisplay);
+  const setDiceDisplay = useStore((s) => s.setDiceDisplay);
 
   const [expression, setExpression] = useState('');
   const [label, setLabel] = useState('');
@@ -16,18 +20,14 @@ export function DiceRoller() {
   const [advantage, setAdvantage] = useState(false);
   const [disadvantage, setDisadvantage] = useState(false);
   const [expressionError, setExpressionError] = useState<string | null>(null);
+  const save = useSaveCommand();
 
   const isDm = self?.role === 'dm';
-  const disabled = connection !== 'open';
+  const disabled = connection !== 'open' || save.saving || save.blocked;
 
-  function getConn() {
-    return (window as unknown as { __vttConn?: { send: (msg: unknown) => void } }).__vttConn;
-  }
-
-  function sendRoll(expr: string, lbl?: string) {
-    const conn = getConn();
-    if (!conn || connection !== 'open') return;
-    conn.send({
+  async function sendRoll(expr: string, lbl?: string) {
+    if (disabled) return;
+    await save.run({
       type: 'roll',
       requestId: randomId('req'),
       expression: expr,
@@ -62,6 +62,19 @@ export function DiceRoller() {
 
   return (
     <div style={{ padding: 14 }} className="space-y-4">
+      <SaveFeedback save={save} conflicts={[]} latest={{}} onUseTable={() => {}} onKeepChanges={() => {}} />
+
+      <label className="block text-xs" style={{ color: 'var(--mid)' }}>
+        Dice display on this device
+        <select value={diceDisplay} onChange={(event) => setDiceDisplay(event.target.value as DiceDisplay)}
+          className="mt-2 block w-full rounded border px-2 py-2"
+          style={{ background: 'var(--surface2)', borderColor: 'var(--border)', color: 'var(--hi)' }}>
+          <option value="instant">Instant · log only</option>
+          <option value="compact">Compact · result notifications</option>
+          <option value="cinematic">Cinematic · 3D dice</option>
+        </select>
+        <span className="mt-1 block" style={{ color: 'var(--faint)' }}>Reduced motion uses compact results. All rolls stay in the log.</span>
+      </label>
 
       {/* Quick Roll */}
       <div>

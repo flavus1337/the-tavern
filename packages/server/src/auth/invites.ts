@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { addMembership } from './memberships.js';
 import type { InvitePreviewResponse } from '@vtt/shared';
 import { getCampaign } from '../campaign/registry.js';
+import { withCampaignFiles } from '../campaign/commit.js';
 
 export interface InviteRecord {
   token: string;
@@ -33,11 +34,17 @@ function generateToken(): string {
   return 'inv_' + crypto.randomBytes(24).toString('base64url');
 }
 
-export function createInvite(
+export async function createInvite(
   campaignId: string,
   createdByUserId: string,
   opts: { expiresInHours?: number; maxUses?: number } = {},
-): InviteRecord {
+): Promise<InviteRecord> {
+  if (opts.expiresInHours != null && (!Number.isFinite(opts.expiresInHours) || opts.expiresInHours <= 0 || opts.expiresInHours > 8760)) {
+    throw Object.assign(new Error('expiresInHours must be a number between 0 and 8760'), { status: 400 });
+  }
+  if (opts.maxUses != null && (!Number.isSafeInteger(opts.maxUses) || opts.maxUses < 1 || opts.maxUses > 10_000)) {
+    throw Object.assign(new Error('maxUses must be an integer between 1 and 10000'), { status: 400 });
+  }
   const token = generateToken();
   const now = new Date();
   const expiresAt =
@@ -56,7 +63,7 @@ export function createInvite(
     revoked: false,
   };
 
-  store.mutate((s) => ({ invites: [...s.invites, invite] }));
+  await store.mutate((s) => ({ invites: [...s.invites, invite] }));
   return invite;
 }
 
@@ -78,54 +85,31 @@ export function previewInvite(token: string): InvitePreviewResponse {
 export function redeemInvite(
   token: string,
   userId: string,
-): { ok: true; campaignId: string } | { ok: false; reason: string } {
-  let campaignId: string | null = null;
-  let error: string | null = null;
+): Promise<{ ok: true; campaignId: string } | { ok: false; reason: string }> {
+  // The invite capacity check, use count, and membership share one file commit.
+  // Neither memory store publishes until both files have been persisted.
+  return withCampaignFiles(config.DATA_DIR, async () => {
+    const invite = store.get().invites.find((i) => i.token === token);
+    if (!invite) return { ok: false, reason: 'unknown' };
+    if (invite.revoked) return { ok: false, reason: 'revoked' };
+    if (invite.expiresAt && new Date(invite.expiresAt) < new Date()) return { ok: false, reason: 'expired' };
+    if (invite.maxUses != null && invite.uses >= invite.maxUses) return { ok: false, reason: 'exhausted' };
 
-  store.mutate((s) => {
-    const idx = s.invites.findIndex((i) => i.token === token);
-    if (idx === -1) {
-      error = 'unknown';
-      return s;
-    }
-    const invite = s.invites[idx];
-    if (!invite) {
-      error = 'unknown';
-      return s;
-    }
-    if (invite.revoked) {
-      error = 'revoked';
-      return s;
-    }
-    if (invite.expiresAt && new Date(invite.expiresAt) < new Date()) {
-      error = 'expired';
-      return s;
-    }
-    if (invite.maxUses != null && invite.uses >= invite.maxUses) {
-      error = 'exhausted';
-      return s;
-    }
-
-    campaignId = invite.campaignId;
-    const updated = [...s.invites];
-    updated[idx] = { ...invite, uses: invite.uses + 1 };
-    return { invites: updated };
+    await store.mutate((s) => ({
+      invites: s.invites.map((i) => i.token === token ? { ...i, uses: i.uses + 1 } : i),
+    }));
+    await addMembership(invite.campaignId, userId, 'player');
+    return { ok: true, campaignId: invite.campaignId };
   });
-
-  if (error || !campaignId) return { ok: false, reason: error ?? 'unknown' };
-
-  // Add membership idempotently after incrementing uses.
-  addMembership(campaignId, userId, 'player');
-  return { ok: true, campaignId };
 }
 
 export function listInvitesForCampaign(campaignId: string): InviteRecord[] {
   return store.get().invites.filter((i) => i.campaignId === campaignId);
 }
 
-export function revokeInvite(token: string): boolean {
+export async function revokeInvite(token: string): Promise<boolean> {
   let found = false;
-  store.mutate((s) => {
+  await store.mutate((s) => {
     const idx = s.invites.findIndex((i) => i.token === token);
     if (idx === -1) return s;
     found = true;
