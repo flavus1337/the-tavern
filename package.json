@@ -21,7 +21,9 @@
     "protocol-regression": "tsx scripts/protocol-regression.ts",
     "session-regression": "tsx scripts/session-regression.ts",
     "image-regression": "tsx scripts/image-regression.ts",
-    "server-transient-regression": "tsx scripts/server-transient-regression.ts"
+    "server-transient-regression": "tsx scripts/server-transient-regression.ts",
+    "maintenance-regression": "tsx scripts/maintenance-regression.ts",
+    "launcher-regression": "node scripts/launcher-regression.mjs"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13",

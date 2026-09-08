@@ -5,6 +5,8 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import type { CampaignEntry } from './registry.js';
 import { log } from '../log.js';
+import { performance } from 'node:perf_hooks';
+import { changeQueueDepth, count, duration } from '../metrics.js';
 
 // sourcePath is a completed private scratch file. Its data must never change:
 // callers may only unlink it after the enclosing transaction settles.
@@ -171,6 +173,13 @@ export async function recoverCampaign(dir: string): Promise<void> {
 
 async function commitFiles(ctx: CommitContext): Promise<void> {
   if (!ctx.files.size) return;
+  const started = performance.now();
+  try { await installFiles(ctx); count('commits'); }
+  catch (error) { count('failedCommits'); throw error; }
+  finally { duration('commitMs', performance.now() - started); }
+}
+
+async function installFiles(ctx: CommitContext): Promise<void> {
   const runtimeDir = path.join(ctx.dir, '.runtime');
   const created = await fs.mkdir(runtimeDir, { recursive: true });
   if (created) await syncDir(path.dirname(created));
@@ -250,13 +259,15 @@ async function commitFiles(ctx: CommitContext): Promise<void> {
 
 function enqueue<T>(dir: string, action: () => Promise<T>): Promise<T> {
   if (stopping) return Promise.reject(new Error('server is shutting down'));
-  const start = Date.now();
+  const start = performance.now();
+  changeQueueDepth(1);
   const result = (queues.get(dir) ?? Promise.resolve()).then(async () => {
+    duration('queueWaitMs', performance.now() - start);
     if (blocked.has(dir)) throw new Error('campaign requires persistence recovery');
     return action();
-  });
+  }).finally(() => changeQueueDepth(-1));
   const tail = result.then(() => {}, (err: unknown) => {
-    log.error(`Campaign mutation failed (${Date.now() - start}ms): ${dir}: ${String(err)}`);
+    log.error(`Campaign mutation failed (${Math.round(performance.now() - start)}ms): ${dir}: ${String(err)}`);
   });
   queues.set(dir, tail);
   void tail.then(() => { if (queues.get(dir) === tail) queues.delete(dir); });
@@ -314,10 +325,14 @@ export function campaignView(entry: CampaignEntry): CampaignEntry {
 
 export function mutateCampaign<T>(entry: CampaignEntry, action: (draft: CampaignEntry) => Promise<T>): Promise<T> {
   return enqueue(entry.store.dir, async () => {
+    // Saved maps are immutable: save/delete replace the array, load copies its
+    // contents. Keep this archive out of the hot command clone as well as JSON.
+    const runtime: CampaignEntry['runtime'] = structuredClone({ ...entry.runtime, state: { ...entry.runtime.state, mapTemplates: [] } });
+    runtime.state.mapTemplates = entry.runtime.state.mapTemplates;
     // ponytail: clone the campaign per command; copy-on-write if large campaigns make this measurable.
     const draft: CampaignEntry = {
       store: structuredClone(entry.store),
-      runtime: structuredClone(entry.runtime),
+      runtime,
       room: entry.room,
       media: structuredClone(entry.media),
     };

@@ -6,6 +6,7 @@ import { findUserById } from '../auth/users.js';
 import { getCampaign } from '../campaign/registry.js';
 import { afterCampaignCommit } from '../campaign/commit.js';
 import { log } from '../log.js';
+import { recordConnection, recordDisconnect } from '../metrics.js';
 import { handleMessage } from './handlers.js';
 import type { Role, ServerMessage, PresenceEntry } from '@vtt/shared';
 
@@ -87,6 +88,7 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
       isAlive: true,
     };
     sessions.set(sessId, wsSession);
+    recordConnection(user.id);
 
     ws.on('pong', () => {
       wsSession.isAlive = true;
@@ -95,6 +97,7 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
     ws.on('close', () => {
       const campaignId = wsSession.campaignId;
       sessions.delete(sessId);
+      recordDisconnect(wsSession.userId);
 
       if (campaignId) {
         const entry = getCampaign(campaignId);

@@ -11,6 +11,7 @@ import { createApp } from './http/app.js';
 import { closeWebSockets, handleUpgrade } from './ws/hub.js';
 import { drainCampaigns } from './campaign/commit.js';
 import { closeAssetWork, initAssetWork } from './http/assetWork.js';
+import { startMetrics } from './metrics.js';
 
 async function main(): Promise<void> {
   // Ensure data directory exists.
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
   });
 
   const campaignCount = getAllCampaigns().size;
+  const stopMetrics = startMetrics();
 
   log.info('');
   log.info('=== VTT Server Started ===');
@@ -60,6 +62,7 @@ async function main(): Promise<void> {
     stopping = true;
     log.info('Shutting down...');
     const timeout = setTimeout(() => {
+      stopMetrics();
       log.error('Shutdown timed out; pending journal will recover on restart');
       process.exit(1);
     }, 10_000);
@@ -69,9 +72,11 @@ async function main(): Promise<void> {
       new Promise<void>((resolve) => server.close(() => resolve())),
     ]).then(() => {
       clearTimeout(timeout);
+      stopMetrics();
       log.info('Server closed');
       process.exit(0);
     }).catch((err: unknown) => {
+      stopMetrics();
       log.error(`Shutdown failed: ${String(err)}`);
       process.exit(1);
     });
@@ -79,6 +84,12 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  if (process.send) {
+    process.on('message', (message: unknown) => {
+      if (message && typeof message === 'object' && 'type' in message && message.type === 'shutdown') shutdown();
+    });
+    process.once('disconnect', shutdown);
+  }
 }
 
 // Single-process server: a stray rejection or throw must NOT take down everyone's

@@ -29,10 +29,11 @@ import { getCampaign } from '../campaign/registry.js';
 import { mutateCampaign } from '../campaign/commit.js';
 import { getRole } from '../auth/memberships.js';
 import { roll } from '../dice/roller.js';
-import { appendRollLog, persistState } from '../campaign/runtime.js';
+import { appendRollLog, persistState, persistTemplates } from '../campaign/runtime.js';
 import type { Token, MapTemplate } from '../campaign/runtime.js';
 import { saveNote, deleteNote, saveAssetManifest, saveChapter, deleteChapter, saveCharacter } from '../campaign/writer.js';
 import { log } from '../log.js';
+import { count, duration } from '../metrics.js';
 import type { NoteEntity, NoteKind, Chapter } from '@vtt/shared';
 
 function viewerOf(session: WsSession): Viewer {
@@ -97,10 +98,13 @@ function broadcastTokensUpdated(
 export async function handleMessage(session: WsSession, raw: unknown): Promise<void> {
   const requestId = isRecord(raw) && isSafeId(raw['requestId']) ? raw['requestId'] : undefined;
   let reservedJoin = false;
+  const started = performance.now();
+  let tracked = !!requestId;
   try {
     const parsed = parseClientMessage(raw);
     if (!parsed.ok) throw new CommandRejection('BAD_MESSAGE', parsed.reason);
     const msg = parsed.message;
+    tracked = isDurableMessage(msg);
     if (msg.type === 'join') {
       if (session.campaignId || session.joining) throw new CommandRejection('ALREADY_JOINED', 'A socket can join only one campaign', true);
       session.joining = true;
@@ -115,6 +119,7 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
       : await dispatchMessage(session, msg);
     if (isDurableMessage(msg)) send(session.ws, { type: 'commandAck', requestId: requestId!, ...result });
   } catch (err) {
+    if (tracked) count('rejectedCommands');
     if (!(err instanceof CommandRejection)) log.error(`WS handler error: ${String(err)}`);
     send(session.ws, {
       type: 'error', requestId,
@@ -124,6 +129,7 @@ export async function handleMessage(session: WsSession, raw: unknown): Promise<v
     });
     if (err instanceof CommandRejection && err.fatal) session.ws.close(1008, err.code);
   } finally {
+    if (tracked) { count('commands'); duration('commandMs', performance.now() - started); }
     if (reservedJoin) session.joining = false;
   }
 }
@@ -1409,7 +1415,7 @@ async function handleSaveMapTemplate(
     mapMeta: { ...s.mapMeta },
   };
   entry.runtime.state = { ...s, mapTemplates: [...s.mapTemplates, template] };
-  await persistState(entry.runtime);
+  await persistTemplates(entry.runtime);
   broadcastTemplatesUpdated(campaignId, entry);
 }
 
@@ -1467,6 +1473,6 @@ async function handleDeleteMapTemplate(
     ...entry.runtime.state,
     mapTemplates: entry.runtime.state.mapTemplates.filter((t) => t.id !== msg.id),
   };
-  await persistState(entry.runtime);
+  await persistTemplates(entry.runtime);
   broadcastTemplatesUpdated(campaignId, entry);
 }
